@@ -197,6 +197,14 @@ func TestHookFlagsTrustOnlyExactSessionDefinitions(t *testing.T) {
 	for _, hook := range managedHooks {
 		group := config[hook.event].([]any)[0].(map[string]any)
 		handler := group["hooks"].([]any)[0].(map[string]any)
+		limit, hasLimit := handler["additionalContextLimit"]
+		if hook.event == "SessionStart" {
+			if !hasLimit || limit != int64(0) {
+				t.Fatalf("standing context can be truncated: %#v", handler)
+			}
+		} else if hasLimit {
+			t.Fatalf("changed native context limit for %s", hook.event)
+		}
 		// Trust hashes include the upstream-normalized async default.
 		handler["async"] = false
 		identity := map[string]any{"event_name": hook.key, "hooks": []any{handler}}

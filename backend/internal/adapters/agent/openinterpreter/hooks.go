@@ -60,10 +60,20 @@ func appendHookFlags(cmd *[]string, executable string, windows bool) {
 	states := make([]string, 0, len(managedHooks))
 	for _, hook := range managedHooks {
 		command := prefix + " hooks open-interpreter " + hook.action
-		*cmd = append(*cmd, "-c", fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=5}]}]`, hook.event, tomlString(command)))
+		handler := map[string]any{"type": "command", "command": command, "timeout": 5, "async": false}
+		contextLimit := ""
+		if hook.event == "SessionStart" {
+			// The native 2,500-token preview keeps only the ends of larger
+			// outputs. AO's role/skill preamble can put standing instructions
+			// in the omitted middle. Zero preserves this owned hook's full
+			// additive context without changing limits for other hooks.
+			contextLimit = ",additionalContextLimit=0"
+			handler["additionalContextLimit"] = 0
+		}
+		*cmd = append(*cmd, "-c", fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=5%s}]}]`, hook.event, tomlString(command), contextLimit))
 		identity := map[string]any{
 			"event_name": hook.key,
-			"hooks":      []any{map[string]any{"type": "command", "command": command, "timeout": 5, "async": false}},
+			"hooks":      []any{handler},
 		}
 		key := source + ":" + hook.key + ":0:0"
 		states = append(states, tomlString(key)+"={enabled=true,trusted_hash="+tomlString(hashIdentity(identity))+"}")

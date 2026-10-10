@@ -40,7 +40,12 @@ func TestMain(m *testing.M) {
 			if err := os.WriteFile(os.Getenv("AO_CONFORMANCE_HOOK"), payload, 0o600); err != nil {
 				os.Exit(3)
 			}
-			fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%q}}`, privateCanary)
+			// AO's role/skill preamble can exceed the native 2,500-token hook
+			// preview. The standing-instruction marker must still reach the
+			// provider in the middle, without requiring a read of a spill file.
+			// Native previews retain both ends, so a tail-only canary is weak.
+			context := strings.Repeat("AO context preamble padding.\n", 350) + privateCanary + strings.Repeat("AO context footer padding.\n", 350)
+			fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%q}}`, context)
 		}
 		os.Exit(0)
 	}
