@@ -1,0 +1,27 @@
+{
+  "nativeIdSha256": "0bd058dae3bfcc86e66555bd2aeb6f10594e019e682d7b343680344da5696756",
+  "initialTokenSha256": "0d4536d8a99eca257d438e891b77bd11895c4b2c1692f9e1ba98a26f34dfec56",
+  "freshRestoreTokenSha256": "04a77c625668d8a801b09ff9ca7db9aea59c8ceaa653f11f879f6cbf88c2d209",
+  "nativeDeveloperRows": [
+    {
+      "timestamp": "2026-10-10T18:59:40.642Z",
+      "type": "response_item",
+      "role": "developer",
+      "containsInitialToken": true,
+      "containsFreshRestoreToken": false,
+      "containsSpillFooter": false,
+      "rowBytes": 15445,
+      "rowSha256": "5a599bea022ec72397648055cfe0fdd6663678144e8a54dd79a5626273507bce"
+    },
+    {
+      "timestamp": "2026-10-10T19:01:58.269Z",
+      "type": "response_item",
+      "role": "developer",
+      "containsInitialToken": true,
+      "containsFreshRestoreToken": true,
+      "containsSpillFooter": false,
+      "rowBytes": 15532,
+      "rowSha256": "7b7685c74d50e8b8eec712ccf51313f3c780450e20f80f2fb71d11b582f5c12d"
+    }
+  ]
+}

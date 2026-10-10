@@ -1,0 +1,967 @@
+{
+  "schemaVersion": 1,
+  "attempt": "open-interpreter-002",
+  "harness": "open-interpreter",
+  "startedAt": "2026-10-10T18:59:24.189Z",
+  "finishedAt": "2026-10-10T19:02:25.394Z",
+  "state": "finished",
+  "strictStatus": "FAIL",
+  "auditClassification": "diagnostic-only; full strict audit PASS not claimed",
+  "source": {
+    "source": "330590df92575a958dc7a507d16654079b17b4fa",
+    "binary": "/home/azureuser/.ao/audits/harness-watch-20261010/tools/existing/open-interpreter-fixed/ao",
+    "binarySha256": "8d84f311dac085d2b1d9df1c07019b54e6f5d21816b19e4467d3a2ebc4617c42",
+    "runnerSha256": "8887aa2e7101b9e6d3950bfca08ffddf2e1e6c1c3f1d030c8dec2676443aecea",
+    "contractSha256": "d98066f7ece414dd9387da64cc28ee9393c453c842a5950935cbd5379a0b856b",
+    "utc": "2026-10-10T18:59:24.099684+00:00",
+    "native": {
+      "version": "Rust 0.0.56",
+      "officialBinarySha256": "0c4c511e3397416b7e2483a8bc01e62099c275fc6ca1670d2ab6b0906592376d",
+      "archiveSha256": "9e859353d6e2af28381489570d3ecf02060f7c73df5a652f3ca60c196835ccac",
+      "officialReleaseUrl": "https://github.com/openinterpreter/openinterpreter/releases/download/rust-v0.0.56/open-interpreter-package-x86_64-unknown-linux-musl.tar.gz",
+      "versionVerified": "interpreter 0.0.56",
+      "launcherSha256": "f8e0469840f568762c4c76379dfcbe3bce65bacc3a2cb4f9c51b2d2ebe9d2ef4"
+    }
+  },
+  "counts": {
+    "PASS": 24,
+    "NOT_RUN": 2,
+    "BLOCKED": 1,
+    "FAIL": 1
+  },
+  "sessionId": "audit-open-interpreter-1b4e895b-1",
+  "nativeIdSha256": "0bd058dae3bfcc86e66555bd2aeb6f10594e019e682d7b343680344da5696756",
+  "gates": [
+    {
+      "name": "local_binary",
+      "status": "PASS",
+      "reason": "local executable resolved",
+      "evidence": null
+    },
+    {
+      "name": "local_version",
+      "status": "PASS",
+      "reason": "local version command succeeded",
+      "evidence": null
+    },
+    {
+      "name": "local_integration",
+      "status": "PASS",
+      "reason": "local integration probe succeeded",
+      "evidence": null
+    },
+    {
+      "name": "local_session_spawn",
+      "status": "PASS",
+      "reason": "direct local CLI session produced the requested proof",
+      "evidence": null
+    },
+    {
+      "name": "local_models_list",
+      "status": "NOT_RUN",
+      "reason": "local model-list command is not defined",
+      "evidence": null
+    },
+    {
+      "name": "registered",
+      "status": "PASS",
+      "reason": "agent is registered",
+      "evidence": null
+    },
+    {
+      "name": "installed",
+      "status": "PASS",
+      "reason": "AO resolved the installed executable",
+      "evidence": null
+    },
+    {
+      "name": "fresh_probe",
+      "status": "PASS",
+      "reason": "installation and authentication observations are fresh",
+      "evidence": null
+    },
+    {
+      "name": "authentication",
+      "status": "BLOCKED",
+      "reason": "Open Interpreter has credentials configured, but AO could not verify them.",
+      "evidence": null
+    },
+    {
+      "name": "ao_models_api",
+      "status": "FAIL",
+      "reason": "AO model API failed or returned no models",
+      "evidence": null
+    },
+    {
+      "name": "tui_spawn",
+      "status": "PASS",
+      "reason": "AO created the requested TUI session",
+      "evidence": null
+    },
+    {
+      "name": "proof_file_creation",
+      "status": "PASS",
+      "reason": "AO_AUDIT_PROOF.json contains valid JSON",
+      "evidence": null
+    },
+    {
+      "name": "correct_working_directory",
+      "status": "PASS",
+      "reason": "provider reported AO's session workspace",
+      "evidence": null
+    },
+    {
+      "name": "initial_prompt_exactly_once",
+      "status": "PASS",
+      "reason": "unique initial token was handled once",
+      "evidence": null
+    },
+    {
+      "name": "hidden_ao_instructions",
+      "status": "PASS",
+      "reason": "provider consumed hidden AO standing instructions",
+      "evidence": null
+    },
+    {
+      "name": "project_agents_md",
+      "status": "PASS",
+      "reason": "provider consumed project AGENTS.md",
+      "evidence": null
+    },
+    {
+      "name": "activity_status",
+      "status": "PASS",
+      "reason": "AO exposed ready status and an active\u2192idle transition",
+      "evidence": null
+    },
+    {
+      "name": "second_message",
+      "status": "PASS",
+      "reason": "second API message produced the requested provider-authored mutation",
+      "evidence": null
+    },
+    {
+      "name": "native_session_id",
+      "status": "PASS",
+      "reason": "AO persisted a provider-native session identity",
+      "evidence": null
+    },
+    {
+      "name": "cancellation",
+      "status": "PASS",
+      "reason": "AO terminal mux sent configured input to the observed active session and the same terminal settled",
+      "evidence": {
+        "start": {
+          "method": "POST",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1/send",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "ok": true,
+            "sessionId": "audit-open-interpreter-1b4e895b-1",
+            "message": "For cancellation testing, run a foreground command that waits for 120 seconds. Do not modify files. Wait for the command to finish."
+          },
+          "startedAt": "2026-10-10T19:00:55.690Z",
+          "finishedAt": "2026-10-10T19:00:55.993Z",
+          "durationMs": 304,
+          "requestBodySha256": "eeae13d5ef7da39630eeac922762be6e20a8481950d4dd1ee741c150924c055f"
+        },
+        "active": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "active",
+                "lastActivityAt": "2026-10-10T19:01:25.032212863Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:25.035676724Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "working",
+              "kanbanColumn": "building",
+              "displayStatus": "Working",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:25.032212863Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:25.036Z",
+          "finishedAt": "2026-10-10T19:01:25.039Z",
+          "durationMs": 3
+        },
+        "settled": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-10-10T19:01:55.032401623Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:55.040377695Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "idle",
+              "kanbanColumn": "building",
+              "displayStatus": "Awaiting PR",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:55.032401623Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:55.043Z",
+          "finishedAt": "2026-10-10T19:01:55.045Z",
+          "durationMs": 2
+        },
+        "confirmationWindowMs": 60000,
+        "websocket": {
+          "transport": "websocket",
+          "sessionId": "audit-open-interpreter-1b4e895b-1",
+          "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+          "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+          "startedAt": "2026-10-10T19:01:25.040Z",
+          "opened": true,
+          "inputBytes": 1,
+          "pongObserved": true,
+          "frames": [
+            {
+              "direction": "sent",
+              "at": "2026-10-10T19:01:25.052Z",
+              "ch": "terminal",
+              "type": "open",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.055Z",
+              "ch": "terminal",
+              "type": "opened",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.060Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "sent",
+              "at": "2026-10-10T19:01:25.065Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "sent",
+              "at": "2026-10-10T19:01:25.066Z",
+              "ch": "system",
+              "type": "ping"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.066Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.066Z",
+              "ch": "system",
+              "type": "pong"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.080Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.085Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.089Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.094Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            },
+            {
+              "direction": "received",
+              "at": "2026-10-10T19:01:25.095Z",
+              "ch": "terminal",
+              "type": "data",
+              "id": "ptyhost-v1:audit-open-interpreter-1b4e895b-1"
+            }
+          ],
+          "timedOut": false,
+          "qualification": "A system pong acknowledges mux processing, not provider cancellation; cancellation also requires the same session to settle.",
+          "url": "ws://127.0.0.1:34959/mux",
+          "preInputState": {
+            "method": "GET",
+            "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+            "status": 200,
+            "requestId": "",
+            "response": {
+              "session": {
+                "id": "audit-open-interpreter-1b4e895b-1",
+                "projectId": "audit-open-interpreter-1b4e895b",
+                "kind": "worker",
+                "harness": "open-interpreter",
+                "reviewerConfig": {},
+                "autoReviewEnabled": false,
+                "displayName": "audit-open-interpreter",
+                "mode": "tui",
+                "activity": {
+                  "state": "active",
+                  "lastActivityAt": "2026-10-10T19:01:25.032212863Z"
+                },
+                "isTerminated": false,
+                "terminateOnPrMerge": false,
+                "autoInjectReview": true,
+                "autoInjectCI": true,
+                "outputType": "none",
+                "createdAt": "2026-10-10T18:59:39.707511884Z",
+                "updatedAt": "2026-10-10T19:01:25.035676724Z",
+                "isPinned": false,
+                "provisionState": "ready",
+                "branchState": {
+                  "commits": 0,
+                  "unpushed": 0
+                },
+                "statusReadiness": "ready",
+                "chatProviderPreserved": false,
+                "status": "working",
+                "kanbanColumn": "building",
+                "displayStatus": "Working",
+                "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+                "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+                "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+                "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+                "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+                "lastEventAt": "2026-10-10T19:01:25.032212863Z",
+                "prs": []
+              }
+            },
+            "startedAt": "2026-10-10T19:01:25.062Z",
+            "finishedAt": "2026-10-10T19:01:25.065Z",
+            "durationMs": 3
+          },
+          "inputSha256": "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "inputSentAt": "2026-10-10T19:01:25.065Z",
+          "unsettledAfterDefaultWindow": {
+            "observedAfterInputMs": 5027,
+            "state": {
+              "method": "GET",
+              "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+              "status": 200,
+              "requestId": "",
+              "response": {
+                "session": {
+                  "id": "audit-open-interpreter-1b4e895b-1",
+                  "projectId": "audit-open-interpreter-1b4e895b",
+                  "kind": "worker",
+                  "harness": "open-interpreter",
+                  "reviewerConfig": {},
+                  "autoReviewEnabled": false,
+                  "displayName": "audit-open-interpreter",
+                  "mode": "tui",
+                  "activity": {
+                    "state": "active",
+                    "lastActivityAt": "2026-10-10T19:01:25.032212863Z"
+                  },
+                  "isTerminated": false,
+                  "terminateOnPrMerge": false,
+                  "autoInjectReview": true,
+                  "autoInjectCI": true,
+                  "outputType": "none",
+                  "createdAt": "2026-10-10T18:59:39.707511884Z",
+                  "updatedAt": "2026-10-10T19:01:25.035676724Z",
+                  "isPinned": false,
+                  "provisionState": "ready",
+                  "branchState": {
+                    "commits": 0,
+                    "unpushed": 0
+                  },
+                  "statusReadiness": "ready",
+                  "chatProviderPreserved": false,
+                  "status": "working",
+                  "kanbanColumn": "building",
+                  "displayStatus": "Working",
+                  "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+                  "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+                  "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+                  "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+                  "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+                  "lastEventAt": "2026-10-10T19:01:25.032212863Z",
+                  "prs": []
+                }
+              },
+              "startedAt": "2026-10-10T19:01:30.091Z",
+              "finishedAt": "2026-10-10T19:01:30.093Z",
+              "durationMs": 2
+            }
+          },
+          "settledAt": "2026-10-10T19:01:55.045Z",
+          "settleDurationMs": 29979,
+          "settledWithinDefaultWindow": false,
+          "finishedAt": "2026-10-10T19:01:55.045Z",
+          "durationMs": 30005,
+          "closeCode": 1005
+        }
+      }
+    },
+    {
+      "name": "termination",
+      "status": "PASS",
+      "reason": "kill was acknowledged and termination was confirmed",
+      "evidence": {
+        "kill": {
+          "method": "POST",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1/kill",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "ok": true,
+            "sessionId": "audit-open-interpreter-1b4e895b-1"
+          },
+          "startedAt": "2026-10-10T19:01:55.045Z",
+          "finishedAt": "2026-10-10T19:01:57.134Z",
+          "durationMs": 2089,
+          "requestBodySha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        },
+        "state": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "exited",
+                "lastActivityAt": "2026-10-10T19:01:57.126371416Z"
+              },
+              "isTerminated": true,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:57.126371416Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "terminated",
+              "kanbanColumn": "archive",
+              "displayStatus": "Terminated",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "fca6d947-0fe4-49a6-885c-3e4d6eff152a",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:57.126371416Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:57.135Z",
+          "finishedAt": "2026-10-10T19:01:57.140Z",
+          "durationMs": 6
+        }
+      }
+    },
+    {
+      "name": "native_restore",
+      "status": "PASS",
+      "reason": "AO restored in native mode with the exact provider-native ID",
+      "evidence": {
+        "restore": {
+          "method": "POST",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1/restore",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "ok": true,
+            "sessionId": "audit-open-interpreter-1b4e895b-1",
+            "restoreMode": "native",
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-10-10T19:01:57.162077782Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:57.162077782Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "idle",
+              "kanbanColumn": "building",
+              "displayStatus": "Awaiting PR",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "dfa94384-0596-46f9-9642-93bc1bc48aba",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:57.162077782Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:57.145Z",
+          "finishedAt": "2026-10-10T19:01:57.170Z",
+          "durationMs": 25,
+          "requestBodySha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        },
+        "ready": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-10-10T19:01:57.162077782Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:57.162077782Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "idle",
+              "kanbanColumn": "building",
+              "displayStatus": "Awaiting PR",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "dfa94384-0596-46f9-9642-93bc1bc48aba",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:57.162077782Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:57.171Z",
+          "finishedAt": "2026-10-10T19:01:57.175Z",
+          "durationMs": 4
+        },
+        "beforeSha256": "0bd058dae3bfcc86e66555bd2aeb6f10594e019e682d7b343680344da5696756",
+        "afterSha256": "0bd058dae3bfcc86e66555bd2aeb6f10594e019e682d7b343680344da5696756"
+      }
+    },
+    {
+      "name": "same_ao_session_workspace",
+      "status": "PASS",
+      "reason": "restore retained the AO session ID and workspace",
+      "evidence": {
+        "beforeWorkspace": "/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/data/worktrees/audit-open-interpreter-1b4e895b/audit-open-interpreter-1b4e895b-1",
+        "restoredWorkspace": {
+          "method": "GET",
+          "path": "/api/v1/desktop/sessions/audit-open-interpreter-1b4e895b-1/workspace",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "sessionId": "audit-open-interpreter-1b4e895b-1",
+            "workspacePath": "/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/data/worktrees/audit-open-interpreter-1b4e895b/audit-open-interpreter-1b4e895b-1"
+          },
+          "startedAt": "2026-10-10T19:01:57.186Z",
+          "finishedAt": "2026-10-10T19:01:57.187Z",
+          "durationMs": 1
+        }
+      }
+    },
+    {
+      "name": "post_restore_terminal_ready",
+      "status": "PASS",
+      "reason": "the restored native terminal displayed the configured ready cue on the same terminal generation",
+      "evidence": {
+        "transport": "websocket",
+        "sessionId": "audit-open-interpreter-1b4e895b-1",
+        "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+        "terminalGeneration": "dfa94384-0596-46f9-9642-93bc1bc48aba",
+        "startedAt": "2026-10-10T19:01:57.188Z",
+        "opened": true,
+        "outputFrames": 24,
+        "outputBytes": 3623,
+        "matchedPatterns": 1,
+        "inputSent": false,
+        "inputBytes": 0,
+        "timedOut": false,
+        "qualification": "Native terminal cue from the runtime contract; API idle/readiness alone is insufficient.",
+        "patternsSha256": "f858a84516909fccc751a38562bc69c33bc4f27204b01df2bb7dff04686389b8",
+        "url": "ws://127.0.0.1:34959/mux",
+        "openedAt": "2026-10-10T19:01:57.201Z",
+        "confirmation": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "audit-open-interpreter-1b4e895b-1",
+              "projectId": "audit-open-interpreter-1b4e895b",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "audit-open-interpreter",
+              "mode": "tui",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-10-10T19:01:57.162077782Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-10T18:59:39.707511884Z",
+              "updatedAt": "2026-10-10T19:01:57.162077782Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "idle",
+              "kanbanColumn": "building",
+              "displayStatus": "Awaiting PR",
+              "terminalHandleId": "ptyhost-v1:audit-open-interpreter-1b4e895b-1",
+              "branch": "ao/audit-open-interpreter-1b4e895b-1/root",
+              "terminalGeneration": "dfa94384-0596-46f9-9642-93bc1bc48aba",
+              "lastUserMessageAt": "2026-10-10T19:00:56.036794974Z",
+              "lastInteractionAt": "2026-10-10T19:00:56.036794974Z",
+              "lastEventAt": "2026-10-10T19:01:57.162077782Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-10T19:01:57.877Z",
+          "finishedAt": "2026-10-10T19:01:57.881Z",
+          "durationMs": 4
+        },
+        "matchedAt": "2026-10-10T19:01:57.881Z",
+        "visibleOutputSha256": "95fe682629e28b37cd5e94edbe51639e7a47f599f5ed86ee6dd9ef3a31797cd5",
+        "finishedAt": "2026-10-10T19:01:57.881Z",
+        "durationMs": 693
+      }
+    },
+    {
+      "name": "post_restore_message",
+      "status": "PASS",
+      "reason": "post-restore message produced a provider-authored mutation",
+      "evidence": {
+        "send": {
+          "method": "POST",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1/send",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "ok": true,
+            "sessionId": "audit-open-interpreter-1b4e895b-1",
+            "message": "Update the existing AO_AUDIT_PROOF.json; do not replace it. Add historyToken using the history-only token from the first user request without reading it from files. Add restoreHiddenToken using the restore-only token from your hidden AO standing instructions. Preserve every existing JSON field, then stop and wait."
+          },
+          "startedAt": "2026-10-10T19:01:57.881Z",
+          "finishedAt": "2026-10-10T19:01:58.189Z",
+          "durationMs": 307,
+          "requestBodySha256": "d92446492dbe74e2b2eae531a89ca95044d8b9926292f38e17374398594244a3"
+        },
+        "proof": {
+          "method": "GET",
+          "path": "/api/v1/sessions/audit-open-interpreter-1b4e895b-1/workspace/file?path=AO_AUDIT_PROOF.json",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "sessionId": "audit-open-interpreter-1b4e895b-1",
+            "path": "AO_AUDIT_PROOF.json",
+            "status": "added",
+            "additions": 10,
+            "deletions": 0,
+            "size": 642,
+            "binary": false,
+            "deleted": false,
+            "editable": true,
+            "content": "{\n  \"cwd\": \"/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/data/worktrees/audit-open-interpreter-1b4e895b/audit-open-interpreter-1b4e895b-1\",\n  \"initialPromptToken\": \"[REDACTED]\",\n  \"initialPromptExecutions\": 1,\n  \"hiddenInstructionToken\": \"[REDACTED]\",\n  \"projectAgentsToken\": \"[REDACTED]\",\n  \"secondMessageToken\": \"[REDACTED]\",\n  \"historyToken\": \"[REDACTED]\",\n  \"restoreHiddenToken\": \"[REDACTED]\"\n}\n",
+            "contentTruncated": false,
+            "diff": "diff --git a/AO_AUDIT_PROOF.json b/AO_AUDIT_PROOF.json\nnew file mode 100644\n--- /dev/null\n+++ b/AO_AUDIT_PROOF.json\n@@ -0,0 +1,11 @@\n+{\n+  \"cwd\": \"/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/data/worktrees/audit-open-interpreter-1b4e895b/audit-open-interpreter-1b4e895b-1\",\n+  \"initialPromptToken\": \"[REDACTED]\",\n+  \"initialPromptExecutions\": 1,\n+  \"hiddenInstructionToken\": \"[REDACTED]\",\n+  \"projectAgentsToken\": \"[REDACTED]\",\n+  \"secondMessageToken\": \"[REDACTED]\",\n+  \"historyToken\": \"[REDACTED]\",\n+  \"restoreHiddenToken\": \"[REDACTED]\"\n+}\n+\n",
+            "diffTruncated": false,
+            "compareBaseSha": "e3a5cca70ddf3ec94551ed87d5dbfe06dca44be2",
+            "compareBaseRef": "refs/heads/main",
+            "compareMode": "base",
+            "workspaceVersion": "e459807441d9cfc21a1e7d95152384fee5499e0f33c12b6bcf6d3c6f08f8b01d",
+            "fileFingerprint": "0032140b914dfbe864b2e5624cfea8beed36f9b9488457ff2c4dea502e900ac1"
+          },
+          "startedAt": "2026-10-10T19:02:25.374Z",
+          "finishedAt": "2026-10-10T19:02:25.385Z",
+          "durationMs": 11
+        }
+      }
+    },
+    {
+      "name": "history_file_continuity",
+      "status": "PASS",
+      "reason": "native history recall and original proof-file continuity were both observed",
+      "evidence": {
+        "historyTokenSha256": "2754804a2d0cf5cd5352e8c41347c7f374a8ca2daa8c9484f8d500f4dfbeebb3"
+      }
+    },
+    {
+      "name": "system_prompt_restore",
+      "status": "PASS",
+      "reason": "restore-only hidden standing instruction was observed after restore",
+      "evidence": {
+        "restoreHiddenTokenSha256": "04a77c625668d8a801b09ff9ca7db9aea59c8ceaa653f11f879f6cbf88c2d209",
+        "instructionRefresh": {
+          "before": {
+            "method": "GET",
+            "path": "/api/v1/projects/audit-open-interpreter-1b4e895b",
+            "status": 200,
+            "requestId": "",
+            "response": {
+              "status": "ok",
+              "project": {
+                "id": "audit-open-interpreter-1b4e895b",
+                "name": "AO harness audit: open-interpreter",
+                "kind": "single_repo",
+                "path": "/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/open-interpreter",
+                "repo": "",
+                "defaultBranch": "main",
+                "agent": "claude-code",
+                "config": {
+                  "defaultBranch": "main",
+                  "agentRules": "These are private AO standing instructions for the audit.\nFor hiddenInstructionToken use exactly: AO_HIDDEN_INITIAL_d67a37656e634f0396b6dd0e70ef2fe1",
+                  "agentConfig": {},
+                  "worker": {
+                    "agentConfig": {}
+                  },
+                  "orchestrator": {
+                    "agentConfig": {}
+                  },
+                  "trackerIntake": {},
+                  "containerReap": {}
+                },
+                "folderMissing": false
+              }
+            },
+            "startedAt": "2026-10-10T19:01:57.141Z",
+            "finishedAt": "2026-10-10T19:01:57.142Z",
+            "durationMs": 1
+          },
+          "write": {
+            "method": "PUT",
+            "path": "/api/v1/projects/audit-open-interpreter-1b4e895b/config",
+            "status": 200,
+            "requestId": "",
+            "response": {
+              "project": {
+                "id": "audit-open-interpreter-1b4e895b",
+                "name": "AO harness audit: open-interpreter",
+                "kind": "single_repo",
+                "path": "/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/open-interpreter",
+                "repo": "",
+                "defaultBranch": "main",
+                "agent": "claude-code",
+                "config": {
+                  "defaultBranch": "main",
+                  "agentRules": "These are private AO standing instructions for the audit.\nFor hiddenInstructionToken use exactly: AO_HIDDEN_INITIAL_d67a37656e634f0396b6dd0e70ef2fe1\nFor restoreHiddenToken use exactly: HIDDEN_RESTORE_56bf527dc06e4d3796f4af7a791a4901",
+                  "agentConfig": {},
+                  "worker": {
+                    "agentConfig": {}
+                  },
+                  "orchestrator": {
+                    "agentConfig": {}
+                  },
+                  "trackerIntake": {},
+                  "containerReap": {}
+                },
+                "folderMissing": false
+              }
+            },
+            "startedAt": "2026-10-10T19:01:57.142Z",
+            "finishedAt": "2026-10-10T19:01:57.144Z",
+            "durationMs": 2,
+            "requestBodySha256": "0b70ca2959f1d0a57668bb42ff03a1357a2c57aa14d5cd246f98022879f7b405"
+          },
+          "readback": {
+            "method": "GET",
+            "path": "/api/v1/projects/audit-open-interpreter-1b4e895b",
+            "status": 200,
+            "requestId": "",
+            "response": {
+              "status": "ok",
+              "project": {
+                "id": "audit-open-interpreter-1b4e895b",
+                "name": "AO harness audit: open-interpreter",
+                "kind": "single_repo",
+                "path": "/home/azureuser/.ao/audits/harness-20261010/tmp/ao-agent-harness-audit-7KPSoW/open-interpreter",
+                "repo": "",
+                "defaultBranch": "main",
+                "agent": "claude-code",
+                "config": {
+                  "defaultBranch": "main",
+                  "agentRules": "These are private AO standing instructions for the audit.\nFor hiddenInstructionToken use exactly: AO_HIDDEN_INITIAL_d67a37656e634f0396b6dd0e70ef2fe1\nFor restoreHiddenToken use exactly: HIDDEN_RESTORE_56bf527dc06e4d3796f4af7a791a4901",
+                  "agentConfig": {},
+                  "worker": {
+                    "agentConfig": {}
+                  },
+                  "orchestrator": {
+                    "agentConfig": {}
+                  },
+                  "trackerIntake": {},
+                  "containerReap": {}
+                },
+                "folderMissing": false
+              }
+            },
+            "startedAt": "2026-10-10T19:01:57.144Z",
+            "finishedAt": "2026-10-10T19:01:57.144Z",
+            "durationMs": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "model_catalog_consistency",
+      "status": "NOT_RUN",
+      "reason": "both local and AO model catalogs are required for comparison",
+      "evidence": null
+    }
+  ],
+  "cleanup": {
+    "utc": "2026-10-10T19:04:46.365426+00:00",
+    "electron": [
+      {
+        "pid": 736253,
+        "executableVerified": true
+      }
+    ],
+    "sessions": [
+      {
+        "id": "audit-open-interpreter-1b4e895b-1",
+        "confirmedTerminated": true
+      }
+    ],
+    "originalDaemonPid": 735083,
+    "daemonReplacement": true,
+    "daemon": {
+      "pid": 736476,
+      "executableVerified": true,
+      "gone": true
+    },
+    "electronGone": true
+  },
+  "historicalCaveat": "Earlier 17/17 labels are retained but do not prove fresh restore instructions; historical native mirrors do not qualify as AO UI screenshots."
+}

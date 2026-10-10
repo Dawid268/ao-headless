@@ -1,0 +1,13 @@
+{
+  "spillRows": [
+    {
+      "type": "response_item",
+      "role": "developer",
+      "hasInitialToken": false,
+      "nativeRowSha256": "b8d857fe756c658a6aa428ec4b3c859d8b68a0d8a66b24777212c5a17c677350",
+      "bytes": 10559
+    }
+  ],
+  "sourceDefaultTokenLimit": 2500,
+  "productionCallbackContextBytes": 15017
+}
