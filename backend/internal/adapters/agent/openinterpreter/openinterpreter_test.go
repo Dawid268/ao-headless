@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,35 @@ func TestBinaryIdentityRejectsPythonInterpreter(t *testing.T) {
 	}
 	if !isRustCLIHelp("Open Interpreter\n--no-daemon\n--chat-completions\nresume") {
 		t.Fatal("Rust CLI rejected")
+	}
+}
+
+func TestResolveBinarySkipsPythonInterpreterCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix executable fixture")
+	}
+	pathDir := t.TempDir()
+	pythonInterpreter := filepath.Join(pathDir, "interpreter")
+	if err := os.WriteFile(pythonInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter --model --auto-run\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	rustInterpreter := filepath.Join(home, ".local", "bin", "interpreter")
+	if err := os.MkdirAll(filepath.Dir(rustInterpreter), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+	t.Setenv("HOME", home)
+
+	got, err := New().ResolveBinary(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != rustInterpreter {
+		t.Fatalf("got %q, want %q", got, rustInterpreter)
 	}
 }
 

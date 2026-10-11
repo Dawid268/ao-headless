@@ -163,23 +163,25 @@ func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
 	}
 	binary, err := binaryutil.ResolveBinary(ctx, binaryutil.BinarySpec{
 		Label: "Open Interpreter (Rust)", Names: []string{"interpreter"}, WinNames: []string{"interpreter.exe", "interpreter"},
-		UnixPaths:     []string{"/usr/local/bin/interpreter", "/opt/homebrew/bin/interpreter"},
-		UnixHomePaths: [][]string{{".local", "bin", "interpreter"}},
-		WinPaths:      []binaryutil.WinPath{{Base: binaryutil.WinHome, Parts: []string{".local", "bin", "interpreter.exe"}}},
+		UnixPaths:        []string{"/usr/local/bin/interpreter", "/opt/homebrew/bin/interpreter"},
+		UnixHomePaths:    [][]string{{".local", "bin", "interpreter"}},
+		WinPaths:         []binaryutil.WinPath{{Base: binaryutil.WinHome, Parts: []string{".local", "bin", "interpreter.exe"}}},
+		ValidateIdentity: isRustCLIBinary,
 	})
 	if err != nil {
 		return "", err
 	}
+	p.resolvedBinary = binary
+	return binary, nil
+}
+
+func isRustCLIBinary(ctx context.Context, binary string) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	probe := aoprocess.CommandContext(probeCtx, binary, "--help")
 	probe.WaitDelay = 2 * time.Second
 	output, err := probe.CombinedOutput()
-	if err != nil || !isRustCLIHelp(string(output)) {
-		return "", fmt.Errorf("open-interpreter: install the Rust terminal CLI (%s); the Python interpreter command is incompatible", InspectedRelease)
-	}
-	p.resolvedBinary = binary
-	return binary, nil
+	return err == nil && isRustCLIHelp(string(output))
 }
 
 func isRustCLIHelp(output string) bool {
