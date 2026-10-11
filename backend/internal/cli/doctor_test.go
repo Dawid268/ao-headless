@@ -527,6 +527,28 @@ func TestDoctorPathOnlyHarnessPassesOnFind(t *testing.T) {
 	}
 }
 
+func TestDoctorOpenInterpreterUsesInterpreterBinary(t *testing.T) {
+	setConfigEnv(t)
+	c := doctorContext(t,
+		map[string]string{
+			"git":         "/bin/git",
+			"interpreter": "/usr/local/bin/interpreter",
+		},
+		func(_ context.Context, name string, _ ...string) ([]byte, error) {
+			if name == "/bin/git" {
+				return []byte("git version 2.43.0\n"), nil
+			}
+			t.Fatalf("unexpected CommandOutput call for PATH-only harness: %s", name)
+			return nil, nil
+		},
+	)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "open-interpreter")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "interpreter resolves to /usr/local/bin/interpreter") {
+		t.Fatalf("open-interpreter check = %+v, want PASS with interpreter path", check)
+	}
+}
+
 // TestDoctorNewVersionedHarnessPassesWithVersion verifies that a Tier-B
 // harness with a --version flag (e.g. opencode) resolves and reports correctly.
 func TestDoctorNewVersionedHarnessPassesWithVersion(t *testing.T) {
