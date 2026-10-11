@@ -40,7 +40,7 @@ func IsRootHook(payload []byte) bool {
 		AgentType string `json:"agent_type"`
 		ParentID  string `json:"parent_session_id"`
 	}
-	if json.Unmarshal(payload, &input) != nil || input.AgentID != "" || input.AgentType != "" || input.ParentID != "" {
+	if json.Unmarshal(normalizeHookPayload(payload), &input) != nil || input.AgentID != "" || input.AgentType != "" || input.ParentID != "" {
 		return false
 	}
 	_, err := nativeID(input.SessionID)
@@ -117,11 +117,15 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	var input struct {
 		AgentID string `json:"agent_id"`
 	}
-	if json.Unmarshal(payload, &input) != nil || input.AgentID != "" {
+	if json.Unmarshal(normalizeHookPayload(payload), &input) != nil || input.AgentID != "" {
 		return "", false
 	}
 	if event == "post-tool-use" {
 		return domain.ActivityActive, true
 	}
 	return "", false
+}
+
+func normalizeHookPayload(payload []byte) []byte {
+	return bytes.TrimPrefix(payload, []byte("\xef\xbb\xbf"))
 }

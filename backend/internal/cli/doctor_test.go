@@ -527,12 +527,29 @@ func TestDoctorPathOnlyHarnessPassesOnFind(t *testing.T) {
 	}
 }
 
-func TestDoctorOpenInterpreterUsesInterpreterBinary(t *testing.T) {
+func TestDoctorOpenInterpreterSkipsPythonCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix executable fixture")
+	}
+	pathDir := t.TempDir()
+	pythonInterpreter := filepath.Join(pathDir, "interpreter")
+	if err := os.WriteFile(pythonInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter --model --auto-run\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	rustInterpreter := filepath.Join(home, ".local", "bin", "interpreter")
+	if err := os.MkdirAll(filepath.Dir(rustInterpreter), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+	t.Setenv("HOME", home)
 	setConfigEnv(t)
 	c := doctorContext(t,
 		map[string]string{
-			"git":         "/bin/git",
-			"interpreter": "/usr/local/bin/interpreter",
+			"git": "/bin/git",
 		},
 		func(_ context.Context, name string, _ ...string) ([]byte, error) {
 			if name == "/bin/git" {
@@ -544,8 +561,8 @@ func TestDoctorOpenInterpreterUsesInterpreterBinary(t *testing.T) {
 	)
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "open-interpreter")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "interpreter resolves to /usr/local/bin/interpreter") {
-		t.Fatalf("open-interpreter check = %+v, want PASS with interpreter path", check)
+	if check.Level != doctorPass || !strings.Contains(check.Message, "interpreter resolves to "+rustInterpreter) {
+		t.Fatalf("open-interpreter check = %+v, want PASS with Rust interpreter fallback", check)
 	}
 }
 

@@ -331,7 +331,7 @@ func TestHooksDoNotClaimAcceptanceOrCompletion(t *testing.T) {
 			t.Fatalf("%s falsely reports %q", event, state)
 		}
 	}
-	if state, ok := DeriveActivityState("post-tool-use", []byte(`{"tool_name":"Bash"}`)); !ok || state != domain.ActivityActive {
+	if state, ok := DeriveActivityState("post-tool-use", []byte("\xef\xbb\xbf"+`{"tool_name":"Bash"}`)); !ok || state != domain.ActivityActive {
 		t.Fatalf("tool = %q, %v", state, ok)
 	}
 	if _, ok := DeriveActivityState("post-tool-use", []byte(`{"agent_id":"child"}`)); ok {

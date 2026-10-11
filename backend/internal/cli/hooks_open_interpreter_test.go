@@ -22,7 +22,7 @@ func TestOpenInterpreterSessionContextIsPrivateAndMetadataOnly(t *testing.T) {
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
 	const id = "019f706d-1234-7123-8123-123456789abc"
-	out, _, err := executeCLI(t, Deps{In: strings.NewReader(`{"session_id":"` + id + `","source":"resume"}`), ProcessAlive: func(int) bool { return true }}, "hooks", "open-interpreter", "session-start")
+	out, _, err := executeCLI(t, Deps{In: strings.NewReader("\xef\xbb\xbf" + `{"session_id":"` + id + `","source":"resume"}`), ProcessAlive: func(int) bool { return true }}, "hooks", "open-interpreter", "session-start")
 	if err != nil {
 		t.Fatal(err)
 	}
