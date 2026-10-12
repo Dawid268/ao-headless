@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-12T19:00:07.142802+00:00",
+  "originalReceipt": "control-usable-after-kill.json",
+  "newExecution": false,
+  "providerAuthoredControlFile": true,
+  "nativeHistoryMatchesRequestedControlContents": true,
+  "controlFileSHA256": "de7a6206e2578e18bb6f83e7e919bbadaec69478b2644995cb5690ed8b5fdaf3",
+  "generationBeforeAndAfter": "c61b19c1-d729-49c2-95eb-a48f84b43ba4",
+  "controlProviderUsability": "PASS",
+  "activeToSettledAfterDaemonAdoption": "NOT_OBSERVED",
+  "correction": "Original helper incorrectly used its combined activity predicate as the file-mutation predicate. The real AO screen/history/file prove the control message completed, while old adopted session activity remained idle. Preserve the original combined failure separately.",
+  "cadenceSource": "backend/internal/observe/activity/observer.go DefaultTickInterval=30s",
+  "qualification": "A shorter native turn may fall between observer polls. No adoption defect is asserted from this run."
+}

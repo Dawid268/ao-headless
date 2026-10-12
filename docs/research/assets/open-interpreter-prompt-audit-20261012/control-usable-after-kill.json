@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-12T18:56:24.751426+00:00",
+  "status": "FAIL",
+  "sessionId": "audit-open-interpreter-4170ca68-1",
+  "generationBefore": "c61b19c1-d729-49c2-95eb-a48f84b43ba4",
+  "generationAfter": "c61b19c1-d729-49c2-95eb-a48f84b43ba4",
+  "providerAuthoredControlFile": false,
+  "activeToSettled": false,
+  "focusKilledSeparately": true,
+  "workspace": "/home/azureuser/.ao/audits/zcode-cortex-20261012/tmp/prompt-audit/ao-agent-harness-audit-SmnKxu/data/worktrees/audit-open-interpreter-4170ca68/audit-open-interpreter-4170ca68-1"
+}

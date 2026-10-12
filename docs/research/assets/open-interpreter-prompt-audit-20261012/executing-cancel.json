@@ -1,0 +1,389 @@
+{
+  "at": "2026-10-12T18:48:24.751Z",
+  "source": "71306680a659aea7bd39c275fdfda6790a8665e2",
+  "runnerSHA256": "23dc1a2f39bd6c88fd95b47d041040a039d16c52ab71996a278f49e68f8bdcc5",
+  "witnessSpec": {
+    "startPath": ".cancel-start-225f5bffec5d4c36b5aace751912e801.json",
+    "latePath": ".cancel-late-225f5bffec5d4c36b5aace751912e801.json",
+    "lateSideEffectDelayMs": 12000,
+    "tokenSHA256": "a17949f3e39dffedc16c25c754b24c417be67777e15c26de663d4c94fb3ab542"
+  },
+  "result": {
+    "passed": false,
+    "observedActive": true,
+    "reason": "foreground command process remained alive after cancellation",
+    "activeState": {
+      "ok": true,
+      "status": 200,
+      "requestId": "",
+      "method": "GET",
+      "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1",
+      "response": {
+        "session": {
+          "id": "prompt-oi-4d2b6d57-1",
+          "projectId": "prompt-oi-4d2b6d57",
+          "kind": "worker",
+          "harness": "open-interpreter",
+          "reviewerConfig": {},
+          "autoReviewEnabled": false,
+          "displayName": "Open Interpreter private prompt control",
+          "mode": "tui",
+          "activity": {
+            "state": "active",
+            "lastActivityAt": "2026-10-12T18:47:54.628069379Z"
+          },
+          "isTerminated": false,
+          "terminateOnPrMerge": false,
+          "autoInjectReview": true,
+          "autoInjectCI": true,
+          "outputType": "none",
+          "createdAt": "2026-10-12T18:41:13.557841282Z",
+          "updatedAt": "2026-10-12T18:47:54.633234602Z",
+          "isPinned": false,
+          "provisionState": "ready",
+          "branchState": {
+            "commits": 0,
+            "unpushed": 0
+          },
+          "statusReadiness": "ready",
+          "chatProviderPreserved": false,
+          "status": "working",
+          "kanbanColumn": "building",
+          "displayStatus": "Working",
+          "terminalHandleId": "ptyhost-v1:prompt-oi-4d2b6d57-1",
+          "branch": "ao/prompt-oi-4d2b6d57-1/root",
+          "terminalGeneration": "e8102c7a-3f41-4ca1-88c1-6bdd24d68454",
+          "lastUserMessageAt": "2026-10-12T18:47:36.411574094Z",
+          "lastInteractionAt": "2026-10-12T18:47:36.411574094Z",
+          "lastEventAt": "2026-10-12T18:47:54.628069379Z",
+          "prs": []
+        }
+      },
+      "startedAt": "2026-10-12T18:47:54.667Z",
+      "finishedAt": "2026-10-12T18:47:54.672Z",
+      "durationMs": 5
+    },
+    "settledState": {
+      "ok": true,
+      "status": 200,
+      "requestId": "",
+      "method": "GET",
+      "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1",
+      "response": {
+        "session": {
+          "id": "prompt-oi-4d2b6d57-1",
+          "projectId": "prompt-oi-4d2b6d57",
+          "kind": "worker",
+          "harness": "open-interpreter",
+          "reviewerConfig": {},
+          "autoReviewEnabled": false,
+          "displayName": "Open Interpreter private prompt control",
+          "mode": "tui",
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-10-12T18:48:24.627624884Z"
+          },
+          "isTerminated": false,
+          "terminateOnPrMerge": false,
+          "autoInjectReview": true,
+          "autoInjectCI": true,
+          "outputType": "none",
+          "createdAt": "2026-10-12T18:41:13.557841282Z",
+          "updatedAt": "2026-10-12T18:48:24.631071237Z",
+          "isPinned": false,
+          "provisionState": "ready",
+          "branchState": {
+            "commits": 0,
+            "unpushed": 0
+          },
+          "statusReadiness": "ready",
+          "chatProviderPreserved": false,
+          "status": "idle",
+          "kanbanColumn": "building",
+          "displayStatus": "Awaiting PR",
+          "terminalHandleId": "ptyhost-v1:prompt-oi-4d2b6d57-1",
+          "branch": "ao/prompt-oi-4d2b6d57-1/root",
+          "terminalGeneration": "e8102c7a-3f41-4ca1-88c1-6bdd24d68454",
+          "lastUserMessageAt": "2026-10-12T18:47:36.411574094Z",
+          "lastInteractionAt": "2026-10-12T18:47:36.411574094Z",
+          "lastEventAt": "2026-10-12T18:48:24.627624884Z",
+          "prs": []
+        }
+      },
+      "startedAt": "2026-10-12T18:48:24.725Z",
+      "finishedAt": "2026-10-12T18:48:24.729Z",
+      "durationMs": 4
+    },
+    "confirmationWindowMs": 60000,
+    "websocket": {
+      "transport": "websocket",
+      "sessionId": "prompt-oi-4d2b6d57-1",
+      "terminalHandleId": "ptyhost-v1:prompt-oi-4d2b6d57-1",
+      "terminalGeneration": "e8102c7a-3f41-4ca1-88c1-6bdd24d68454",
+      "startedAt": "2026-10-12T18:47:54.715Z",
+      "opened": true,
+      "inputBytes": 1,
+      "pongObserved": true,
+      "frames": [
+        {
+          "direction": "sent",
+          "at": "2026-10-12T18:47:54.728Z",
+          "ch": "terminal",
+          "type": "open",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.729Z",
+          "ch": "terminal",
+          "type": "resize",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.736Z",
+          "ch": "terminal",
+          "type": "opened",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.743Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "sent",
+          "at": "2026-10-12T18:47:54.748Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "sent",
+          "at": "2026-10-12T18:47:54.748Z",
+          "ch": "system",
+          "type": "ping"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.748Z",
+          "ch": "system",
+          "type": "pong"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.752Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.812Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.820Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.825Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        },
+        {
+          "direction": "received",
+          "at": "2026-10-12T18:47:54.831Z",
+          "ch": "terminal",
+          "type": "data",
+          "id": "ptyhost-v1:prompt-oi-4d2b6d57-1"
+        }
+      ],
+      "timedOut": false,
+      "qualification": "A system pong acknowledges mux processing, not provider cancellation; cancellation also requires a live command-start witness with matching kernel process-start identity, the same session settling, that exact process stopping, and no delayed side effect.",
+      "commandWitness": {
+        "tokenSha256": "a17949f3e39dffedc16c25c754b24c417be67777e15c26de663d4c94fb3ab542",
+        "pid": 1066583,
+        "processIdentityKind": "linux-proc-startticks",
+        "processIdentitySha256": "1007710a8fdc6048a14f63a0449462723e5c96f3a94c0dd0fd9f238571dcb8a5",
+        "startPath": ".cancel-start-225f5bffec5d4c36b5aace751912e801.json",
+        "latePath": ".cancel-late-225f5bffec5d4c36b5aace751912e801.json",
+        "lateSideEffectDelayMs": 12000
+      },
+      "url": "ws://127.0.0.1:40181/mux",
+      "preInputState": {
+        "method": "GET",
+        "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1",
+        "status": 200,
+        "requestId": "",
+        "response": {
+          "session": {
+            "id": "prompt-oi-4d2b6d57-1",
+            "projectId": "prompt-oi-4d2b6d57",
+            "kind": "worker",
+            "harness": "open-interpreter",
+            "reviewerConfig": {},
+            "autoReviewEnabled": false,
+            "displayName": "Open Interpreter private prompt control",
+            "mode": "tui",
+            "activity": {
+              "state": "active",
+              "lastActivityAt": "2026-10-12T18:47:54.628069379Z"
+            },
+            "isTerminated": false,
+            "terminateOnPrMerge": false,
+            "autoInjectReview": true,
+            "autoInjectCI": true,
+            "outputType": "none",
+            "createdAt": "2026-10-12T18:41:13.557841282Z",
+            "updatedAt": "2026-10-12T18:47:54.633234602Z",
+            "isPinned": false,
+            "provisionState": "ready",
+            "branchState": {
+              "commits": 0,
+              "unpushed": 0
+            },
+            "statusReadiness": "ready",
+            "chatProviderPreserved": false,
+            "status": "working",
+            "kanbanColumn": "building",
+            "displayStatus": "Working",
+            "terminalHandleId": "ptyhost-v1:prompt-oi-4d2b6d57-1",
+            "branch": "ao/prompt-oi-4d2b6d57-1/root",
+            "terminalGeneration": "e8102c7a-3f41-4ca1-88c1-6bdd24d68454",
+            "lastUserMessageAt": "2026-10-12T18:47:36.411574094Z",
+            "lastInteractionAt": "2026-10-12T18:47:36.411574094Z",
+            "lastEventAt": "2026-10-12T18:47:54.628069379Z",
+            "prs": []
+          }
+        },
+        "startedAt": "2026-10-12T18:47:54.738Z",
+        "finishedAt": "2026-10-12T18:47:54.743Z",
+        "durationMs": 6
+      },
+      "preInputWitness": {
+        "start": {
+          "method": "GET",
+          "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1/workspace/file?path=.cancel-start-225f5bffec5d4c36b5aace751912e801.json",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "sessionId": "prompt-oi-4d2b6d57-1",
+            "path": ".cancel-start-225f5bffec5d4c36b5aace751912e801.json",
+            "status": "unmodified",
+            "additions": 0,
+            "deletions": 0,
+            "size": 109,
+            "binary": false,
+            "deleted": false,
+            "editable": true,
+            "content": "{\"token\":\"225f5bffec5d4c36b5aace751912e801\",\"pid\":1066583,\"processIdentity\":\"linux-proc-startticks:87662476\"}",
+            "contentTruncated": false,
+            "diff": "",
+            "diffTruncated": false,
+            "compareBaseSha": "3fdcdc3ec889f3c7fe6e2941e18dfe31d03497b8",
+            "compareBaseRef": "refs/heads/main",
+            "compareMode": "base",
+            "workspaceVersion": "4755651e415f9eae14be9662dfd9c4cd4b7614d58e1f98cd33ff623ccb22ebcb",
+            "fileFingerprint": "b338973e15c8f3e661059e2a36bbb2fbb6303eee608e73951a80d326c3471149"
+          },
+          "startedAt": "2026-10-12T18:47:54.744Z",
+          "finishedAt": "2026-10-12T18:47:54.747Z",
+          "durationMs": 3
+        },
+        "late": {
+          "method": "GET",
+          "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1/workspace/file?path=.cancel-late-225f5bffec5d4c36b5aace751912e801.json",
+          "status": 404,
+          "requestId": "",
+          "response": {
+            "error": "not_found",
+            "code": "WORKSPACE_FILE_NOT_FOUND",
+            "message": "Workspace file not found",
+            "requestId": "vps-linux/uuPRjw0Xzj-001841"
+          },
+          "startedAt": "2026-10-12T18:47:54.744Z",
+          "finishedAt": "2026-10-12T18:47:54.745Z",
+          "durationMs": 2
+        },
+        "process": {
+          "running": true,
+          "sameIdentity": true,
+          "identityKind": "linux-proc-startticks",
+          "identitySha256": "1007710a8fdc6048a14f63a0449462723e5c96f3a94c0dd0fd9f238571dcb8a5"
+        }
+      },
+      "inputSha256": "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+      "inputSentAt": "2026-10-12T18:47:54.748Z",
+      "unsettledAfterDefaultWindow": {
+        "observedAfterInputMs": 5012,
+        "state": {
+          "method": "GET",
+          "path": "/api/v1/sessions/prompt-oi-4d2b6d57-1",
+          "status": 200,
+          "requestId": "",
+          "response": {
+            "session": {
+              "id": "prompt-oi-4d2b6d57-1",
+              "projectId": "prompt-oi-4d2b6d57",
+              "kind": "worker",
+              "harness": "open-interpreter",
+              "reviewerConfig": {},
+              "autoReviewEnabled": false,
+              "displayName": "Open Interpreter private prompt control",
+              "mode": "tui",
+              "activity": {
+                "state": "active",
+                "lastActivityAt": "2026-10-12T18:47:54.628069379Z"
+              },
+              "isTerminated": false,
+              "terminateOnPrMerge": false,
+              "autoInjectReview": true,
+              "autoInjectCI": true,
+              "outputType": "none",
+              "createdAt": "2026-10-12T18:41:13.557841282Z",
+              "updatedAt": "2026-10-12T18:47:54.633234602Z",
+              "isPinned": false,
+              "provisionState": "ready",
+              "branchState": {
+                "commits": 0,
+                "unpushed": 0
+              },
+              "statusReadiness": "ready",
+              "chatProviderPreserved": false,
+              "status": "working",
+              "kanbanColumn": "building",
+              "displayStatus": "Working",
+              "terminalHandleId": "ptyhost-v1:prompt-oi-4d2b6d57-1",
+              "branch": "ao/prompt-oi-4d2b6d57-1/root",
+              "terminalGeneration": "e8102c7a-3f41-4ca1-88c1-6bdd24d68454",
+              "lastUserMessageAt": "2026-10-12T18:47:36.411574094Z",
+              "lastInteractionAt": "2026-10-12T18:47:36.411574094Z",
+              "lastEventAt": "2026-10-12T18:47:54.628069379Z",
+              "prs": []
+            }
+          },
+          "startedAt": "2026-10-12T18:47:59.758Z",
+          "finishedAt": "2026-10-12T18:47:59.760Z",
+          "durationMs": 2
+        }
+      },
+      "settledAt": "2026-10-12T18:48:24.729Z",
+      "settleDurationMs": 29982,
+      "settledWithinDefaultWindow": false,
+      "error": "foreground command process remained alive after cancellation",
+      "finishedAt": "2026-10-12T18:48:24.750Z",
+      "durationMs": 30035,
+      "closeCode": 1005
+    }
+  }
+}
