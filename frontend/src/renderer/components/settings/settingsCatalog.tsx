@@ -41,6 +41,9 @@ type CatalogContext = {
 	hostId?: string;
 	harnessView?: "local" | "cloud";
 	startLogin?: boolean;
+	/** One page is shown, under its own title: a first heading that only
+	 * rewords that title ("Keyboard shortcuts" on Shortcuts) is hidden. */
+	singlePage?: boolean;
 };
 
 export type SettingsCatalogItem = {
@@ -97,7 +100,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		icon: Server,
 		label: (t) => t("settings.coder.navLabel"),
 		visible: ({ cloudEnabled, hasCoder }) => cloudEnabled && hasCoder,
-		render: (_t, titleHidden) => <CoderSettingsSection titleHidden={titleHidden} />,
+		render: (_t, titleHidden, { singlePage }) => <CoderSettingsSection titleHidden={titleHidden || Boolean(singlePage)} />,
 	},
 	{
 		id: "remoteHosts",
@@ -113,9 +116,8 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		render: (t, titleHidden) => (
 			<>
 				<SettingsSection titleHidden={titleHidden} title={t("settings.mobile")} grouped>
-					<div className="settings-content-row">
-						<ConnectMobileContent active />
-					</div>
+					{/* Its own card rows: the pairing content row, then Keep awake. */}
+					<ConnectMobileContent active />
 				</SettingsSection>
 				{/* Its own section (and card) when devices are paired; renders nothing otherwise. */}
 				<MobileDevicesSection />
@@ -126,7 +128,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		id: "shortcuts",
 		icon: Keyboard,
 		label: (t) => t("settings.shortcuts"),
-		render: (_t, titleHidden) => <KeyboardShortcutsContent active titleHidden={titleHidden} />,
+		render: (_t, titleHidden, { singlePage }) => <KeyboardShortcutsContent active titleHidden={titleHidden || Boolean(singlePage)} />,
 	},
 	{
 		id: "diagnostics",

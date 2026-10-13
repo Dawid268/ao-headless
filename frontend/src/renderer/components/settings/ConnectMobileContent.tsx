@@ -13,6 +13,7 @@ import { scramblePairingCodes } from "./qrScramble";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { SettingsRow } from "./SettingsRow";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 
@@ -459,12 +460,14 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		(setKeepAwake.error instanceof Error && setKeepAwake.error.message) ||
 		null;
 
+	// Each return is one or more direct children of the settings card: the
+	// pairing is a content row, keep-awake a SettingsRow, divided by the card.
 	if (query.isLoading) {
-		return <p className="text-xs text-settings-muted">{t("mobile.checkingStatus")}</p>;
+		return <p className="settings-content-row text-xs text-settings-muted">{t("mobile.checkingStatus")}</p>;
 	}
 	if (query.isError) {
 		return (
-			<p className="text-xs text-error">
+			<p className="settings-content-row text-xs text-error">
 				{query.error instanceof Error ? query.error.message : t("mobile.loadFailed")}
 			</p>
 		);
@@ -494,7 +497,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const secureReasonText = reasonMessage(status.securePairing?.reason ?? "", t);
 
 	return (
-		<div className="flex flex-col gap-4">
+		<>
+		<div className="settings-content-row flex flex-col gap-4">
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
 			<div className="flex flex-col gap-6">
@@ -720,24 +724,28 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					)}
 					</div>
 			</div>
+		</div>
 
 			{/* macOS only — the daemon reports it unsupported elsewhere. Shown
 			    whether or not the bridge is on: the choice is remembered and takes
 			    effect whenever the mobile connection is. */}
 			{status.keepAwake?.supported && (
-				<div className="flex items-start gap-3" data-testid="mobile-keep-awake">
-					<Coffee className="mt-0.5 size-4 shrink-0 text-settings-muted" aria-hidden="true" />
-					<div className="min-w-0 flex-1">
-						<div className="text-sm leading-5 text-settings-label">{t("mobile.keepAwake.label")}</div>
-						<p className="mt-0.5 text-pretty text-xs leading-4 text-settings-muted">{t("mobile.keepAwake.help")}</p>
-						{status.keepAwake.hasBattery && (
-							<p className="mt-1 text-pretty text-xs leading-4 text-settings-muted" data-testid="mobile-keep-awake-laptop">
-								{t("mobile.keepAwake.laptopNote")}
-							</p>
-						)}
-					</div>
+				<SettingsRow
+					data-testid="mobile-keep-awake"
+					icon={Coffee}
+					label={t("mobile.keepAwake.label")}
+					description={
+						<>
+							{t("mobile.keepAwake.help")}
+							{status.keepAwake.hasBattery && (
+								<span className="mt-1 block" data-testid="mobile-keep-awake-laptop">
+									{t("mobile.keepAwake.laptopNote")}
+								</span>
+							)}
+						</>
+					}
+				>
 					<Switch
-						className="mt-0.5"
 						aria-label={t("mobile.keepAwake.label")}
 						checked={status.keepAwake.enabled}
 						onCheckedChange={(next) => {
@@ -745,8 +753,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							setKeepAwake.mutate(next);
 						}}
 					/>
-				</div>
+				</SettingsRow>
 			)}
-		</div>
+		</>
 	);
 }
