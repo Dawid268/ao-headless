@@ -463,7 +463,7 @@ describe("GlobalSettingsForm", () => {
 
 	it("auto-saves the updates channel while automatic updates are disabled", async () => {
 		renderForm();
-		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic updates" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
@@ -508,7 +508,7 @@ describe("GlobalSettingsForm", () => {
 
 	it("auto-saves when automatic updates are toggled", async () => {
 		renderForm();
-		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic updates" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
