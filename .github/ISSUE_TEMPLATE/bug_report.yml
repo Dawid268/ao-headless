@@ -14,6 +14,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Optional: Ask your coding agent to use the [bug-triage skill](https://github.com/Untrivial-ai/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md) to help investigate the problem.
+        Optional: Ask your coding agent to use the [bug-triage skill](https://github.com/OrchestratorInc/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md) to help gather details.
+        See the [contributing guide](https://github.com/OrchestratorInc/agent-orchestrator/blob/main/CONTRIBUTING.md#bugs-and-features) for how to report bugs and contribute.
 
-        Need help? Ask us on [Discord](https://discord.gg/WjKNa7EbB8).
+        Need help describing a bug? Ask in the [bug-triaging channel](https://discord.com/channels/1476302178913357958/1491735678156013588) or join the [Discord community](https://discord.com/invite/UZv7JjxbwG).
