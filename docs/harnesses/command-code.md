@@ -117,6 +117,23 @@ The Chat binding lives in
 `chatdriver/registry`, which is what makes the TUI ⇄ Chat toggle appear for this
 harness.
 
+## Standing instructions
+
+AO delivers standing instructions through the Terminal UI `SessionStart` hook
+described above. Chat prepends them as an embedded resource to the first prompt
+after creating or loading a provider session. The workspace hook does not fire
+on the ACP path, and `session/new` ignores system-prompt metadata.
+
+Both deliveries put the instructions in conversation context, where compaction
+can summarize them away. Command Code's `appendSystemPrompt` mod hook could
+instead append them to the system prompt on every model round, but the proposed
+session-scoped `--mod` delivery is blocked upstream. In tested versions 1.79.2
+and 1.82.1, `cmd acp` accepts that flag without loading its target file. AO keeps
+the current delivery paths until ACP applies the session mod options.
+
+See the [verification note](../research/command-code-system-prompt.md) for the
+probe results, upstream cause, and conditions for replacing these paths.
+
 ## Restore
 
 AO restores a Command Code session with `cmd --resume <session-id>` after the
