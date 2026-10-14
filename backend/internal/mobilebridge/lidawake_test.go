@@ -273,3 +273,26 @@ func TestWakeSetupLockSerializesClients(t *testing.T) {
 	}
 	secondUnlock()
 }
+
+func TestWakeSetupMissingRegisteredPlistReportsUpgradeRecovery(t *testing.T) {
+	l := &LidAwake{
+		directory: filepath.Join(t.TempDir(), "wake"),
+		supported: true,
+		execute: func(_ context.Context, command string, args ...string) ([]byte, error) {
+			if command != "/bin/launchctl" || len(args) != 2 || args[0] != "print" {
+				t.Fatalf("unexpected command against legacy registration: %s %v", command, args)
+			}
+			return nil, nil // A legacy coordinator is still registered.
+		},
+	}
+	err := l.Setup()
+	if !errors.Is(err, errLidHelperUpgrade) || !strings.Contains(err.Error(), "launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake") {
+		t.Fatalf("missing legacy recovery guidance: %v", err)
+	}
+	if supported, active, reason := l.Status(); !supported || active || reason != "helper_upgrade_required" {
+		t.Fatalf("legacy registration status: supported=%v active=%v reason=%q", supported, active, reason)
+	}
+	if _, err := os.Stat(filepath.Join(l.directory, "agent.plist")); !os.IsNotExist(err) {
+		t.Fatalf("legacy registration was replaced: %v", err)
+	}
+}

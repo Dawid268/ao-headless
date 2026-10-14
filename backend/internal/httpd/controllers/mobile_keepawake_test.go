@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
@@ -373,5 +374,21 @@ func TestLidFailureDoesNotFailOrdinaryWake(t *testing.T) {
 			t.Fatalf("wrong status: %+v", got)
 		}
 		b.ShutdownKeepAwake()
+	}
+}
+
+func TestKeepAwakeLidIsolatedDataDirExplainsRestriction(t *testing.T) {
+	ka := &fakeLidController{reason: "isolated_data_dir"}
+	b, _ := newKeepAwakeBridge(t, ka)
+	if err := mobilebridge.Save(b.ConfigPath, mobilebridge.State{KeepAwake: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := b.SetKeepAwakeLid(true, true)
+	if err == nil || !strings.Contains(err.Error(), "AO_DATA_DIR") || !strings.Contains(err.Error(), "~/.ao/data") || strings.Contains(err.Error(), "Apple Silicon") {
+		t.Fatalf("incorrect custom-data-dir guidance: %v", err)
+	}
+	st, err := mobilebridge.Load(b.ConfigPath)
+	if err != nil || !st.KeepAwake || st.KeepAwakeLid || ka.setups != 0 {
+		t.Fatalf("unsupported request changed preferences or installed helper: state=%+v setups=%d err=%v", st, ka.setups, err)
 	}
 }

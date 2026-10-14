@@ -403,6 +403,11 @@ func (l *LidAwake) command(ctx context.Context, binary string, args ...string) (
 func (l *LidAwake) checkRegisteredHelper(ctx context.Context) error {
 	data, err := os.ReadFile(filepath.Join(l.directory, "agent.plist"))
 	if err != nil {
+		if os.IsNotExist(err) {
+			// The label may still belong to a coordinator using the legacy
+			// ~/.ao/wake layout. Never replace it while it could own leases.
+			return fmt.Errorf("registered wake helper metadata is missing: %w", errLidHelperUpgrade)
+		}
 		return err
 	}
 	var plist struct {
