@@ -68,6 +68,6 @@ describe("AO action batching", () => {
 		rerender(<ActivityRow activity={{ ...base, revision: 3, status: "failed", detail: { ...base.detail, error: "name rejected" } }} />);
 		expect(screen.getAllByRole("button", { name: /Renamed a session/i })).toHaveLength(1);
 		expect(screen.getByText("name rejected")).toBeInTheDocument();
-		expect(screen.getByText("Failed")).toBeInTheDocument();
+		expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
 	});
 });

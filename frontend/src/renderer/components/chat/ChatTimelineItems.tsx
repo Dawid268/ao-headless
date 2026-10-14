@@ -1122,8 +1122,23 @@ function AOActionRow({ activity }: { activity: ConversationActivity }) {
 			>
 				<Bot aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/70" />
 				<span className="activity-row-label shrink-0 text-xs font-normal text-muted-foreground">{label}</span>
+				{descriptor?.state === "failed" ? (
+					<span className="text-xs text-destructive">{t("chat.action.status.failed")}</span>
+				) : null}
+				{descriptor?.state === "cancelled" ? (
+					<span className="text-xs text-muted-foreground/70">{t("chat.action.status.cancelled")}</span>
+				) : null}
+				{descriptor?.state === "running" ? (
+					<Loader2 aria-hidden="true" className="size-3 animate-spin text-muted-foreground/60" />
+				) : null}
 				{hasBody ? (
-					<ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3 shrink-0 text-muted-foreground/40 transition-transform group-hover/run:text-muted-foreground",
+							open && "rotate-90",
+						)}
+					/>
 				) : null}
 			</button>
 			<AnimatePresence initial={false}>

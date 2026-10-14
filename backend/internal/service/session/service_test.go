@@ -117,6 +117,20 @@ func (f *fakeStore) ConversationForSession(_ context.Context, id domain.SessionI
 	return conversation, nil
 }
 
+func (f *fakeStore) SessionForActivityProviderItem(_ context.Context, providerItemID string) (domain.SessionID, bool, error) {
+	for _, activity := range f.activities {
+		if activity.ProviderItemID != providerItemID {
+			continue
+		}
+		for sessionID, conversation := range f.conversations {
+			if conversation.ID == activity.ConversationID {
+				return sessionID, true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
 func (f *fakeStore) ActivityStatusByProviderItem(_ context.Context, conversationID, providerItemID string) (domain.ActivityStatus, bool, error) {
 	for _, existing := range f.activities {
 		if existing.ConversationID == conversationID && existing.ProviderItemID == providerItemID {

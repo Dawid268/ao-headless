@@ -100,6 +100,37 @@ func TestSpawnFailureAndCancellationStayOneAction(t *testing.T) {
 	}
 }
 
+func TestParentlessSpawnWritesNothing(t *testing.T) {
+	svc, st, fc := actionFixture(t)
+	fc.spawnRecord = domain.SessionRecord{ID: "child", ProjectID: "mer", DisplayName: "Reviewer", Harness: "codex"}
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex", ClientRequestID: "solo"}
+	if _, _, _, err := svc.Spawn(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.activities) != 0 {
+		t.Fatalf("activities = %+v, want no row in the child chat", st.activities)
+	}
+}
+
+func TestTerminateRecordsOnSpawnParent(t *testing.T) {
+	svc, st, fc := actionFixture(t)
+	fc.spawnRecord = domain.SessionRecord{ID: "child", ProjectID: "mer", DisplayName: "Reviewer", Harness: "codex"}
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, ParentSessionID: "parent", ClientRequestID: "req-spawn"}
+	if _, _, _, err := svc.Spawn(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	st.sessions["child"] = domain.SessionRecord{ID: "child", ProjectID: "mer", DisplayName: "Reviewer", CleanupGeneration: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.Kill(ctx, "child"); err != nil {
+		t.Fatal(err)
+	}
+	terminated := actionsNamed(st.activities, actionSessionTerminated)
+	if len(terminated) != 1 || terminated[0].ConversationID != "conv-parent" {
+		t.Fatalf("terminate = %+v, want the parent conversation", terminated)
+	}
+}
+
 func TestTerminateRenameRestoreSwitchAndClaim(t *testing.T) {
 	svc, st, fc := actionFixture(t)
 	ctx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")

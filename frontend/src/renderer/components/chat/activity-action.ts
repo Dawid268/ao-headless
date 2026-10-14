@@ -51,7 +51,8 @@ export function summarizeAOActions(activities: ConversationActivity[]): string {
 	const names = activities.map(aoActionName);
 	const action = names[0] ?? "";
 	if (isAOActionName(action) && names.every((name) => name === action)) {
-		return appI18n.t(COUNT_KEYS[action], { count: activities.length });
+		if (names.length === 1) return appI18n.t(ACTION_LABELS[action]);
+		return appI18n.t(COUNT_KEYS[action], { count: names.length });
 	}
 	const counts = new Map<string, number>();
 	for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);

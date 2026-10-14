@@ -899,6 +899,17 @@ func (s *Store) ProjectConversation(ctx context.Context, project domain.ProjectI
 }
 
 // ConversationForSession looks up a session's conversation.
+func (s *Store) SessionForActivityProviderItem(ctx context.Context, providerItemID string) (domain.SessionID, bool, error) {
+	sessionID, err := s.qr.SelectSessionForActivityProviderItem(ctx, providerItemID)
+	if errors.Is(err, sql.ErrNoRows) || sessionID == nil {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return *sessionID, true, nil
+}
+
 func (s *Store) ConversationForSession(
 	ctx context.Context,
 	session domain.SessionID,

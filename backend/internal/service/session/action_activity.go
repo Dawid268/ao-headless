@@ -66,6 +66,7 @@ func (s *Service) recordAction(ctx context.Context, audience domain.SessionID, d
 	if s == nil || s.store == nil || audience == "" || detail.Action == "" || detail.OperationID == "" {
 		return
 	}
+	ctx = context.WithoutCancel(ctx)
 	writer, ok := s.store.(conversationActionWriter)
 	if !ok {
 		return
@@ -144,9 +145,6 @@ func actionErrorText(err error) string {
 
 func (s *Service) recordSpawnOutcome(ctx context.Context, cfg ports.SpawnConfig, child domain.SessionRecord, status domain.ActivityStatus, err error) {
 	audience := cfg.ParentSessionID
-	if status == domain.ActivityStatusCompleted && audience == "" {
-		audience = child.ID
-	}
 	if audience == "" {
 		return
 	}
@@ -173,6 +171,7 @@ func (s *Service) recordSpawnOutcome(ctx context.Context, cfg ports.SpawnConfig,
 }
 
 func (s *Service) recordTerminated(ctx context.Context, id domain.SessionID, status domain.ActivityStatus, err error) {
+	ctx = context.WithoutCancel(ctx)
 	rec := s.lookupActionSession(ctx, id)
 	operationID := string(id) + ":generation:" + itoa(rec.CleanupGeneration)
 	if status != domain.ActivityStatusCompleted {
@@ -182,7 +181,11 @@ func (s *Service) recordTerminated(ctx context.Context, id domain.SessionID, sta
 		}
 		operationID = failed
 	}
-	s.recordAction(ctx, id, actionDetail{
+	audience := id
+	if parent, ok := s.spawnParent(ctx, id); ok {
+		audience = parent
+	}
+	s.recordAction(ctx, audience, actionDetail{
 		Action:          actionSessionTerminated,
 		OperationID:     operationID,
 		TargetSessionID: string(id),
@@ -290,6 +293,22 @@ func (s *Service) recordClaimed(ctx context.Context, id domain.SessionID, pr dom
 		PRTitle:         pr.Title,
 		Error:           actionErrorText(err),
 	}, status)
+}
+
+type spawnParentReader interface {
+	SessionForActivityProviderItem(ctx context.Context, providerItemID string) (domain.SessionID, bool, error)
+}
+
+func (s *Service) spawnParent(ctx context.Context, id domain.SessionID) (domain.SessionID, bool) {
+	reader, ok := s.store.(spawnParentReader)
+	if !ok || id == "" {
+		return "", false
+	}
+	parent, found, err := reader.SessionForActivityProviderItem(ctx, "ao-action:"+actionSessionSpawned+":"+string(id))
+	if err != nil || !found || parent == "" || parent == id {
+		return "", false
+	}
+	return parent, true
 }
 
 func (s *Service) actionAlreadyTerminal(ctx context.Context, id domain.SessionID, providerItemID string) bool {

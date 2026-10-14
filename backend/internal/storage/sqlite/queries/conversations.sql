@@ -22,6 +22,14 @@ SELECT * FROM conversations WHERE current_review_id = ? LIMIT 1;
 -- name: SelectConversationBySession :one
 SELECT * FROM conversations WHERE current_session_id = ? LIMIT 1;
 
+-- name: SelectSessionForActivityProviderItem :one
+SELECT current_session_id
+FROM conversations
+JOIN conversation_activities ON conversation_activities.conversation_id = conversations.id
+WHERE conversation_activities.provider_item_id = ?
+  AND current_session_id IS NOT NULL
+LIMIT 1;
+
 -- name: SelectProjectConversation :one
 SELECT * FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1;
 
