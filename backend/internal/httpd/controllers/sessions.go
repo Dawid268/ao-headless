@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -554,6 +555,10 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 
 // previewGzipWriters reuses compressors: each holds about 800 KB of state, and
 // a preview's first load compresses hundreds of modules at once.
+// ponytail: compressors in use are uncapped; each is held until its client has
+// the whole body, ~200 MB for one connection's 250 streams on a slow link. If
+// hosts feel it, compress each module whole before sending it: a cap that sends
+// the rest as is would bite on exactly those links.
 var previewGzipWriters = sync.Pool{New: func() any {
 	gz, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
 	return gz
@@ -580,10 +585,17 @@ func compressPreviewResponse(res *http.Response) {
 	pr, pw := io.Pipe()
 	go func() {
 		gz, _ := previewGzipWriters.Get().(*gzip.Writer) // New makes nothing else
-		gz.Reset(pw)
+		// gzip writes a few hundred bytes at a time, and ReverseProxy flushes
+		// every write of a body it has no length for: send 32 KiB pieces.
+		buffered := bufio.NewWriterSize(pw, 32<<10)
+		gz.Reset(buffered)
 		_, err := io.Copy(gz, body)
-		if closeErr := gz.Close(); err == nil {
-			err = closeErr
+		// Only a whole body gets gzip's footer: a cut one must fail as a cut
+		// stream, not decode as a shorter module.
+		if err == nil {
+			if err = gz.Close(); err == nil {
+				err = buffered.Flush()
+			}
 		}
 		previewGzipWriters.Put(gz)
 		_ = body.Close()
@@ -602,13 +614,34 @@ func compressPreviewResponse(res *http.Response) {
 
 func acceptsGzip(acceptEncoding string) bool {
 	for _, part := range strings.Split(acceptEncoding, ",") {
-		coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
-		if strings.EqualFold(strings.TrimSpace(coding), "gzip") {
-			return strings.ReplaceAll(strings.TrimSpace(params), " ", "") != "q=0"
+		coding, params, _ := strings.Cut(part, ";")
+		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+			continue
 		}
+		// A weight of 0 refuses gzip, however it is written: q=0, Q=0.000.
+		for _, param := range strings.Split(params, ";") {
+			if name, weight, _ := strings.Cut(param, "="); strings.EqualFold(strings.TrimSpace(name), "q") {
+				q, err := strconv.ParseFloat(strings.TrimSpace(weight), 64)
+				return err == nil && q > 0
+			}
+		}
+		return true
 	}
 	return false
 }
+
+// previewTransport carries the desktop's previews and agent browser to this
+// host's loopback servers. A desktop's HTTP/2 fan-in sends a preview's
+// requests up to 100 at once, and DefaultTransport keeps only 2 idle
+// connections per host: it would dial the rest again every burst.
+var previewTransport = func() *http.Transport {
+	transport := &http.Transport{}
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = defaultTransport.Clone()
+	}
+	transport.MaxIdleConnsPerHost = 100
+	return transport
+}()
 
 // previewApp reaches only the running, session-owned managed preview process.
 // The selected URL comes from the manager, never from a caller-supplied port.
@@ -640,6 +673,7 @@ func (c *SessionsController) previewApp(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	proxy := &httputil.ReverseProxy{
+		Transport: previewTransport,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			appAuthorization := req.Out.Header.Get("X-AO-Preview-App-Authorization")
 			hadPreviewOrigin := req.Out.Header.Get("X-AO-Preview-App-Origin") != ""

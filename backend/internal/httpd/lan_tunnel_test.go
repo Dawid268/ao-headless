@@ -79,6 +79,64 @@ func TestLANTunnelAuthorizesTheUpgradeAndEveryRequestInside(t *testing.T) {
 	}
 }
 
+// Behind cloudflared every tunnel arrives from loopback, and Cloudflare writes
+// the visitor's address on the upgrade only. Requests inside a tunnel count
+// against the tunnel's client: a CF-Connecting-IP written inside cannot move
+// them, and one tunnel's failures do not lock out another's visitor.
+func TestLANTunnelLocksOutTheTunnelsClient(t *testing.T) {
+	st := &authState{}
+	st.setHash(mobilebridge.HashPassword("secret12"))
+	m := NewLANManager(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), st, 0, slog.Default(), nil)
+	port, err := m.StartLoopback(0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop(context.Background())
+	tunnel := func(visitor string) func(password, claimed string) int {
+		header := http.Header{"Authorization": {"Bearer secret12"}}
+		if visitor != "" {
+			header.Set("CF-Connecting-IP", visitor)
+		}
+		ws, _, err := websocket.Dial(context.Background(), fmt.Sprintf("ws://127.0.0.1:%d%s", port, lanTunnelPath), &websocket.DialOptions{HTTPHeader: header})
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		conn := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
+		t.Cleanup(func() { conn.Close() })
+		protocols := new(http.Protocols)
+		protocols.SetUnencryptedHTTP2(true)
+		client := &http.Client{Transport: &http.Transport{
+			Protocols:   protocols,
+			DialContext: func(context.Context, string, string) (net.Conn, error) { return conn, nil },
+		}}
+		return func(password, claimed string) int {
+			req, _ := http.NewRequest(http.MethodGet, "http://tunnel/anything", nil)
+			req.Header.Set("Authorization", "Bearer "+password)
+			if claimed != "" {
+				req.Header.Set("CF-Connecting-IP", claimed)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("request through the tunnel: %v", err)
+			}
+			resp.Body.Close()
+			return resp.StatusCode
+		}
+	}
+	local, visitor := tunnel(""), tunnel("203.0.113.2")
+	for range 5 {
+		if status := local("wrong123", ""); status != http.StatusUnauthorized {
+			t.Fatalf("wrong password inside the tunnel: got %d, want 401", status)
+		}
+	}
+	if status := local("secret12", "198.51.100.7"); status != http.StatusTooManyRequests {
+		t.Errorf("locked-out tunnel claiming another address: got %d, want 429", status)
+	}
+	if status := visitor("secret12", ""); status != http.StatusOK {
+		t.Errorf("a visitor's tunnel after another tunnel's failures: got %d, want 200", status)
+	}
+}
+
 func TestLANTunnelClosesWhenThePasswordRotates(t *testing.T) {
 	st := &authState{}
 	st.setHash(mobilebridge.HashPassword("secret12"))

@@ -24,11 +24,15 @@ func (m *LANManager) serveTunnel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	// Every request inside comes from whoever opened the tunnel, as auth knew
+	// them on the upgrade: behind cloudflared, the visitor rather than
+	// cloudflared's loopback connection.
+	_, port, _ := net.SplitHostPort(r.RemoteAddr)
 	// No message size limit: NetConn lifts it, and streams each message into
 	// the HTTP/2 framer, whose own frame size cap bounds what it holds.
 	conn := &tunnelConn{
 		Conn:   websocket.NetConn(context.WithoutCancel(r.Context()), ws, websocket.MessageBinary),
-		remote: tunnelAddr(r.RemoteAddr),
+		remote: tunnelAddr(net.JoinHostPort(clientSource(r), port)),
 		closed: make(chan struct{}),
 	}
 	// Inner requests end with the upgrade (Stop cancels it) and record their
@@ -38,7 +42,12 @@ func (m *LANManager) serveTunnel(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	defer context.AfterFunc(r.Context(), cancel)()
 	srv := &http.Server{
-		Handler:           m.handler,
+		// Cloudflare wrote the upgrade's CF-Connecting-IP; the client writes any
+		// on a request inside, so auth must not see it there.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Header.Del("CF-Connecting-IP")
+			m.handler.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return base },
 	}
@@ -47,8 +56,8 @@ func (m *LANManager) serveTunnel(w http.ResponseWriter, r *http.Request) {
 	_ = srv.Serve(&oneConnListener{conn: conn})
 }
 
-// tunnelConn reports the TCP peer as its remote address, so lockouts and logs
-// see the real client rather than the WebSocket.
+// tunnelConn reports the tunnel's client as its remote address, so lockouts and
+// logs see the real client rather than the WebSocket.
 type tunnelConn struct {
 	net.Conn
 	remote    net.Addr

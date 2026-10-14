@@ -49,6 +49,7 @@ func (c *SessionsController) agentBrowser(w http.ResponseWriter, r *http.Request
 	}
 	target, token := c.AgentBrowser, c.AgentBrowserToken
 	proxy := &httputil.ReverseProxy{
+		Transport: previewTransport,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			req.Out.Host = target.Host

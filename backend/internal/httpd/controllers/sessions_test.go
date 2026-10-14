@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -3186,6 +3188,9 @@ func TestSessionsAPI_ManagedPreviewCompressesUncompressedText(t *testing.T) {
 	for _, tc := range []struct{ path, acceptEncoding, byteRange, encoding string }{
 		{"/mod.js", "", "", ""},
 		{"/mod.js", "gzip;q=0, br", "", ""},
+		{"/mod.js", "gzip;q=0.0, br", "", ""},
+		{"/mod.js", "br, GZIP; Q=0.000", "", ""},
+		{"/mod.js", "br, gzip;q=0.5", "", "gzip"},
 		{"/mod.js", "gzip", "bytes=0-2047", ""}, // range offsets count uncompressed bytes
 		{"/ranged.js", "gzip", "bytes=0-2047", ""},
 		{"/streamed.js", "gzip", "", ""},
@@ -3251,6 +3256,106 @@ func TestSessionsAPI_ManagedPreviewStreamsWithoutHoldingBack(t *testing.T) {
 		}
 		_ = response.Body.Close()
 	}
+}
+
+// A dev server that dies mid-module must fail the request. A response that
+// ends cleanly would hand the browser a shorter module, which it caches.
+func TestSessionsAPI_ManagedPreviewAbortsACutModule(t *testing.T) {
+	random := make([]byte, 256<<10)
+	_, _ = rand.Read(random)
+	module := hex.EncodeToString(random) // barely compressible, so compressed bytes leave before the cut
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("Content-Length", strconv.Itoa(len(module)))
+		_, _ = io.WriteString(w, module[:len(module)/2])
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // the dev server dies
+	}))
+	t.Cleanup(app.Close)
+	parsed, _ := url.Parse(app.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.PreviewURL = app.URL + "/"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{State: previewserver.StateReady, TargetKind: previewserver.TargetApp, URL: session.Metadata.PreviewURL, Port: port}}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	request, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/ao-1/preview/app/mod.js", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	response, err := client.Do(request)
+	var body []byte
+	if err == nil {
+		body, err = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		t.Errorf("the cut module arrived as a whole %d-byte response", len(body))
+	}
+	if reader, gzipErr := gzip.NewReader(bytes.NewReader(body)); gzipErr == nil {
+		if decoded, gzipErr := io.ReadAll(reader); gzipErr == nil {
+			t.Errorf("the cut module's gzip stream ends cleanly after %d of %d bytes", len(decoded), len(module))
+		}
+	}
+}
+
+// ReverseProxy flushes every write of a body it has no length for, and gzip
+// writes a few hundred bytes at a time: a compressed module must still go out
+// in large writes, not as a thousand small frames.
+func TestSessionsAPI_ManagedPreviewWritesCompressedModulesInLargePieces(t *testing.T) {
+	var source strings.Builder
+	for i := 0; source.Len() < 1<<20; i++ {
+		source.WriteString("export function handle" + strconv.Itoa(i) + "(event) { return dispatch(\"" + strconv.Itoa(i*7919) + "\", event); }\n")
+	}
+	module := source.String()
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("Content-Length", strconv.Itoa(len(module)))
+		_, _ = io.WriteString(w, module)
+	}))
+	t.Cleanup(app.Close)
+	parsed, _ := url.Parse(app.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.PreviewURL = app.URL + "/"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{State: previewserver.StateReady, TargetKind: previewserver.TargetApp, URL: session.Metadata.PreviewURL, Port: port}}
+	router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, httpd.APIDeps{
+		Sessions: svc, PreviewServer: managed, SessionCapabilities: allowSessionCapability{},
+	}, httpd.ControlDeps{})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/ao-1/preview/app/mod.js", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := &countingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	router.ServeHTTP(recorder, request)
+
+	compressed := recorder.Body.Len()
+	reader, err := gzip.NewReader(bytes.NewReader(recorder.Body.Bytes()))
+	if err != nil || recorder.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("response %d with headers %v, want a gzip module (%v)", recorder.Code, recorder.Header(), err)
+	}
+	if decoded, err := io.ReadAll(reader); err != nil || string(decoded) != module {
+		t.Fatalf("decoded %d of %d bytes: %v", len(decoded), len(module), err)
+	}
+	if most := compressed/(16<<10) + 2; recorder.writes > most || recorder.flushes > most {
+		t.Errorf("%d compressed bytes went out in %d writes and %d flushes, want at most %d of each", compressed, recorder.writes, recorder.flushes, most)
+	}
+}
+
+// countingRecorder counts the writes and flushes a handler makes.
+type countingRecorder struct {
+	*httptest.ResponseRecorder
+	writes, flushes int
+}
+
+func (r *countingRecorder) Write(p []byte) (int, error) {
+	r.writes++
+	return r.ResponseRecorder.Write(p)
+}
+
+func (r *countingRecorder) Flush() {
+	r.flushes++
+	r.ResponseRecorder.Flush()
 }
 
 func TestSessionsAPI_ManagedPreviewAppProxy(t *testing.T) {

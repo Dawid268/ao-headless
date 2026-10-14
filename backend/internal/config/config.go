@@ -215,7 +215,7 @@ func (c Config) Addr() string {
 //	AO_LOCAL_OFFERING          local offering off|on (default on)
 //	AO_CLOUD_CONTROL_PLANE_URL cloud control plane base URL (trimmed, must be http(s))
 //	AO_AGENT_BROWSER_URL       the host's agent browser (loopback http URL, default none)
-//	AO_AGENT_BROWSER_TOKEN     that browser's credential
+//	AO_AGENT_BROWSER_TOKEN     that browser's credential (trimmed, required with AO_AGENT_BROWSER_URL)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -394,7 +394,10 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.AgentBrowserURL = u
-		cfg.AgentBrowserToken = os.Getenv("AO_AGENT_BROWSER_TOKEN")
+		cfg.AgentBrowserToken = strings.TrimSpace(os.Getenv("AO_AGENT_BROWSER_TOKEN"))
+		if cfg.AgentBrowserToken == "" {
+			return Config{}, fmt.Errorf("AO_AGENT_BROWSER_URL is set but AO_AGENT_BROWSER_TOKEN is empty: the agent browser refuses every request without its token")
+		}
 	}
 
 	runFile, err := resolveRunFilePath()
