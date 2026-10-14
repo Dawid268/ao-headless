@@ -3,11 +3,16 @@
 // Browser panel. The user can click and type in the same page at the same time.
 // The browser may run in another container, so files travel with the command:
 // local files named in the arguments go up (upload), files it writes come back
-// (screenshot, pdf, download). RB_URL is the browser service (default
-// http://127.0.0.1:8080); RB_TOKEN is its token.
+// (screenshot, pdf, download). Relative paths are to this directory, on both
+// sides. RB_URL is the browser service (default http://127.0.0.1:8080);
+// RB_TOKEN is its token.
 const fs = require("node:fs"), path = require("node:path");
 const args = process.argv.slice(2), files = {};
-for (const a of args) if (path.isAbsolute(a) && fs.statSync(a, { throwIfNoEntry: false })?.isFile()) files[a] = fs.readFileSync(a).toString("base64");
+// An argument no file can have (too long a name, a folder it may not look in) is just text.
+const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+// Relative names go up for an upload only: a word typed into a page (README.md, .env) is no file to copy.
+const upload = args.find((a) => !a.startsWith("-")) === "upload";
+for (const a of args) if ((upload || path.isAbsolute(a)) && isFile(a)) files[a] = fs.readFileSync(a).toString("base64");
 fetch(`${process.env.RB_URL || "http://127.0.0.1:8080"}/agent`, { method: "POST", headers: { Authorization: `Bearer ${process.env.RB_TOKEN}` }, body: JSON.stringify({ args, files }) })
 	.then((res) => res.json())
 	.then((body) => {

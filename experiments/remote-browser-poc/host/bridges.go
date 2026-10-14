@@ -13,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Native UI that headless Chromium never paints, handed to the viewer: date
@@ -80,11 +82,17 @@ const uiShim = `(() => {
     const all = document.createRange(); all.selectNodeContents(n);
     return [...all.getClientRects()].some((b) => e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom);
   };
-  // What the page puts on the clipboard reaches the person's: Cmd+C and menu
-  // Copy (after the page's own copy handler), and copy buttons that write
-  // through the async clipboard API.
-  const clip = (text, html) => text && report({ kind: 'clipboard', text, html: html || '' });
+  // What the page puts on the clipboard reaches the person's, as a tab may
+  // write theirs: Cmd+C and menu Copy (after the page's own copy handler), and
+  // copy buttons once their write succeeds. Frames report through the top one,
+  // which only frames of its origin can reach; rbhost takes only its reports,
+  // and only just after the person's click or key (the page can report too).
+  // ponytail: a cross-origin iframe's copy stays on the remote clipboard; a shim
+  // in an isolated world could report its trusted copies.
+  if (window === top) window.__rbClip = (text, html) => text && report({ kind: 'clipboard', text, html: html || '' });
+  const clip = (text, html) => { try { top.__rbClip(text, html); } catch {} };
   for (const type of ['copy', 'cut']) window.addEventListener(type, (e) => {
+    if (!e.isTrusted) return; // the page's own dispatchEvent copies nothing
     const d = e.clipboardData;
     if (e.defaultPrevented && d && d.getData('text/plain')) return clip(d.getData('text/plain'), d.getData('text/html'));
     const a = document.activeElement;
@@ -97,16 +105,17 @@ const uiShim = `(() => {
   const cb = navigator.clipboard;
   if (cb) {
     const writeText = cb.writeText, write = cb.write;
-    cb.writeText = function (t) { clip(String(t)); return writeText.call(this, t); };
+    cb.writeText = function (t) { return writeText.call(this, t).then(() => { clip(String(t)); }); };
     cb.write = function (items) {
-      (async () => {
-        for (const it of items) {
-          if (!it.types.includes('text/plain')) continue;
-          const html = it.types.includes('text/html') ? await (await it.getType('text/html')).text() : '';
-          return clip(await (await it.getType('text/plain')).text(), html);
-        }
-      })().catch(() => {});
-      return write.call(this, items);
+      return write.call(this, items).then(() => {
+        (async () => {
+          for (const it of items) {
+            if (!it.types.includes('text/plain')) continue;
+            const html = it.types.includes('text/html') ? await (await it.getType('text/html')).text() : '';
+            return clip(await (await it.getType('text/plain')).text(), html);
+          }
+        })().catch(() => {});
+      });
     };
   }
   // Fullscreen changes how Chrome captures the page (rbhost crops the frames).
@@ -176,7 +185,9 @@ const uiShim = `(() => {
   }
 })();`
 
-var basicRealm = regexp.MustCompile(`(?i)^basic(?:\s+realm="([^"]*)")?`)
+// basicRealm finds a Basic challenge among a header's challenges (Negotiate,
+// Basic realm="x"; headers sent twice are joined by a newline) and its realm.
+var basicRealm = regexp.MustCompile(`(?i)(?:^|[\s,])basic(?:\s+realm="([^"]*)")?(?:[\s,]|$)`)
 
 // onBridgeEvent handles the CDP events the bridges need. It runs on the CDP
 // read goroutine, so it only Notifies (never Calls).
@@ -296,7 +307,9 @@ func (v *viewer) show401(sid, id string, headers []fetchHdr) {
 			keep = append(keep, h)
 		}
 	}
-	_, _ = v.h.cdp.Call(ctx, sid, "Fetch.fulfillRequest", map[string]any{"requestId": id, "responseCode": http.StatusUnauthorized, "responseHeaders": keep, "body": b.Body})
+	if _, err := v.h.cdp.Call(ctx, sid, "Fetch.fulfillRequest", map[string]any{"requestId": id, "responseCode": http.StatusUnauthorized, "responseHeaders": keep, "body": b.Body}); err != nil {
+		v.h.cdp.Notify(sid, "Fetch.continueRequest", map[string]any{"requestId": id}) // a page too big to send back (maxMessage) gets Chrome's empty one
+	}
 }
 
 // onBridgeMessage handles the viewer's answers; true if it was one of them.
@@ -508,7 +521,9 @@ func (h *host) favicon(ctx context.Context, sid, frameID, href string) string {
 		return iconData(dataURL(rest))
 	}
 	u, err := url.Parse(href)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" {
+	// No host for Go, one for Chrome: http:127.0.0.1 and http:///127.0.0.1
+	// load 127.0.0.1 (the URL standard skips any slashes after "http:").
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
 		return ""
 	}
 	// This load skips Chrome's local-network rules, so a page on the internet
@@ -541,13 +556,54 @@ func (h *host) favicon(ctx context.Context, sid, frameID, href string) string {
 	return icon
 }
 
-// localHost reports whether host is this machine or its private network.
+// localHost reports whether host is this machine or its private network, read
+// as Chrome reads it (the URL standard): names in any case and with a trailing
+// dot, and IPv4 addresses in their other forms (127.1, 0x7f000001,
+// 2130706433). A host that is not ASCII counts as local: Chrome maps it first
+// (full-width digits are digits), and names a page's own icon in ASCII.
 func localHost(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.ContainsFunc(host, func(r rune) bool { return r > unicode.MaxASCII }) {
 		return true
 	}
 	ip, err := netip.ParseAddr(host)
-	return err == nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
+	ok := err == nil
+	if !ok {
+		ip, ok = ipv4(host)
+	}
+	return ok && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
+}
+
+// ipv4 reads host as the URL standard reads an IPv4 address: one to four
+// parts, each decimal, 0x hex or 0-led octal, the last filling the bytes left.
+func ipv4(host string) (netip.Addr, bool) {
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return netip.Addr{}, false
+	}
+	var n uint64
+	for i, p := range parts {
+		base := 10
+		if len(p) > 1 && p[0] == '0' {
+			p, base = p[1:], 8
+			if p[0] == 'x' || p[0] == 'X' {
+				p, base = p[1:], 16
+			}
+		}
+		v, err := strconv.ParseUint(p, base, 64)
+		if p == "" && base != 10 { // "0x" alone is 0; an empty part is no number
+			v, err = 0, nil
+		}
+		limit, shift := uint64(256), 8*(3-i)
+		if i == len(parts)-1 {
+			limit, shift = 1<<(8*(5-len(parts))), 0
+		}
+		if err != nil || v >= limit {
+			return netip.Addr{}, false
+		}
+		n += v << shift
+	}
+	return netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}), true
 }
 
 // load reads href in frame frameID of session sid's page, and returns the body

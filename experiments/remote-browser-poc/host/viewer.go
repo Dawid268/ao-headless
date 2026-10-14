@@ -77,6 +77,7 @@ type viewer struct {
 	// bgTabUntil: a Ctrl- or middle-click just asked for a background tab.
 	bgTabUntil  time.Time
 	lastInput   time.Time // the person's last click or key in this view
+	lastGesture time.Time // the same, scrolling aside: the page may write their clipboard just after
 	lastFix     time.Time // last time a wrong-size frame made the page size come back
 	wrongSince  time.Time // first wrong-size frame since the last right one
 	scrollTimer *time.Timer
@@ -91,6 +92,7 @@ type viewer struct {
 	hidden      bool        // a host app tab behind another: no stream, page left where it is
 	fileSession string      // the session whose DOM holds fileNode: the page's or an iframe's
 	shimQ       chan func() // shim reports, in order: a frame's offset may need CDP calls
+	iconQ       chan func() // the newest favicon load waiting for the one running
 	// Cross-site iframes run in their own renderer and need their own session
 	// for the shims: child session -> parent session, and -> its frame id.
 	children   map[string]string
@@ -171,9 +173,9 @@ func (h *host) handleViewer(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(64 << 20) // file uploads arrive inline
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &viewer{h: h, id: fmt.Sprintf("cdp-%p", c), conn: c, ctx: ctx, cancel: cancel,
-		signal: make(chan struct{}, 1), out: make(chan []byte, 1024), inputs: make(chan func(), 256), shimQ: make(chan func(), 256),
+		signal: make(chan struct{}, 1), out: make(chan []byte, 1024), inputs: make(chan func(), 256), shimQ: make(chan func(), 256), iconQ: make(chan func(), 1),
 		children: map[string]string{}, childFrame: map[string]string{}, ctxFrame: map[string]string{}}
-	for _, q := range []chan func(){v.inputs, v.shimQ} {
+	for _, q := range []chan func(){v.inputs, v.shimQ, v.iconQ} {
 		go func() {
 			for {
 				select {
@@ -872,22 +874,41 @@ func (v *viewer) onEvent(sid string, m cdpMsg) {
 			Href string `json:"href"`
 		}
 		err := json.Unmarshal([]byte(p.Payload), &fs)
+		v.mu.Lock()
+		main := top && v.targetID != "" && v.ctxFrame[ctxKey(sid, p.ContextID)] == v.targetID
+		gesture := time.Since(v.lastGesture) < activation
+		v.mu.Unlock()
 		if kind == "ui" && fs.Kind == "favicon" {
 			// Never relayed: the desktop would fetch any URL a page names. Only
 			// the page's own main frame names its icon, which travels as bytes.
-			v.mu.Lock()
-			main := top && v.targetID != "" && v.ctxFrame[ctxKey(sid, p.ContextID)] == v.targetID
-			v.mu.Unlock()
 			if main && err == nil {
-				go v.sendFavicon(fs.Href)
+				// One load at a time, the newest report's waiting: never a
+				// goroutine per report, as a page can report as often as it likes.
+				select {
+				case <-v.iconQ:
+				default:
+				}
+				select {
+				case v.iconQ <- func() { v.sendFavicon(fs.Href) }:
+				default:
+				}
 			}
+			return
+		}
+		// The page can call the binding itself, from any frame and at any time:
+		// it writes the person's clipboard only as a tab may, from its main
+		// frame and just after the person's click or key in this view.
+		if kind == "ui" && clipboardReport(p.Payload) && !(main && gesture) {
 			return
 		}
 		if top && err == nil && fs.Kind == "fullscreen" {
 			v.mu.Lock()
 			v.fullscreen = fs.On
 			v.mu.Unlock()
-			go v.captureStill(v.currentBaseQuality()) // a still page sends no frame of its new layout
+			select { // a still page sends no frame of its new layout (queued, like the icon)
+			case v.shimQ <- func() { v.captureStill(v.currentBaseQuality()) }:
+			default:
+			}
 		}
 		select { // drop rather than stall the CDP reader
 		case v.shimQ <- func() { v.relayShim(sid, kind, p.Payload, p.ContextID) }:
@@ -910,6 +931,19 @@ func (v *viewer) onEvent(sid string, m cdpMsg) {
 		v.mu.Unlock()
 		go v.showFileChooser(sid, p.Mode, p.BackendNodeID)
 	}
+}
+
+// activation is how long after the person's click or key in a view its page
+// may write their clipboard: Chromium's user activation lasts as long.
+const activation = 5 * time.Second
+
+// clipboardReport reports a shim report the viewer takes as a clipboard write.
+// It reads the kind as the viewer's JSON.parse does: Go's decoding into a
+// struct matches keys in any case, so {"kind":"clipboard","Kind":"x"} gave "x".
+func clipboardReport(payload string) bool {
+	var m map[string]json.RawMessage
+	var kind string
+	return json.Unmarshal([]byte(payload), &m) == nil && json.Unmarshal(m["kind"], &kind) == nil && kind == "clipboard"
 }
 
 // sendHistory tells the view whether Back and Forward have somewhere to go,
@@ -1208,6 +1242,9 @@ func (v *viewer) human() {
 	v.h.ctl.mu.Lock()
 	v.h.ctl.lastEdit = time.Now()
 	v.h.ctl.mu.Unlock()
+	v.mu.Lock()
+	v.lastGesture = time.Now()
+	v.mu.Unlock()
 	v.scrolled()
 }
 

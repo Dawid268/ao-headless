@@ -201,10 +201,12 @@ window.__rbHost = {
   navigate: (url) => send({ t: 'nav', url }), back: () => send({ t: 'back' }), forward: () => send({ t: 'forward' }),
   reload: () => send({ t: 'reload' }), stop: () => send({ t: 'stop' }),
   show: (on) => { hostShown = on; send({ t: 'visible', on: shown() }); hostReport(); },
-  // The host closes this view right after: resolve once the close has left.
-  close: () => new Promise((resolve) => {
-    if (!activeTab) return resolve();
-    send({ t: 'closetab', id: activeTab });
+  // Closes agent tab id, by default this view's own. The host may close this
+  // view right after: resolve once the close has left.
+  close: (id) => new Promise((resolve) => {
+    id ||= activeTab;
+    if (!id) return resolve();
+    send({ t: 'closetab', id });
     const t0 = Date.now();
     (function sent() { if (!ws || ws.bufferedAmount === 0 || Date.now() - t0 > 500) resolve(); else setTimeout(sent, 10); })();
   }),
@@ -222,8 +224,13 @@ const fit = () => { const r = canvas.getBoundingClientRect(), [pw, ph] = sizer |
 const pos = (e) => { const f = fit(); return { x: (e.clientX - f.r.left - f.ox) / f.s, y: (e.clientY - f.r.top - f.oy) / f.s }; };
 const at = (d) => { const f = fit(), o = { left: f.ox + d.x * f.s + 'px', top: f.oy + d.y * f.s + 'px' }; if (d.w) o.width = d.w * f.s + 'px'; if (d.h) o.height = d.h * f.s + 'px'; return o; };
 function input(o, kind) { o.seq = ++inputSeq; if (kind) sentAt.set(o.seq, { kind, at: now() }); send(o); }
-canvas.addEventListener('mousedown', (e) => { canvas.focus(); hideSelect(); input({ t: 'mouse', type: 'mousePressed', ...pos(e), button: btn[e.button] || 'left', buttons: e.buttons, clickCount: e.detail || 1, mods: clickMods(e) }, 'click'); e.preventDefault(); });
-canvas.addEventListener('mouseup', (e) => input({ t: 'mouse', type: 'mouseReleased', ...pos(e), button: btn[e.button] || 'left', buttons: e.buttons, clickCount: e.detail || 1, mods: clickMods(e) }));
+canvas.addEventListener('mousedown', (e) => { if (!btn[e.button]) return e.preventDefault(); canvas.focus(); hideSelect(); input({ t: 'mouse', type: 'mousePressed', ...pos(e), button: btn[e.button], buttons: e.buttons, clickCount: e.detail || 1, mods: clickMods(e) }, 'click'); e.preventDefault(); });
+// The thumb buttons (3, 4) go Back and Forward on release, as in Chrome: never a click on the page.
+canvas.addEventListener('mouseup', (e) => {
+  if (btn[e.button]) return input({ t: 'mouse', type: 'mouseReleased', ...pos(e), button: btn[e.button], buttons: e.buttons, clickCount: e.detail || 1, mods: clickMods(e) });
+  e.preventDefault();
+  if (e.button === 3 || e.button === 4) send({ t: e.button === 3 ? 'back' : 'forward' });
+});
 let move = null;
 function queueMove(p, b) {
   if (!move) requestAnimationFrame(() => { input({ t: 'mouse', type: 'mouseMoved', ...move.p, button: move.b & 1 ? 'left' : 'none', buttons: move.b, mods: 0 }); move = null; });
@@ -260,7 +267,7 @@ function onKeyDown(e) {
   }
   const m = keyMods(e), accel = (m & 2) !== 0, k = e.key;
   if (isMac && e.metaKey && (k === '[' || k === ']')) { send({ t: k === '[' ? 'back' : 'forward' }); e.preventDefault(); return; }
-  if (accel && k.toLowerCase() === 'f') { openFind(); e.preventDefault(); return; }
+  if (accel && k.toLowerCase() === 'f') return; // find: the document's listener opens it
   if (accel && k.toLowerCase() === 'v') return; // the paste event below carries the local clipboard
   let type = 'rawKeyDown', text = '';
   if (k === 'Enter') { type = 'keyDown'; text = '\r'; }
@@ -292,6 +299,9 @@ async function asPNG(f) {
   return c.convertToBlob({ type: 'image/png' });
 }
 document.addEventListener('paste', async (e) => {
+  // Only a paste into the page goes to it: one into the viewer's own fields
+  // (sign-in, prompt, find, address) stays there, a password included.
+  if (e.target !== canvas && e.target !== ime) return;
   e.preventDefault();
   const cd = e.clipboardData, text = cd.getData('text/plain'), html = cd.getData('text/html'), images = [...cd.files].filter((f) => f.type.startsWith('image/'));
   const files = [];
@@ -338,6 +348,11 @@ $('closetab').onclick = () => { if (activeTab) send({ t: 'closetab', id: activeT
 const findBox = $('find'), fi = $('fi');
 let lastFind = '';
 function openFind() { findBox.style.display = 'flex'; fi.focus(); fi.select(); }
+// Cmd/Ctrl+F opens it from anywhere in the viewer (the host app leaves the key
+// to it), except in the viewer's own fields: sign-in, prompt, find, address.
+document.addEventListener('keydown', (e) => {
+  if ((keyMods(e) & 2) && e.key.toLowerCase() === 'f' && !(e.target instanceof HTMLInputElement)) { openFind(); e.preventDefault(); }
+});
 function findNext(back) { const t = fi.value; send({ t: 'find', text: t, back, fresh: t !== lastFind }); lastFind = t; }
 function closeFind() { findBox.style.display = 'none'; send({ t: 'find', text: '' }); lastFind = ''; $('fn').textContent = ''; ime.focus(); }
 fi.addEventListener('input', () => findNext(false));

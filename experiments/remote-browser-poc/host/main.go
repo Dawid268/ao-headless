@@ -13,13 +13,13 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,7 +67,7 @@ type control struct {
 	lastInput time.Time
 	lastPress time.Time // the person's last click: they may have moved the caret
 	lastEdit  time.Time // the person's last input that can change the page (not scrolling)
-	agentBusy bool
+	agentBusy int       // agent commands running: they may overlap
 	snapshot  time.Time // the agent's last snapshot: its element refs date from then
 }
 
@@ -108,24 +108,22 @@ func (h *host) setDialog(target, d string) {
 	}
 }
 
-// openDialog is a JavaScript dialog still open in some tab, if any. Views
-// clear an entry when its dialog closes; one closed with no view attached (the
-// agent answered it while the person's window was closed) refused the agent
-// for good, so each entry is checked: a page showing a dialog runs no script.
-func (h *host) openDialog(ctx context.Context) string {
+// openDialog is the JavaScript dialog still open in tab target, if any. Views
+// clear the entry when its dialog closes; one closed with no view attached
+// (the agent answered it while the person's window was closed) refused the
+// agent for good, so the entry is checked: a page showing a dialog runs no script.
+func (h *host) openDialog(ctx context.Context, target string) string {
 	h.dialogMu.Lock()
-	open := maps.Clone(h.dialogs)
+	d := h.dialogs[target]
 	h.dialogMu.Unlock()
-	for target, d := range open {
-		if h.scriptBlocked(ctx, target) {
-			return d
-		}
-		h.dialogMu.Lock()
-		if h.dialogs[target] == d {
-			delete(h.dialogs, target)
-		}
-		h.dialogMu.Unlock()
+	if d == "" || h.scriptBlocked(ctx, target) {
+		return d
 	}
+	h.dialogMu.Lock()
+	if h.dialogs[target] == d {
+		delete(h.dialogs, target)
+	}
+	h.dialogMu.Unlock()
 	return ""
 }
 
@@ -167,6 +165,32 @@ func (c *control) snapshotAt() time.Time {
 	return c.snapshot
 }
 
+// agentCommand is the agent-browser command in args: the first argument that
+// is not a global flag or a flag's value (`--json snapshot -i`).
+func agentCommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case slices.Contains(abValueFlags, a):
+			i++
+		case strings.HasPrefix(a, "-"):
+			if i+1 < len(args) && (args[i+1] == "true" || args[i+1] == "false") {
+				i++ // a boolean flag may say which (--headed false)
+			}
+		default:
+			return a
+		}
+	}
+	return ""
+}
+
+// abValueFlags are agent-browser's global flags that take a value (its --help, v0.38.1).
+var abValueFlags = strings.Fields(`--action-policy --allowed-domains --args --ca-cert --cdp --color-scheme
+	--config --confirm-actions --device --download-path --enable --engine --executable-path --extension
+	--headers --idle-timeout --init-script --input-mode --max-output --model --namespace -p --profile
+	--provider --proxy --proxy-bypass --restore-check-fn --restore-check-text --restore-check-url
+	--restore-save --screenshot-dir --screenshot-format --screenshot-quality --session --session-name
+	--state --user-agent`)
+
 // usesRef reports an agent command aimed at a snapshot ref (@e12).
 func usesRef(args []string) bool {
 	for _, a := range args {
@@ -184,7 +208,7 @@ func agentRefused(w http.ResponseWriter, why string) {
 func (c *control) agentRunning() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.agentBusy
+	return c.agentBusy > 0
 }
 
 // An agent command focuses its own targets; while the person is typing, their
@@ -201,7 +225,7 @@ func (c *control) release() {
 func (c *control) owner() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.agentBusy {
+	if c.agentBusy > 0 {
 		return "agent"
 	}
 	return "none"
@@ -226,7 +250,8 @@ func main() {
 	ctx := context.Background()
 	h := &host{token: *token, abPath: *ab, cdpPort: *cdpPort,
 		tabs: map[string]*tab{}, openers: map[string]string{}, viewers: map[*viewer]struct{}{}, sizer: map[string]*viewer{}}
-	wsURL, err := launchChrome(ctx, *chrome, *cdpPort, *dsf)
+	chromeCtx, stopChrome := context.WithCancel(ctx)
+	wsURL, err := launchChrome(chromeCtx, *chrome, *cdpPort, *dsf)
 	if err != nil {
 		log.Fatalf("chrome: %v", err)
 	}
@@ -235,6 +260,13 @@ func main() {
 		log.Fatalf("cdp: %v", err)
 	}
 	h.cdp = cdp
+	// Chromium can close the CDP connection and live on (seen: a message over
+	// its size limit), and nothing works without it: stop Chromium, and both
+	// start over as when it dies.
+	go func() {
+		<-cdp.done
+		stopChrome()
+	}()
 	saved := loadTabs() // before tracking: the blank start tab rewrites the file
 	if err := h.trackTargets(ctx); err != nil {
 		log.Fatalf("targets: %v", err)
@@ -367,12 +399,16 @@ func chromeUserAgent(bin string) string {
 }
 
 // launchChromeArgs starts Chromium with loopback-only CDP and waits for it.
+// When ctx ends, Chromium gets SIGTERM, which lets it save its last cookie
+// writes, and is killed if it is still there 5 s later.
 func launchChromeArgs(ctx context.Context, bin string, port int, args []string) (string, error) {
 	args = append([]string{"--remote-debugging-address=127.0.0.1", fmt.Sprintf("--remote-debugging-port=%d", port)}, args...)
 	if os.Getenv("RB_CHROME_LOG") != "" {
 		args = append([]string{"--enable-logging=stderr", "--v=0", "--vmodule=*desktop*=1,*screen*=1,*capture*=1,*x11*=1"}, args...)
 	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = chromeEnv()
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if os.Getenv("RB_CHROME_LOG") != "" {
@@ -388,8 +424,9 @@ func launchChromeArgs(ctx context.Context, bin string, port int, args []string) 
 		if stopping.Load() {
 			os.Exit(0)
 		}
-		// Chromium crashed or was killed (OOM). Start over with the same
-		// profile; the new process reopens the saved tabs and viewers reconnect.
+		// Chromium crashed, was killed (OOM) or lost its CDP connection. Start
+		// over with the same profile; the new process reopens the saved tabs
+		// and viewers reconnect.
 		// ponytail: restarts the whole host; inside AO's daemon, restart only the browser.
 		log.Print("chromium exited; restarting")
 		time.Sleep(2 * time.Second) // no tight loop if it dies at launch
@@ -732,7 +769,28 @@ func (h *host) runAgent(ctx context.Context, args []string) ([]byte, error) {
 	h.agentMu.Lock()
 	defer h.agentMu.Unlock()
 	full := append([]string{"--cdp", fmt.Sprint(h.cdpPort), "--session", "poc", "--no-auto-dialog"}, args...)
-	return exec.CommandContext(ctx, h.abPath, full...).CombinedOutput()
+	// Its daemon starts in the first command's directory and saves files at
+	// relative paths there.
+	_ = os.MkdirAll(agentDir, 0o755)
+	cmd := exec.CommandContext(ctx, h.abPath, full...)
+	cmd.Dir = agentDir
+	return cmd.CombinedOutput()
+}
+
+// agentDir is agent-browser's working directory (a var for tests). The
+// agent's relative paths (an upload, a screenshot to save) are to its own
+// directory, and to this one here: files travel between the two.
+var agentDir = "/tmp/rb-agent"
+
+// savesFile are the agent-browser commands that save a file at a path they are given.
+var savesFile = []string{"screenshot", "pdf", "download", "record", "trace", "profiler", "network", "state"}
+
+// here is where the agent's path p is on this machine.
+func here(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(agentDir, p)
 }
 
 func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
@@ -744,11 +802,13 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"args required"}`, http.StatusBadRequest)
 		return
 	}
-	// Refuse at once what would only block or misfire: an open dialog stops
-	// every other command for up to a minute, and refs from before the person
-	// used the page may now point at something else (a different page's button).
-	if req.Args[0] != "dialog" {
-		if d := h.openDialog(r.Context()); d != "" {
+	// Refuse at once what would only block or misfire: a dialog open in the
+	// agent's tab stops its every other command for up to a minute (one in
+	// another tab is the person's), and refs from before the person used the
+	// page may now point at something else (a different page's button).
+	cmd := agentCommand(req.Args)
+	if cmd != "dialog" {
+		if d := h.openDialog(r.Context(), h.agentTab()); d != "" {
 			agentRefused(w, "A dialog is open in the page ("+d+"). Answer it with `dialog accept` or `dialog dismiss`, or wait for the person to answer it.")
 			return
 		}
@@ -758,15 +818,27 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.ctl.mu.Lock()
-	h.ctl.agentBusy = true
+	h.ctl.agentBusy++
 	h.ctl.mu.Unlock()
 	h.broadcastControl()
 	start := time.Now()
 	// The agent may run on another machine: put its files where agent-browser
-	// looks for them, at the same paths.
+	// looks for them, at the same paths. An upload names them in full:
+	// Chromium, which reads them, runs in another directory.
 	for p, b := range req.Files {
-		if filepath.IsAbs(p) && os.MkdirAll(filepath.Dir(p), 0o755) == nil {
-			_ = os.WriteFile(p, b, 0o644)
+		if os.MkdirAll(filepath.Dir(here(p)), 0o755) == nil {
+			_ = os.WriteFile(here(p), b, 0o644)
+		}
+	}
+	args := slices.Clone(req.Args)
+	for i, a := range args {
+		if _, ok := req.Files[a]; ok && cmd == "upload" {
+			args[i] = here(a)
+		}
+		// A file saved at a relative path may go in a folder the agent has and
+		// this side lacks (screenshot shots/a.png): agent-browser makes none.
+		if slices.Contains(savesFile, cmd) && filepath.IsLocal(a) {
+			_ = os.MkdirAll(here(filepath.Dir(a)), 0o755)
 		}
 	}
 	ran := time.Now()
@@ -774,8 +846,8 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if keepFocus {
 		h.eachViewer(func(v *viewer) { _, _ = v.call("Runtime.evaluate", map[string]any{"expression": saveFocus}) })
 	}
-	out, err := h.runAgent(r.Context(), req.Args)
-	if err == nil && req.Args[0] == "snapshot" {
+	out, err := h.runAgent(r.Context(), args)
+	if err == nil && cmd == "snapshot" {
 		h.ctl.mu.Lock()
 		h.ctl.snapshot = ran
 		h.ctl.mu.Unlock()
@@ -791,31 +863,34 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	h.viewMu.Unlock()
 	h.ctl.mu.Lock()
-	h.ctl.agentBusy = false
+	h.ctl.agentBusy--
 	h.ctl.mu.Unlock()
 	h.broadcastControl()
-	resp := map[string]any{"output": string(out), "ms": time.Since(start).Milliseconds(), "files": written(append(req.Args, absPath.FindAllString(string(out), -1)...), ran)}
+	paths := req.Args
+	for _, m := range absPath.FindAllStringSubmatch(string(out), -1) {
+		paths = append(paths, m[1])
+	}
+	resp := map[string]any{"output": string(out), "ms": time.Since(start).Milliseconds(), "files": written(paths, ran)}
 	if err != nil {
 		resp["error"] = err.Error()
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-var absPath = regexp.MustCompile(`/[^\s'"]+`)
+// absPath finds the absolute paths in agent-browser's output (a file saved
+// where it chose): a "/" that starts a word, not the one in "./shot.png".
+var absPath = regexp.MustCompile(`(?:^|[\s'"])(/[^\s'"]+)`)
 
-// written returns the files among paths that changed since start (a
-// screenshot, pdf or download), for an agent on another machine.
+// written returns the files among the agent's paths that changed since start
+// (a screenshot, pdf or download), for an agent on another machine.
 func written(paths []string, start time.Time) map[string][]byte {
 	files := map[string][]byte{}
 	for _, p := range paths {
-		if !filepath.IsAbs(p) {
-			continue
-		}
-		st, err := os.Stat(p)
+		st, err := os.Stat(here(p))
 		if err != nil || !st.Mode().IsRegular() || st.ModTime().Before(start) || st.Size() > 64<<20 {
 			continue
 		}
-		if b, err := os.ReadFile(p); err == nil {
+		if b, err := os.ReadFile(here(p)); err == nil {
 			files[p] = b
 		}
 	}

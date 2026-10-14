@@ -28,6 +28,7 @@ type cdpMsg struct {
 // Event handlers run on the read goroutine: they must not call Call.
 type cdpClient struct {
 	conn    *websocket.Conn
+	done    chan struct{} // closed when the connection is gone
 	nextID  atomic.Int64
 	wmu     sync.Mutex
 	mu      sync.Mutex
@@ -42,12 +43,13 @@ func dialCDP(ctx context.Context, url string) (*cdpClient, error) {
 		return nil, err
 	}
 	conn.SetReadLimit(256 << 20)
-	c := &cdpClient{conn: conn, pending: map[int64]chan cdpMsg{}, subs: map[int64]func(cdpMsg){}}
+	c := &cdpClient{conn: conn, done: make(chan struct{}), pending: map[int64]chan cdpMsg{}, subs: map[int64]func(cdpMsg){}}
 	go c.readLoop()
 	return c, nil
 }
 
 func (c *cdpClient) readLoop() {
+	defer close(c.done)
 	for {
 		_, data, err := c.conn.Read(context.Background())
 		if err != nil {
@@ -85,6 +87,11 @@ func (c *cdpClient) readLoop() {
 	}
 }
 
+// maxMessage caps a message to Chrome. One over its 100 MB limit (a paste of
+// a long text, a big 401 page sent back) closes the connection, which every
+// view and the agent's tab tracking share.
+const maxMessage = 64 << 20
+
 func (c *cdpClient) write(ctx context.Context, id int64, sessionID, method string, params any) error {
 	var raw json.RawMessage
 	if params != nil {
@@ -95,6 +102,9 @@ func (c *cdpClient) write(ctx context.Context, id int64, sessionID, method strin
 		raw = b
 	}
 	b, _ := json.Marshal(cdpMsg{ID: id, Method: method, Params: raw, SessionID: sessionID})
+	if len(b) > maxMessage {
+		return fmt.Errorf("%s: %d-byte message, over the %d-byte limit", method, len(b), maxMessage)
+	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	// coder/websocket closes the connection when a Write's context is cancelled
