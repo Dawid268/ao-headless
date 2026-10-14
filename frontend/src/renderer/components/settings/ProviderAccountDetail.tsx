@@ -250,11 +250,11 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 	const currentDefault = page.accounts.find((other) => other.provider === account.provider && other.primary);
 	const offerFrom = page.moveOffer?.toId === account.id && account.primary ? page.accounts.find((other) => other.id === page.moveOffer?.fromId && canMoveSessions(other, account)) : undefined;
 	const signingIn = page.signIn.waiting && page.signIn.login?.accountId === account.id ? page.signIn.login : null;
-	// Removing the default needs a new one, offered straight away. It takes the sessions, so with none any signed-in account will do.
-	const heirs = count ? others : peers;
-	const replacement = account.primary ? heirs.find((other) => other.id === picked) ?? heirs[0] : undefined;
+	// Removing the default needs a new one, offered straight away; any signed-in account can be it.
+	// Sessions it cannot take, a Codex key's on a sign-in for one, wait for a sign-in instead.
+	const replacement = account.primary ? peers.find((other) => other.id === picked) ?? others[0] ?? peers[0] : undefined;
 	const fallback = others.find((other) => other.primary);
-	const removalFact = replacement ? t("providerAccounts.chooseNewDefault")
+	const removalFact = replacement ? (count && !canMoveSessions(account, replacement) ? t("providerAccounts.sessionsWaitForSignIn", { count }) : t("providerAccounts.chooseNewDefault"))
 		: !count ? undefined
 			: !others.length ? t("providerAccounts.sessionsWaitForSignIn", { count })
 				: fallback ? t("providerAccounts.sessionsMoveTo", { count, name: fallback.displayName }) : undefined;
@@ -488,7 +488,7 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 							<Row label={t("providerAccounts.confirmChange")} title={t(signedIn ? "providerAccounts.confirmSignOut" : "providerAccounts.confirmRemove", { email: name })} hint={removalFact}>
 								{replacement ? (
 									<Choice label={replacement.displayName} menuClassName="min-w-60" aria-label={t("providerAccounts.replacementPrimary")} disabled={page.pending}>
-										<AccountMenuItems accounts={heirs} selectedId={replacement.id} markDefault={false} onSelect={(other) => setPicked(other.id)} />
+										<AccountMenuItems accounts={peers} selectedId={replacement.id} markDefault={false} onSelect={(other) => setPicked(other.id)} />
 									</Choice>
 								) : null}
 								<Button type="button" variant="ghost" className="text-muted-foreground" disabled={page.pending} onClick={() => setRemoving(false)}>{t("confirm.cancel")}</Button>

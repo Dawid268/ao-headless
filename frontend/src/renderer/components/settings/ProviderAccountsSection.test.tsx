@@ -829,10 +829,14 @@ describe("where a Codex account's sessions can go", () => {
 		await user.click(within(detail()).getByRole("button", { name: "Do nothing" }));
 		expect(await options()).toEqual(["Do nothing", "Maple Codex"]);
 		await user.keyboard("{Escape}");
-		// The default's replacement takes its sessions.
-		await user.click(within(await askRemoval(user, "Sign out")).getByRole("button", { name: "Replacement default account" }));
-		expect(await options()).toEqual(["Maple Codex"]);
-		await user.keyboard("{Escape}");
+		// Any signed-in account can replace the default; the one offered first can take its sessions.
+		const removal = await askRemoval(user, "Sign out");
+		expect(within(removal).getByRole("button", { name: "Replacement default account" })).toHaveTextContent("Maple Codex");
+		await user.click(within(removal).getByRole("button", { name: "Replacement default account" }));
+		expect(await options()).toEqual(["Maple Codex", "Aspen Codex"]);
+		// A key as the new default cannot take a sign-in's sessions: they wait for a sign-in.
+		await user.click(screen.getByRole("menuitem", { name: /Aspen Codex/ }));
+		expect(removal).toHaveTextContent("1 session waits until you sign in again.");
 		// The only key has nowhere to send its sessions, and as the new default it does not offer to take the sign-in's.
 		await open(user, key);
 		expect(within(detail()).queryByRole("button", { name: "Move sessions" })).toBeNull();
