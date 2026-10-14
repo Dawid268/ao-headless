@@ -55,11 +55,12 @@ func TestACodexSessionMovesOnlyBetweenAccountsOfOneKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.route("s2", "")
+	// The next key signed in takes them, default or not.
 	key = h.addKey("codex", "Second key", "1")
+	h.route("s2", key)
 	if err := h.act(key, "primary"); err != nil {
 		t.Fatal(err)
 	}
-	h.route("s2", key)
 	// A key signed out keeps its sessions until it signs in again; a plan does not take them meanwhile.
 	h.assign("s3", domain.HarnessCodex, key)
 	if err := h.act(key, "sign-out", plus); err != nil {

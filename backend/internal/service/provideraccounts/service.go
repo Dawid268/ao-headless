@@ -315,8 +315,15 @@ func managed(st domain.ProviderAccountState, provider string) bool {
 // makeDefault also gives the account to the provider's waiting sessions that can move to it.
 func makeDefault(st *domain.ProviderAccountState, provider, id string) {
 	st.Defaults[provider] = id
+	giveWaiting(st, provider, id, true)
+}
+
+// giveWaiting gives account id the provider's waiting sessions that can move to
+// it: those whose account was removed and, with signedOut, those whose account
+// is signed out too.
+func giveWaiting(st *domain.ProviderAccountState, provider, id string, signedOut bool) {
 	for i, r := range st.Routes {
-		if r.Provider == provider && waits(*st, r) && takes(*st, r, id) {
+		if r.Provider == provider && (r.AccountID == "" || signedOut && waits(*st, r)) && takes(*st, r, id) {
 			st.Routes[i].AccountID, st.Routes[i].Kind = id, ""
 		}
 	}
@@ -675,6 +682,7 @@ func (s *Service) record(ctx context.Context, provider string, v ports.VerifiedP
 		if st.Defaults[provider] == "" {
 			makeDefault(st, provider, id)
 		}
+		giveWaiting(st, provider, id, false) // the sessions of a removed account go on the next one of their kind
 		return drop, nil
 	})
 	return id, err
