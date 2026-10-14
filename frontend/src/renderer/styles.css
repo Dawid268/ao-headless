@@ -6229,10 +6229,10 @@ html[data-window-translucent="true"] .app-shell-root::before {
 	background-color: color-mix(in srgb, var(--sidebar) 70%, transparent);
 }
 
-/* The startup screen covers the window above (or before) the shell, so it
- * carries the same single tint instead of the clear canvas. */
+/* The startup screen covers the window above (or before) the shell. It has
+ * only the mascot to show, so it skips the tint and shows the bare blur. */
 html[data-window-translucent="true"] .ao-startup-screen {
-	background-color: color-mix(in srgb, var(--sidebar) 70%, transparent);
+	background-color: transparent;
 }
 
 /* The live page is a native view below the shell. Cut the tint out over its
