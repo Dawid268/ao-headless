@@ -24,7 +24,7 @@ func (h *harness) launch(session string, agent domain.AgentHarness, related bool
 // such as a reviewer or a side chat, keeps its account.
 func TestASwitchMovesTheRouteAndASwitchBackRestoresTheAccount(t *testing.T) {
 	h := setup(t)
-	h.signIn("claude", "max@example.com")
+	maxPlan := h.signIn("claude", "max@example.com")
 	work := h.signIn("claude", "work@example.com")
 	codex := h.signIn("codex", "pro@example.com")
 	h.assign("s1", domain.HarnessClaudeCode, work)
@@ -48,6 +48,17 @@ func TestASwitchMovesTheRouteAndASwitchBackRestoresTheAccount(t *testing.T) {
 		t.Fatalf("a side chat on the provider the session left got %v", env)
 	}
 	h.route("s1", codex) // and moved nothing
+	// The account page lists the session under work, and moving it from there moves its Claude route.
+	if err := h.act(maxPlan, "assign-session", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s1", codex)
+	if auth, _ := h.helperAuth("s1", "claude"); auth != "max@example.com-auth" {
+		t.Fatalf("the Claude ticket reaches %q", auth)
+	}
+	if err := h.act(work, "assign-session", "s1"); err != nil {
+		t.Fatal(err)
+	}
 	if env := h.launch("s1", domain.HarnessClaudeCode, false); !reflect.DeepEqual(env, claudeEnv) {
 		t.Fatalf("switch back env=%v", env)
 	}

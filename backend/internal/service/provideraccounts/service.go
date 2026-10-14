@@ -516,8 +516,11 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 				a.WarnAt = min(max(*in.WarnAt, 0), 90)
 			}
 			return "", nil
-		case "assign-session":
+		case "assign-session": // the session's route for this account's provider, its own or its related work's
 			j := routed(*st, domain.SessionID(in.SessionID))
+			if j >= 0 && st.Routes[j].Provider != a.Provider {
+				j = routed(*st, otherRoute(domain.SessionID(in.SessionID), a.Provider))
+			}
 			if j < 0 || !takes(*st, st.Routes[j], id) {
 				return "", ports.ErrProviderAccountIncompatible
 			}
