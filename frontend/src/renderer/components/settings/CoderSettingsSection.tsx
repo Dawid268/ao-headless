@@ -105,7 +105,7 @@ function CoderSettingsSectionInner({ titleHidden }: { titleHidden?: boolean }) {
 				...carriedCoderConfig(loaded),
 				baseUrl: baseUrl.trim(),
 				token: token.trim() === "" ? undefined : token.trim(),
-				...devEnvRequestFields(devEnv),
+				...devEnvRequestFields(devEnv, loaded?.protectSecretFiles !== undefined),
 			});
 			setToken("");
 			// The connection now points at a (possibly new) Coder, so its template list
@@ -514,23 +514,36 @@ function devEnvErrors(draft: DevEnvDraft): Partial<Record<keyof DevEnvDraft, Dev
 }
 
 /**
- * The dev-environment fields for the PUT body, each only when it differs from
- * the default: the PUT replaces the stored config (so leaving one out resets
- * it), and an older control plane rejects fields it does not know.
+ * The dev-environment fields for the PUT body. The control plane keeps the
+ * stored value of any field the request leaves out, so a control plane that
+ * knows every field (it reports protectSecretFiles) gets all of them, defaults
+ * included: that is how clearing the ready check or the working directory, or
+ * turning the workspace user off, takes effect. An older control plane rejects
+ * fields it does not know, so it gets only the non-default ones.
  */
-function devEnvRequestFields(draft: DevEnvDraft): Partial<CloudCpPutOrgCoderConfigRequest> {
+function devEnvRequestFields(draft: DevEnvDraft, explicit: boolean): Partial<CloudCpPutOrgCoderConfigRequest> {
+	const workingDirectory = draft.workingDirectory.trim();
+	const probe = draft.readyProbe.trim();
+	const timeout = draft.readyProbeTimeout.trim();
+	if (explicit) {
+		return {
+			workerUser: draft.workspaceUser ? "workspace" : "ao-worker",
+			reuseExistingCheckout: draft.workspaceUser && draft.reuseCheckout,
+			workingDirectory: draft.workspaceUser ? workingDirectory : "",
+			protectSecretFiles: draft.protectSecretFiles,
+			readyProbe: probe,
+			readyProbeTimeoutSeconds: probe !== "" && timeout !== "" ? Number(timeout) : 0,
+		};
+	}
 	const fields: Partial<CloudCpPutOrgCoderConfigRequest> = {};
 	if (draft.workspaceUser) {
 		fields.workerUser = "workspace";
 		fields.reuseExistingCheckout = draft.reuseCheckout;
-		const workingDirectory = draft.workingDirectory.trim();
 		if (workingDirectory !== "") fields.workingDirectory = workingDirectory;
 	}
 	if (!draft.protectSecretFiles) fields.protectSecretFiles = false;
-	const probe = draft.readyProbe.trim();
 	if (probe !== "") {
 		fields.readyProbe = probe;
-		const timeout = draft.readyProbeTimeout.trim();
 		if (timeout !== "") fields.readyProbeTimeoutSeconds = Number(timeout);
 	}
 	return fields;

@@ -248,6 +248,43 @@ describe("CoderSettingsSection dev environment", () => {
 		});
 	});
 
+	it("clears a stored ready check and turns the workspace user off on a current control plane", async () => {
+		// A control plane that reports protectSecretFiles knows every field and keeps
+		// the stored value of any field left out, so the save sends them all.
+		mocks.config.data = {
+			...savedConfig, templateId: "t-1", protectSecretFiles: true,
+			workerUser: "workspace", reuseExistingCheckout: false, workingDirectory: "~/work/{repo}",
+			readyProbe: "grep -q '^Ready' ~/.bootstrap-status", readyProbeTimeoutSeconds: 600,
+		};
+		const user = userEvent.setup();
+		renderSection();
+		await user.clear(screen.getByRole("textbox", { name: "Workspace ready check" }));
+		await user.click(screen.getByRole("button", { name: "Save and fetch templates" }));
+		await waitFor(() => expect(mocks.putOrgCoderConfig).toHaveBeenCalledTimes(1));
+		expect(mocks.putOrgCoderConfig).toHaveBeenLastCalledWith("org-1", {
+			baseUrl: "https://coder.test",
+			token: undefined,
+			templateId: "t-1",
+			workerUser: "workspace",
+			reuseExistingCheckout: false,
+			workingDirectory: "~/work/{repo}",
+			protectSecretFiles: true,
+			readyProbe: "",
+			readyProbeTimeoutSeconds: 0,
+		});
+
+		await user.clear(screen.getByRole("textbox", { name: "Working directory" }));
+		await user.click(screen.getByRole("switch", { name: "Run the agent as the workspace user" }));
+		await user.click(screen.getByRole("button", { name: "Save and fetch templates" }));
+		await waitFor(() => expect(mocks.putOrgCoderConfig).toHaveBeenCalledTimes(2));
+		expect(mocks.putOrgCoderConfig).toHaveBeenLastCalledWith("org-1", expect.objectContaining({
+			workerUser: "ao-worker",
+			reuseExistingCheckout: false,
+			workingDirectory: "",
+			readyProbe: "",
+		}));
+	});
+
 	it("sends no dev-environment fields while they are at their defaults", async () => {
 		mocks.config.data = undefined;
 		const user = userEvent.setup();
