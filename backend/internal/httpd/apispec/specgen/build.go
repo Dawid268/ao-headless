@@ -157,6 +157,7 @@ func schemaName(_ reflect.Type, defaultName string) string {
 var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
 	"ControllersSettingsResponse":                          "SettingsResponse",
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
+	"ControllersDesktopArtifactLocationResponse":           "DesktopArtifactLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
 	"ControllersUpdateChatHibernationRequest":              "UpdateChatHibernationRequest",
 	"ControllersConversationSnapshotResponse":              "ConversationSnapshotResponse",
@@ -318,6 +319,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersCleanupSessionsResponse":                  "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":                    "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":                       "WorkspaceFileQuery",
+	"ControllersArtifactFileQuery":                        "ArtifactFileQuery",
 	"ControllersPRFileQuery":                              "PRFileQuery",
 	"ControllersPRFileRevisionQuery":                      "PRFileRevisionQuery",
 	"ControllersUpdateWorkspaceFileRequest":               "UpdateWorkspaceFileRequest",
@@ -2540,6 +2542,17 @@ func sessionOperations() []operation {
 			contentTypes: map[int]string{http.StatusOK: "text/html"},
 		},
 		{
+			method: http.MethodDelete, path: "/api/v1/sessions/{sessionId}/artifact-files", id: "deleteSessionArtifactFile", tag: "sessions",
+			summary:    "Delete one file from a session's artifact directory and return the session with its refreshed artifact list",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ArtifactFileQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/app/*", id: "getSessionPreviewApp", tag: "sessions",
 			summary:      "Proxy the running session-owned application preview",
 			pathParams:   []any{controllers.SessionIDParam{}},
@@ -2750,6 +2763,17 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.DesktopWorkspaceLocationResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/desktop/sessions/{sessionId}/artifacts", id: "getDesktopSessionArtifacts", tag: "sessions",
+			summary:    "Resolve a session artifact directory for the loopback desktop supervisor",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DesktopArtifactLocationResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
