@@ -82,6 +82,13 @@ func (r *Routes) Acquire(ticket string) (Route, func(), bool) {
 		}
 	}, true
 }
+
+// Busy reports whether any request holds an account.
+func (r *Routes) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.inflight) > 0
+}
 func writePrivate(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err

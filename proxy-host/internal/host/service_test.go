@@ -90,14 +90,14 @@ func TestBuildRejectsUnsafeConfiguration(t *testing.T) {
 		{t.TempDir(), 1234, control, "short"},
 		{t.TempDir(), 1234, control, control},
 	} {
-		if service, err := Build(tc.root, tc.port, tc.control, tc.inference, openTestRoutes(t), openTestActivity(t)); err == nil || service != nil {
+		if service, err := Build(tc.root, tc.port, tc.control, tc.inference, "", openTestRoutes(t), openTestActivity(t), nil); err == nil || service != nil {
 			t.Fatalf("unsafe configuration accepted: root=%s port=%d", tc.root, tc.port)
 		}
 		if entries, _ := os.ReadDir(tc.root); len(entries) != 0 {
 			t.Fatalf("a refused configuration wrote %v", entries)
 		}
 	}
-	if err := Run(context.Background(), "relative", 0, "", ""); err == nil {
+	if err := Run(context.Background(), "relative", 0, "", "", ""); err == nil {
 		t.Fatal("an invalid run started")
 	}
 }
@@ -123,7 +123,7 @@ func TestBuildKeepsEverythingPrivateAndUnderItsDataDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 		routes := OpenRoutes(filepath.Join(root, "run", "routes.json"))
-		if service, err := Build(root, 12345, control, inference, routes, openTestActivity(t)); err != nil || service == nil {
+		if service, err := Build(root, 12345, control, inference, "", routes, openTestActivity(t), nil); err != nil || service == nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		cfg, raw := savedConfig(t, root)
@@ -166,7 +166,7 @@ func TestBuildTightensTheCredentialDirectoryAndKeepsItsAccounts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(authDir, "kept.json"), credential, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Build(root, 12345, control, inference, openTestRoutes(t), openTestActivity(t)); err != nil {
+	if _, err := Build(root, 12345, control, inference, "", openTestRoutes(t), openTestActivity(t), nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(authDir)
@@ -186,7 +186,7 @@ func TestBuildFailsRatherThanRunOnStorageItCannotUse(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if service, err := Build(root, 12345, control, inference, openTestRoutes(t), openTestActivity(t)); err == nil || service != nil {
+		if service, err := Build(root, 12345, control, inference, "", openTestRoutes(t), openTestActivity(t), nil); err == nil || service != nil {
 			t.Fatalf("%s: the helper was built anyway", name)
 		}
 		// Nothing is replaced: a damaged configuration may still hold the person's API keys.
@@ -198,7 +198,7 @@ func TestBuildFailsRatherThanRunOnStorageItCannotUse(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "config.yaml"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if service, err := Build(root, 12345, control, inference, openTestRoutes(t), openTestActivity(t)); err == nil || service != nil {
+	if service, err := Build(root, 12345, control, inference, "", openTestRoutes(t), openTestActivity(t), nil); err == nil || service != nil {
 		t.Fatal("a configuration path that is a directory was accepted")
 	}
 }
@@ -236,8 +236,19 @@ func running(t *testing.T, service *cliproxy.Service, port int) (call func(metho
 		}
 	}
 	t.Cleanup(stop)
+	call = caller(t, port)
+	// The SDK loads its configuration once more after it starts listening; nothing is asked of it before that.
+	awaitLoad(t, 300*time.Millisecond)
+	if status, body := call(http.MethodGet, "/ao/status", control, ""); status != http.StatusOK || body != `{"build":"","protocol_version":3}` {
+		t.Fatalf("the started service answered %d %s", status, body)
+	}
+	return call, stop
+}
+
+// caller returns a function that makes one request of the helper on port, with key as its bearer.
+func caller(t *testing.T, port int) func(method, path, key, body string) (int, string) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	call = func(method, path, key, body string) (int, string) {
+	return func(method, path, key, body string) (int, string) {
 		request, err := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
@@ -249,20 +260,17 @@ func running(t *testing.T, service *cliproxy.Service, port int) (call func(metho
 			return 0, err.Error()
 		}
 		defer func() { _ = response.Body.Close() }()
-		data, _ := io.ReadAll(response.Body)
+		data, err := io.ReadAll(response.Body)
+		if err != nil {
+			return 0, err.Error()
+		}
 		return response.StatusCode, strings.TrimSpace(string(data))
 	}
-	// The SDK loads its configuration once more after it starts listening; nothing is asked of it before that.
-	awaitLoad(t, 300*time.Millisecond)
-	if status, body := call(http.MethodGet, "/ao/status", control, ""); status != http.StatusOK || body != `{"protocol_version":3}` {
-		t.Fatalf("the started service answered %d %s", status, body)
-	}
-	return call, stop
 }
 
 func TestBuiltHelperServesTheSDKsSignInsAndKeepsAPIKeysAcrossRestarts(t *testing.T) {
 	root, port := t.TempDir(), freePort(t)
-	service, err := Build(root, port, control, inference, OpenRoutes(filepath.Join(root, "run", "routes.json")), openTestActivity(t))
+	service, err := Build(root, port, control, inference, "", OpenRoutes(filepath.Join(root, "run", "routes.json")), openTestActivity(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +325,7 @@ func TestBuiltHelperServesTheSDKsSignInsAndKeepsAPIKeysAcrossRestarts(t *testing
 	}
 	stop()
 	restartedPort := freePort(t)
-	if _, err = Build(root, restartedPort, control, inference, OpenRoutes(filepath.Join(root, "run", "routes.json")), openTestActivity(t)); err != nil {
+	if _, err = Build(root, restartedPort, control, inference, "", OpenRoutes(filepath.Join(root, "run", "routes.json")), openTestActivity(t), nil); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _ := savedConfig(t, root)
@@ -330,7 +338,7 @@ func TestBuiltHelperServesTheSDKsSignInsAndKeepsAPIKeysAcrossRestarts(t *testing
 // sign-ins ban 127.0.0.1 for half an hour: the daemon's own address.
 func TestRedisCommandsOnThePortGetNoAnswerAndLockNobodyOut(t *testing.T) {
 	root, port := t.TempDir(), freePort(t)
-	service, err := Build(root, port, control, inference, openTestRoutes(t), openTestActivity(t))
+	service, err := Build(root, port, control, inference, "", openTestRoutes(t), openTestActivity(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,6 +363,38 @@ func TestRedisCommandsOnThePortGetNoAnswerAndLockNobodyOut(t *testing.T) {
 	}
 	if len(served) > 0 {
 		t.Fatalf("the port served Redis: %v", served)
+	}
+}
+
+// The daemon replaces a helper whose build is not its own: once no request holds an account, it asks it to stop and starts its own.
+func TestRunReportsItsBuildAndEndsWhenAskedToStop(t *testing.T) {
+	root, port := t.TempDir(), freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	for len(loaded) > 0 {
+		<-loaded
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- Run(ctx, root, port, control, inference, "4f1c9e") }()
+	awaitLoad(t, 300*time.Millisecond)
+	call := caller(t, port)
+	if status, body := call(http.MethodGet, "/ao/status", control, ""); status != http.StatusOK || body != `{"build":"4f1c9e","protocol_version":3}` {
+		t.Fatalf("status: %d %s", status, body)
+	}
+	if status, body := call(http.MethodPost, "/ao/stop", control, ""); status != http.StatusAccepted || body != "" {
+		t.Fatalf("stop: %d %s", status, body)
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("the run ended with %v", err)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatal("the helper did not stop")
+	}
+	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second); err == nil {
+		_ = conn.Close()
+		t.Fatal("the stopped helper still listens")
 	}
 }
 

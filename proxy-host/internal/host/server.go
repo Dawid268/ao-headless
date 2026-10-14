@@ -23,6 +23,8 @@ type Boundary struct {
 	Routes                   *Routes
 	ControlKey, InferenceKey string
 	ConfigPath               string // where the management calls save the SDK's configuration
+	BuildID                  string // the daemon's id for this helper binary, "" when it gave none
+	Stop                     func() // ends the helper's run
 	Logins                   *Logins
 	Activity                 *Activity
 }
@@ -147,7 +149,22 @@ func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg 
 			return handle(ctx, auth, body)
 		})
 	}
-	engine.GET("/ao/status", call(func(context.Context, request) (int, any) { return http.StatusOK, gin.H{"protocol_version": 3} }))
+	engine.GET("/ao/status", call(func(context.Context, request) (int, any) {
+		return http.StatusOK, gin.H{"protocol_version": 3, "build": b.BuildID}
+	}))
+	// The daemon replaces a helper of another build only while no request holds an account.
+	engine.POST("/ao/stop", func(c *gin.Context) {
+		// ponytail: a request admitted between this check and the shutdown is cut off; refuse admissions from here on if that matters.
+		if b.Routes.Busy() {
+			c.JSON(http.StatusConflict, gin.H{"code": "SESSION_BUSY"})
+			return
+		}
+		// Sent whole before the stop, which closes every connection at once.
+		c.Header("Content-Length", "0")
+		c.Status(http.StatusAccepted)
+		c.Writer.Flush()
+		b.Stop()
+	})
 	engine.PUT("/ao/routes", call(func(_ context.Context, body request) (int, any) {
 		if err := b.Routes.Apply(body.Routes, body.AuthIDs); errors.Is(err, ErrBusy) {
 			return http.StatusConflict, gin.H{"code": "SESSION_BUSY"}

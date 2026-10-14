@@ -30,7 +30,7 @@ func echoFixture(t *testing.T) *fixture {
 
 func TestControlKeyAndSessionTicketsOpenDifferentDoors(t *testing.T) {
 	f := echoFixture(t)
-	private := []string{"GET /ao/status", "PUT /ao/routes", "POST /ao/account-models", "POST /ao/account-state", "POST /ao/provider-call", "POST /ao/account-resume",
+	private := []string{"GET /ao/status", "POST /ao/stop", "PUT /ao/routes", "POST /ao/account-models", "POST /ao/account-state", "POST /ao/provider-call", "POST /ao/account-resume",
 		"POST /ao/account-refresh", "GET /ao/login-result/attempt", "POST /ao/login/device/start", "GET /ao/login/status", "DELETE /ao/login/status", "POST /ao/tag-api-key",
 		"GET /v8/management/credentials", "GET /v8/management/oauth/status", "GET /v0/management/codex-api-key", "GET /v0/management/config"}
 	for _, token := range []string{"", "unknown", "codex-ticket", "claude-ticket", inference, control + "x", control[1:]} {
@@ -42,8 +42,8 @@ func TestControlKeyAndSessionTicketsOpenDifferentDoors(t *testing.T) {
 			}
 		}
 	}
-	if admitted(f.routes, "codex-ticket") != "alice" {
-		t.Fatal("a caller without the control key changed the routes")
+	if admitted(f.routes, "codex-ticket") != "alice" || f.stopped.Err() != nil {
+		t.Fatal("a caller without the control key changed the routes or stopped the helper")
 	}
 	for _, token := range []string{"", "unknown", control, inference} {
 		for path := range sessionPaths {
@@ -52,8 +52,26 @@ func TestControlKeyAndSessionTicketsOpenDifferentDoors(t *testing.T) {
 			}
 		}
 	}
-	if response := f.send(http.MethodGet, "/ao/status", control, ""); response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"protocol_version":3}` {
+	// Started without a build id, the helper reports an empty one.
+	if response := f.send(http.MethodGet, "/ao/status", control, ""); response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"build":"","protocol_version":3}` {
 		t.Fatalf("status: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestStopWaitsUntilNoRequestHoldsAnAccount(t *testing.T) {
+	f, _ := bareFixture(t)
+	f.route("ticket codex alice")
+	_, release, _ := f.routes.Acquire("ticket")
+	if response := f.send(http.MethodPost, "/ao/stop", control, ""); response.Code != http.StatusConflict || strings.TrimSpace(response.Body.String()) != `{"code":"SESSION_BUSY"}` || f.stopped.Err() != nil {
+		t.Fatalf("stop while busy: %d %s, stopped %v", response.Code, response.Body.String(), f.stopped.Err())
+	}
+	release()
+	// A body or none; the answer is complete before the helper stops.
+	for _, body := range []string{"", "{}"} {
+		response := f.send(http.MethodPost, "/ao/stop", control, body)
+		if response.Code != http.StatusAccepted || response.Body.Len() != 0 || response.Header().Get("Content-Length") != "0" || f.stopped.Err() == nil {
+			t.Fatalf("stop while idle with %q: %d %q, stopped %v", body, response.Code, response.Body.String(), f.stopped.Err())
+		}
 	}
 }
 

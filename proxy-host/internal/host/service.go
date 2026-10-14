@@ -16,8 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Build writes the SDK's configuration under root and puts the boundary in front of the SDK.
-func Build(root string, port int, controlKey, inferenceKey string, routes *Routes, activity *Activity) (*cliproxy.Service, error) {
+// Build writes the SDK's configuration under root and puts the boundary in front of the SDK; build is what /ao/status reports, stop what /ao/stop calls.
+func Build(root string, port int, controlKey, inferenceKey, build string, routes *Routes, activity *Activity, stop func()) (*cliproxy.Service, error) {
 	if !filepath.IsAbs(root) || port < 1 || port > 65535 || len(controlKey) < 32 || len(inferenceKey) < 32 || controlKey == inferenceKey {
 		return nil, errors.New("invalid proxy host configuration")
 	}
@@ -51,15 +51,19 @@ func Build(root string, port int, controlKey, inferenceKey string, routes *Route
 	if err != nil {
 		return nil, err
 	}
-	b := Boundary{Routes: routes, ControlKey: controlKey, InferenceKey: inferenceKey, ConfigPath: path, Logins: newLogins(authDir), Activity: activity}
+	b := Boundary{Routes: routes, ControlKey: controlKey, InferenceKey: inferenceKey, ConfigPath: path, BuildID: build, Stop: stop, Logins: newLogins(authDir), Activity: activity}
 	coreusage.RegisterNamedPlugin("ao-activity", activity)
 	// The SDK runs an added middleware after its logger, which gives a request the id that bind goes by.
 	return cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).
 		WithServerOptions(proxyapi.WithEngineConfigurator(func(e *gin.Engine) { e.Use(b.Middleware) }), proxyapi.WithMiddleware(activity.bind), proxyapi.WithRouterConfigurator(b.Configure)).Build()
 }
-func Run(ctx context.Context, root string, port int, controlKey, inferenceKey string) error {
+
+// Run serves until ctx ends or the daemon asks the helper to stop; either is a clean end.
+func Run(ctx context.Context, root string, port int, controlKey, inferenceKey, build string) error {
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	activity := OpenActivity(filepath.Join(root, "run", "activity.json"))
-	service, err := Build(root, port, controlKey, inferenceKey, OpenRoutes(filepath.Join(root, "run", "routes.json")), activity)
+	service, err := Build(root, port, controlKey, inferenceKey, build, OpenRoutes(filepath.Join(root, "run", "routes.json")), activity, stop)
 	if err != nil {
 		return err
 	}
@@ -70,7 +74,10 @@ func Run(ctx context.Context, root string, port int, controlKey, inferenceKey st
 			activity.save()
 		}
 	}()
-	return service.Run(ctx)
+	if err = service.Run(ctx); ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 func tagLogin(ctx context.Context, a *coreauth.Auth) error {
 	if info := coreauth.GetRequestInfo(ctx); info != nil && info.Headers.Get("X-AO-Login-ID") != "" && len(info.Headers.Get("X-AO-Login-ID")) <= 128 {
