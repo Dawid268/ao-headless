@@ -974,6 +974,31 @@ describe("startRemoteProxy over HTTP/2", () => {
 		expect(seen.every((entry) => entry.auth === "Bearer pw" && entry.url.startsWith("/api/v1/sessions/ao-1/preview/app/src/m"))).toBe(true);
 	});
 
+	it("reads a request target starting with two slashes as a path, not a host", async () => {
+		const { port, seen } = await startUpstream(() => ({ status: 200, body: "ok" }));
+		proxy = await startRemoteProxy({ label: "workbox", url: `http://127.0.0.1:${port}`, password: "pw" });
+		const preview = new URL(proxy.previewUrl("ao-1", "http://localhost:5173/"));
+		const client = http2Connect(`https://127.0.0.1:${preview.port}`, trustPreview(preview));
+		const status = (path: string) => new Promise<number>((resolve, reject) => {
+			const stream = client.request({ ":path": path, ":authority": preview.host });
+			stream.on("response", (headers) => resolve(Number(headers[":status"])));
+			stream.on("error", reject);
+			stream.resume();
+		});
+		expect(await status("//")).toBe(200);
+		expect(await status("//:x")).toBe(200);
+		client.close();
+		expect(seen.map((entry) => entry.url)).toEqual(["/api/v1/sessions/ao-1/preview/app/", "/api/v1/sessions/ao-1/preview/app/:x"]);
+		// An upgrade it cannot serve is dropped, not thrown on.
+		const artifact = new URL(proxy.previewUrl("ao-1", `http://ao-preview-artifact.mfxs2mi.localhost:${port}/index.html`));
+		const socket = netConnect(Number(new URL(proxy.base).port), "127.0.0.1");
+		socket.on("error", () => undefined);
+		const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+		socket.write(`GET // HTTP/1.1\r\nHost: ${artifact.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGVzdA==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+		await closed;
+		expect(seen).toHaveLength(2);
+	});
+
 	it("verifies the host once per upstream session, before the credential", async () => {
 		const { port, seen, sessions } = await startHttp2Upstream("h_workbox");
 		proxy = await startRemoteProxy({ hostId: "h_workbox", label: "workbox", url: `http://127.0.0.1:${port}`, password: "pw" });
@@ -1017,8 +1042,10 @@ describe("startRemoteProxy through an HTTPS host's tunnel", () => {
 	});
 
 	// An HTTPS daemon (as behind a Cloudflare tunnel). With tunnel=true it serves
-	// HTTP/2 inside a WebSocket at /api/v1/tunnel, as the AO daemon does.
-	async function startSecureUpstream(tunnel: boolean): Promise<{ port: number; direct: string[]; tunneled: Seen[]; tunnels: number }> {
+	// HTTP/2 inside a WebSocket at /api/v1/tunnel, as the AO daemon does. With a
+	// prefix it sits behind a reverse proxy that serves it there, stripped; the
+	// tunnel still ends at the daemon itself.
+	async function startSecureUpstream(tunnel: boolean, prefix = ""): Promise<{ port: number; direct: string[]; tunneled: Seen[]; tunnels: number }> {
 		const state = { port: 0, direct: [] as string[], tunneled: [] as Seen[], tunnels: 0 };
 		const identity = JSON.stringify({ hostId: "h_workbox", apiVersion: 1 });
 		const inner = createHttp2Server((req, res) => {
@@ -1027,12 +1054,13 @@ describe("startRemoteProxy through an HTTPS host's tunnel", () => {
 		});
 		const sockets = new WebSocketServer({ noServer: true });
 		const { cert, key } = previewCertificate();
+		const unprefixed = (url = "") => (url.startsWith(`${prefix}/`) ? url.slice(prefix.length) : "");
 		secureUpstream = createSecureServer({ cert, key, allowHTTP1: true }, (req, res) => {
 			state.direct.push(`${req.httpVersion} ${req.url}`);
-			res.end(req.url === "/api/v1/identity" ? identity : JSON.stringify({ proto: req.httpVersion }));
+			res.end(unprefixed(req.url) === "/api/v1/identity" ? identity : JSON.stringify({ proto: req.httpVersion }));
 		});
 		secureUpstream.on("upgrade", (req: IncomingMessage, socket, head) => {
-			if (!tunnel || req.url !== "/api/v1/tunnel" || req.headers.authorization !== "Bearer pw") {
+			if (!tunnel || unprefixed(req.url) !== "/api/v1/tunnel" || req.headers.authorization !== "Bearer pw") {
 				socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
 				return;
 			}
@@ -1064,6 +1092,22 @@ describe("startRemoteProxy through an HTTPS host's tunnel", () => {
 		expect(body.proto).toBe("2.0");
 		expect(host.tunnels).toBe(0);
 		expect(host.direct.at(-1)).toBe("2.0 /api/v1/projects");
+	});
+
+	it("keeps a host's path prefix to its reverse proxy and drops it inside the tunnel", async () => {
+		const host = await startSecureUpstream(true, "/ao");
+		proxy = await startRemoteProxy({ hostId: "h_workbox", label: "workbox", url: `https://127.0.0.1:${host.port}/ao`, password: "pw" });
+		expect(await (await fetch(`${proxy.base}/api/v1/projects`)).json()).toEqual({ proto: "2.0" });
+		expect(host.tunnels).toBe(1);
+		expect(host.direct.map((line) => line.split(" ")[1])).toEqual(["/ao/api/v1/identity"]);
+		expect(host.tunneled.map((entry) => entry.url)).toEqual(["/api/v1/identity", "/api/v1/projects"]);
+	});
+
+	it("keeps a host's path prefix over plain HTTP/2 to its reverse proxy", async () => {
+		const host = await startSecureUpstream(false, "/ao");
+		proxy = await startRemoteProxy({ hostId: "h_workbox", label: "workbox", url: `https://127.0.0.1:${host.port}/ao`, password: "pw" });
+		expect(await (await fetch(`${proxy.base}/api/v1/projects`)).json()).toEqual({ proto: "2.0" });
+		expect(host.direct.at(-1)).toBe("2.0 /ao/api/v1/projects");
 	});
 });
 
@@ -1185,6 +1229,34 @@ describe("startRemoteProxy when the upstream fails", () => {
 			return new Promise<void>((resolve) => relay.close(() => resolve()));
 		});
 		return { port: (relay.address() as AddressInfo).port, silence: () => { for (const link of links) link.quiet = true; } };
+	}
+
+	// A TCP relay to a daemon that holds the daemon's answers to pings back for
+	// holdMs, as a slow uplink does: there a ping waits behind the data queued
+	// ahead of it. Every other frame goes straight through.
+	async function startPongHoldingRelay(target: number, holdMs: number) {
+		const relay = createNetServer((client) => {
+			const daemon = netConnect(target, "127.0.0.1");
+			let frames = Buffer.alloc(0);
+			client.pipe(daemon);
+			daemon.on("data", (chunk: Buffer) => {
+				frames = Buffer.concat([frames, chunk]);
+				while (frames.length >= 9 && frames.length >= 9 + frames.readUIntBE(0, 3)) {
+					const frame = frames.subarray(0, 9 + frames.readUIntBE(0, 3));
+					frames = frames.subarray(frame.length);
+					// A PING frame with its ACK flag set.
+					if (frame[3] === 6 && frame[4] & 1) setTimeout(() => client.write(frame), holdMs);
+					else client.write(frame);
+				}
+			});
+			for (const end of [client, daemon]) {
+				end.on("error", () => undefined);
+				end.once("close", () => { client.destroy(); daemon.destroy(); });
+			}
+		});
+		await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+		cleanups.push(() => new Promise<void>((resolve) => relay.close(() => resolve())));
+		return (relay.address() as AddressInfo).port;
 	}
 
 	// The browser panel's side of a preview: an HTTP/2 connection to the proxy.
@@ -1381,6 +1453,143 @@ describe("startRemoteProxy when the upstream fails", () => {
 		vi.spyOn(Date, "now").mockImplementation(() => now() + 61_000);
 		expect(await (await fetch(`${proxy.base}/api/v1/projects`)).json()).toEqual({ proto: "2.0" });
 		expect(host.upgrades).toBe(2);
+	});
+
+	// How the browser panel saw a preview stream end: 0 (NO_ERROR) reads as a complete body.
+	const rstCodeOf = (stream: ReturnType<ReturnType<typeof previewBrowser>>) => new Promise<number>((resolve) => {
+		stream.resume();
+		stream.on("close", () => resolve(stream.rstCode));
+	});
+
+	it("resets a preview stream whose body the host cut off, so the browser cannot take it as complete", async () => {
+		const port = await startH2Daemon((req, res, drop) => {
+			res.writeHead(200, { "content-type": "text/javascript", "content-length": "20000" });
+			res.write("x".repeat(5_000));
+			setTimeout(() => (req.url.endsWith("/reset.js") ? res.stream.close(http2Constants.NGHTTP2_INTERNAL_ERROR) : drop()), 50);
+		});
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${port}`));
+		const request = previewBrowser(proxy);
+		// Reset by the host, then cut with its connection (that stream just ends, with code 0).
+		expect(await rstCodeOf(request("/src/reset.js"))).not.toBe(http2Constants.NGHTTP2_NO_ERROR);
+		expect(await rstCodeOf(request("/src/drop.js"))).not.toBe(http2Constants.NGHTTP2_NO_ERROR);
+	});
+
+	it("resets a preview stream whose HTTP/1.1 host cut its body off", async () => {
+		upstream = createServer((req, res) => {
+			if (req.url === "/api/v1/identity") return void res.end(identity);
+			res.writeHead(200, { "content-type": "text/javascript", "content-length": "20000" });
+			res.write("x".repeat(5_000));
+			setTimeout(() => res.destroy(), 50);
+		});
+		await new Promise<void>((resolve) => upstream?.listen(0, "127.0.0.1", resolve));
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`));
+		expect(await rstCodeOf(previewBrowser(proxy)("/src/main.js"))).not.toBe(http2Constants.NGHTTP2_NO_ERROR);
+	});
+
+	it("answers 502 for a status HTTP/2 cannot carry, and drops connection-specific headers", async () => {
+		upstream = createServer((req, res) => {
+			if (req.url === "/api/v1/identity") return void res.end(identity);
+			if (req.url?.endsWith("/odd")) return void res.writeHead(999).end("odd");
+			res.writeHead(200, { te: "gzip", "http2-settings": "AAMAAABk", "x-app": "kept" }).end("ok");
+		});
+		await new Promise<void>((resolve) => upstream?.listen(0, "127.0.0.1", resolve));
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`));
+		const request = previewBrowser(proxy);
+		const head = (path: string) => new Promise<Record<string, unknown>>((resolve) => request(path).once("response", resolve));
+		expect(await head("/odd")).toMatchObject({ ":status": 502 });
+		const ok = await head("/");
+		expect(ok).toMatchObject({ ":status": 200, "x-app": "kept" });
+		expect(ok).not.toHaveProperty("te");
+		expect(ok).not.toHaveProperty("http2-settings");
+	});
+
+	it("keeps slots for the renderer's own requests while a preview's requests hang", async () => {
+		let hung = 0;
+		const port = await startH2Daemon((req, res) => {
+			// A dev server that never answers; the daemon sets no deadline on it.
+			if (req.url.includes("/preview/app/")) return void hung++;
+			res.end("{}");
+		});
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${port}`));
+		const request = previewBrowser(proxy);
+		for (let i = 0; i < 100; i++) request(`/src/m${i}.ts`);
+		await vi.waitFor(() => expect(hung).toBeGreaterThanOrEqual(80));
+		const response = await within(fetch(`${proxy.base}/api/v1/sessions`));
+		expect(response === "hung" ? "hung" : response.status).toBe(200);
+	});
+
+	it("sends requests that waited past the host's GOAWAY on a new session", async () => {
+		const held: Http2ServerResponse[] = [];
+		const sessions = new Set<unknown>();
+		let closing = false;
+		const port = await startH2Daemon((req, res) => {
+			sessions.add(req.stream.session);
+			if (closing) return void res.end("{}");
+			held.push(res);
+		});
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${port}`));
+		const request = previewBrowser(proxy);
+		const statuses = Array.from({ length: 110 }, (_, i) => new Promise<number>((resolve) => {
+			const stream = request(`/src/m${i}.ts`);
+			let status = 0;
+			stream.on("response", (headers) => { status = Number(headers[":status"]); });
+			stream.resume();
+			stream.on("close", () => resolve(status));
+		}));
+		// The host holds every request the proxy lets through; the rest wait for a slot.
+		await vi.waitFor(() => expect(held.length).toBeGreaterThanOrEqual(80));
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		// A graceful GOAWAY: the requests already sent finish, no new ones start.
+		closing = true;
+		held[0].stream.session?.close();
+		for (const res of held) res.end("{}");
+		expect(new Set(await Promise.all(statuses))).toEqual(new Set([200]));
+		expect(sessions.size).toBe(2);
+	});
+
+	it("sends a request without a body again, once, when the host refused its stream", async () => {
+		const attempts: string[] = [];
+		const port = await startH2Daemon((req, res) => {
+			const attempt = `${req.method} ${req.url}`;
+			attempts.push(attempt);
+			// A refused stream was never acted on (RFC 9113 §8.7).
+			if (req.url.endsWith("/busy") || attempts.filter((line) => line === attempt).length === 1)
+				return void res.stream.close(http2Constants.NGHTTP2_REFUSED_STREAM);
+			res.end("{}");
+		});
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${port}`));
+		expect((await fetch(`${proxy.base}/api/v1/projects`)).status).toBe(200);
+		expect((await fetch(`${proxy.base}/api/v1/busy`)).status).toBe(502);
+		expect((await fetch(`${proxy.base}/api/v1/projects`, { method: "POST", body: "{}" })).status).toBe(502);
+		expect(attempts).toEqual(["GET /api/v1/projects", "GET /api/v1/projects", "GET /api/v1/busy", "GET /api/v1/busy", "POST /api/v1/projects"]);
+	});
+
+	it("keeps a session whose ping waits behind an upload the host is still taking in", async () => {
+		const port = await startH2Daemon((req, res) => {
+			let size = 0;
+			req.on("data", (chunk: Buffer) => (size += chunk.length));
+			req.on("end", () => res.end(JSON.stringify({ size })));
+		});
+		const relay = await startPongHoldingRelay(port, 1_000);
+		proxy = await startRemoteProxy(daemonEntry(`http://127.0.0.1:${relay}`), undefined, fast);
+		// The upload arrives over several ping intervals; the host's window
+		// updates for it come back long before the ping's answer.
+		const answer = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+			const upload = httpRequest(`${proxy!.base}/api/v1/sessions/ao-1/attachments`, { method: "POST" }, (res) => {
+				let body = "";
+				res.on("data", (chunk) => (body += chunk));
+				res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+			});
+			upload.on("error", reject);
+			let chunks = 0;
+			const timer = setInterval(() => {
+				upload.write(Buffer.alloc(32 << 10));
+				if (++chunks < 16) return;
+				clearInterval(timer);
+				upload.end();
+			}, 50);
+		});
+		expect(answer).toEqual({ status: 200, body: JSON.stringify({ size: 512 << 10 }) });
 	});
 
 	it("gives no agent tab when the host is unreachable or its agent browser fails", async () => {

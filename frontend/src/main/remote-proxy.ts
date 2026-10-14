@@ -67,6 +67,10 @@ class UpstreamHttp2Unavailable extends Error {}
 
 // Cloudflare quick tunnels answer 429 past 200 requests in flight.
 const MAX_PENDING_UPSTREAM_STREAMS = 100;
+// Preview requests stop this far short of it: a dev server that leaves its
+// requests hanging (the daemon sets them no deadline) must not take every
+// slot the renderer's own requests need.
+const RENDERER_STREAM_HEADROOM = 20;
 const HTTP2_RETRY_MS = 60_000;
 const UPSTREAM_STREAM_WINDOW = 4 << 20;
 const UPSTREAM_SESSION_WINDOW = 32 << 20;
@@ -119,7 +123,7 @@ const STRIP_REQUEST_HEADERS = [
 ];
 // Connection-specific headers: meaningless past one hop, and an HTTP/2
 // response refuses them outright.
-const HOP_BY_HOP_RESPONSE_HEADERS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"];
+const HOP_BY_HOP_RESPONSE_HEADERS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te", "http2-settings"];
 
 // Nothing in this file may log a secret. Not the connection password, not the
 // proxy token, and not `req.url` (its first segment IS the token) — only the
@@ -199,7 +203,8 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		const target = previewHosts.get(rawHost.toLowerCase());
 		if (!target) return null;
 		if (target.kind !== "app" && target.kind !== "agent" && method !== "GET" && method !== "HEAD") return null;
-		const parsed = new URL(rawUrl, "http://localhost");
+		// The target is a path: "//x" names no host, and must not throw as one.
+		const parsed = new URL(`http://localhost${rawUrl}`);
 		const asset = target.kind === "static" ? previewAssetPath(target.entry, parsed.pathname) : parsed.pathname.replace(/^\/+/, "");
 		if (target.kind === "agent") {
 			return { path: `${prefix}/api/v1/sessions/${encodeURIComponent(target.sessionId)}/agent-browser/${asset}${parsed.search}`, kind: target.kind };
@@ -292,10 +297,16 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		}
 		return stream;
 	};
+	// The tunnel ends at the daemon's own handler, past any reverse proxy, so a
+	// path sent inside it drops the prefix that proxy serves the daemon at
+	// (every path starts with it). Over any other connection the prefix stays.
+	const tunneled = new WeakSet<ClientHttp2Session>();
+	const sessionPath = (session: ClientHttp2Session, path: string): string =>
+		tunneled.has(session) ? path.slice(prefix.length) : path;
 	const getOverSession = (session: ClientHttp2Session, href: string): Promise<Response> =>
 		new Promise((resolve, reject) => {
 			const url = new URL(href);
-			const stream = session.request({ ":method": "GET", ":path": `${url.pathname}${url.search}`, ":authority": upstream.host }, { endStream: true });
+			const stream = session.request({ ":method": "GET", ":path": sessionPath(session, `${url.pathname}${url.search}`), ":authority": upstream.host }, { endStream: true });
 			stream.setTimeout(5_000, () => stream.close(http2Constants.NGHTTP2_CANCEL));
 			const chunks: Buffer[] = [];
 			let status = 0;
@@ -316,14 +327,21 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		});
 	// A path can go silent without a FIN or RST (a VPN or network change), and
 	// the session would then carry every request into nothing. A ping still
-	// unanswered when the next is due retires it: its streams fail, and the
-	// next request opens a fresh session.
+	// unanswered when the next is due, with nothing else heard from the host in
+	// between, retires it: its streams fail, and the next request opens a fresh
+	// session. Anything else counts because a ping waits behind the data already
+	// on the wire: over a slow link the host's window updates for an upload (or
+	// the download itself) come back long before the ping's answer.
 	const keepAlive = (session: ClientHttp2Session): void => {
 		let awaitingPong = false;
+		// Only the socket's byte count: reading from the socket is the session's alone.
+		let received = 0;
 		const timer = setInterval(() => {
 			if (session.destroyed) return;
-			if (awaitingPong) return void session.destroy(new Error("upstream stopped answering pings"));
-			awaitingPong = session.ping(() => { awaitingPong = false; });
+			const quiet = session.socket.bytesRead === received;
+			received = session.socket.bytesRead;
+			if (awaitingPong && quiet) return void session.destroy(new Error("upstream stopped answering pings"));
+			if (!awaitingPong) awaitingPong = session.ping(() => { awaitingPong = false; });
 		}, timing.pingMs);
 		timer.unref();
 		session.once("close", () => clearInterval(timer));
@@ -336,6 +354,7 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			...(tunnel ? { createConnection: () => tunnel } : {}),
 			...(secure && !isIP(hostname) ? { servername: hostname } : {}),
 		});
+		if (tunnel) tunneled.add(session);
 		let deadline: ReturnType<typeof setTimeout> | undefined;
 		const opened = Promise.race([
 			new Promise<ClientHttp2Session>((resolve, reject) => {
@@ -399,20 +418,36 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		return null;
 	};
 	// Bounds requests waiting for their response headers, not open streams, so
-	// long-lived event streams never starve new requests.
+	// long-lived event streams never starve new requests. A preview request
+	// waits once RENDERER_STREAM_HEADROOM slots are all that is left.
 	let pendingStreams = 0;
-	const streamWaiters: Array<() => void> = [];
-	const acquireStream = async (): Promise<void> => {
-		if (pendingStreams < MAX_PENDING_UPSTREAM_STREAMS) {
+	const streamWaiters = new Set<{ preview: boolean; start: () => void }>();
+	const streamLimit = (preview: boolean): number => MAX_PENDING_UPSTREAM_STREAMS - (preview ? RENDERER_STREAM_HEADROOM : 0);
+	// Resolves false, holding no slot, when the client leaves while it waits.
+	const acquireStream = (preview: boolean, res: ProxyResponse): Promise<boolean> => {
+		if (pendingStreams < streamLimit(preview)) {
 			pendingStreams++;
-			return;
+			return Promise.resolve(true);
 		}
-		await new Promise<void>((resolve) => streamWaiters.push(resolve));
+		return new Promise((resolve) => {
+			const leave = () => {
+				streamWaiters.delete(waiter);
+				resolve(false);
+			};
+			const waiter = { preview, start: () => { res.off("close", leave); resolve(true); } };
+			streamWaiters.add(waiter);
+			res.once("close", leave);
+		});
 	};
 	const releaseStream = (): void => {
-		const next = streamWaiters.shift();
-		if (next) next();
-		else pendingStreams--;
+		pendingStreams--;
+		for (const waiter of streamWaiters) {
+			if (pendingStreams >= streamLimit(waiter.preview)) continue;
+			streamWaiters.delete(waiter);
+			pendingStreams++;
+			waiter.start();
+			return;
+		}
 	};
 
 	const answerIdentityFailure = (res: ProxyResponse, error: unknown, method: string | undefined, path: string, kind?: PreviewTarget["kind"]): void => {
@@ -427,7 +462,8 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 	const answerUpstreamFailure = (res: ProxyResponse, error: Error, method: string | undefined, path: string, kind?: PreviewTarget["kind"]): void => {
 		warn(`upstream ${upstream.host} failed on ${method} ${safeLogPath(path, kind)} (${error.message}); answering 502`);
 		if (res.headersSent) {
-			res.destroy();
+			// With an error, as in relayResponse.
+			res.destroy(error);
 			return;
 		}
 		res.writeHead(502, {
@@ -448,6 +484,13 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		// For an HTTP/2 body: whether its stream was cut off rather than finished.
 		cutOff?: () => boolean,
 	): void => {
+		// HTTP/2 carries only 200-599 as a final status: writeHead would throw on
+		// the rest (a dev server's 999, say), so those are the host's failure.
+		if (!(status >= 200 && status <= 599)) {
+			body.resume();
+			answerUpstreamFailure(res, new Error(`invalid status ${status}`), method, path, kind);
+			return;
+		}
 		if (kind === "app" && status === 409 && upstreamHeaders["x-ao-preview-managed-required"] === "1") {
 			body.resume();
 			res.writeHead(409, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -459,7 +502,9 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			if (dropped) return;
 			dropped = true;
 			warn(`upstream ${upstream.host} stream ended on ${method} ${safeLogPath(path, kind)}`);
-			res.destroy();
+			// Destroyed without an error, an HTTP/2 response resets its stream with
+			// NO_ERROR, which a browser takes as a complete body.
+			res.destroy(new Error("upstream stream ended"));
 		};
 		body.on("aborted", closeDroppedStream);
 		body.on("error", closeDroppedStream);
@@ -522,31 +567,27 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		req.headers["transfer-encoding"] !== undefined ||
 		(req as Partial<Http2ServerRequest>).stream?.endAfterHeaders === false;
 
-	const forwardOverSession = async (session: ClientHttp2Session, req: ProxyRequest, res: ProxyResponse, path: string, kind?: PreviewTarget["kind"]): Promise<void> => {
-		// Closing an EventSource or tab must also close its upstream stream,
-		// including a request still queued for a slot.
+	// The caller holds a slot for the request (acquireStream); it is freed once
+	// the response headers arrive or the stream closes without them.
+	const forwardOverSession = (session: ClientHttp2Session, req: ProxyRequest, res: ProxyResponse, path: string, kind: PreviewTarget["kind"] | undefined, retry?: () => void): void => {
+		// Closing an EventSource or tab must also close its upstream stream.
 		let stream: ReturnType<ClientHttp2Session["request"]> | undefined;
 		let clientGone = false;
 		res.once("close", () => {
 			clientGone = !res.writableEnded;
 			if (clientGone) stream?.close(http2Constants.NGHTTP2_CANCEL);
 		});
-		await acquireStream();
 		let pending = true;
 		const settle = () => {
 			if (!pending) return;
 			pending = false;
 			releaseStream();
 		};
-		if (clientGone) {
-			settle();
-			return;
-		}
 		const headers = forwardHeaders(req.headers, kind);
 		delete headers.host; // HTTP/2 names the host in :authority
 		try {
 			stream = session.request(
-				{ ...headers, ":method": req.method ?? "GET", ":path": path, ":authority": upstream.host },
+				{ ...headers, ":method": req.method ?? "GET", ":path": sessionPath(session, path), ":authority": upstream.host },
 				hasBody(req) ? { endStream: false } : undefined,
 			);
 		} catch (error) {
@@ -555,13 +596,17 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			return;
 		}
 		const upstreamStream = stream;
+		// The host never acted on a stream it refused (RFC 9113 §8.7): the
+		// request goes again, if the caller allows, instead of answering 502.
+		const refused = () => retry !== undefined && upstreamStream.rstCode === http2Constants.NGHTTP2_REFUSED_STREAM;
 		let responded = false;
 		upstreamStream.once("close", () => {
 			settle();
 			// Closed before its response: the host restarted, the tunnel closed or
 			// the stream was reset. Node reports a cancelled stream without "error".
-			if (!responded && !clientGone && !res.writableEnded)
-				answerUpstreamFailure(res, new Error(`stream closed with code ${upstreamStream.rstCode}`), req.method, path, kind);
+			if (responded || clientGone || res.writableEnded) return;
+			if (refused()) retry?.();
+			else answerUpstreamFailure(res, new Error(`stream closed with code ${upstreamStream.rstCode}`), req.method, path, kind);
 		});
 		upstreamStream.once("response", (responseHeaders) => {
 			responded = true;
@@ -571,7 +616,9 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			relayResponse(res, Number(responseHeaders[":status"]), responseHeaders as IncomingHttpHeaders, upstreamStream, req.method, path, kind,
 				() => upstreamStream.destroyed || upstreamStream.rstCode !== http2Constants.NGHTTP2_NO_ERROR);
 		});
-		upstreamStream.on("error", (error: Error) => answerUpstreamFailure(res, error, req.method, path, kind));
+		upstreamStream.on("error", (error: Error) => {
+			if (!refused()) answerUpstreamFailure(res, error, req.method, path, kind);
+		});
 		req.pipe(upstreamStream);
 	};
 
@@ -605,21 +652,28 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			res.end();
 			return;
 		}
-		// The browser may leave while the session or identity check is pending;
-		// an HTTP/2 response has no "destroyed" to say so afterwards.
+		// The browser may leave while the slot, session or identity check is
+		// pending; an HTTP/2 response has no "destroyed" to say so afterwards.
 		let left = false;
 		res.once("close", () => { left = true; });
-		let session: ClientHttp2Session | null;
-		try {
-			session = await sessionForRequest();
-			if (!session) await verifyUpstream();
-		} catch (error) {
-			answerIdentityFailure(res, error, req.method, path, preview?.kind);
-			return;
-		}
-		if (left || res.writableEnded) return;
-		if (session) await forwardOverSession(session, req, res, path, preview?.kind);
-		else forwardOverHttp1(req, res, path, preview?.kind);
+		const forward = async (mayRetry: boolean): Promise<void> => {
+			// The slot before the session: one taken before a long wait for a slot
+			// may have closed (a GOAWAY) by the time it ends.
+			if (!(await acquireStream(preview !== null, res))) return;
+			let session: ClientHttp2Session | null = null;
+			try {
+				session = await sessionForRequest();
+				if (!session) await verifyUpstream();
+			} catch (error) {
+				answerIdentityFailure(res, error, req.method, path, preview?.kind);
+			}
+			// Only a request sent over the session keeps its slot.
+			if (!session || left || res.writableEnded) releaseStream();
+			if (left || res.writableEnded) return;
+			if (session) forwardOverSession(session, req, res, path, preview?.kind, mayRetry && !hasBody(req) ? () => void forward(false) : undefined);
+			else forwardOverHttp1(req, res, path, preview?.kind);
+		};
+		await forward(true);
 	};
 
 	const handleUpgrade = (req: IncomingMessage, socket: Socket, head: Buffer, scheme: "http" | "https"): void => {

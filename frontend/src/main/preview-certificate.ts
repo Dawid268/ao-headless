@@ -50,7 +50,7 @@ function createPreviewCertificate(): PreviewCertificate {
 		tlv(0x04, sequence(tlv(0x82, Buffer.from("localhost")), tlv(0x82, Buffer.from("*.localhost")))),
 	);
 	const serial = randomBytes(16);
-	serial[0] &= 0x7f; // positive INTEGER
+	serial[0] = (serial[0] & 0x7f) | 0x40; // positive INTEGER in minimal DER: the first byte is never 00
 	const tbs = sequence(
 		tlv(0xa0, tlv(0x02, Buffer.from([2]))), // v3
 		tlv(0x02, serial),
