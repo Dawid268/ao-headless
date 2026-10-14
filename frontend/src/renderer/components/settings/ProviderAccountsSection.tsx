@@ -211,7 +211,7 @@ function AddAccountView({ provider, page }: { provider: Provider; page: Accounts
 		</div>
 	);
 }
-// What the list says about an account: whether it is the default, and how much room its shortest window has left.
+// What the list says about an account: whether it is the default, and how much room its tightest general limit has left.
 function AccountListItem({ account, current, onSelect }: { account: ProviderAccount; current: boolean; onSelect: () => void }) {
 	const { t } = useTranslation();
 	const headroom = accountHeadroom(account);

@@ -17,10 +17,10 @@ export const accountProvider = (agent: string) => PROVIDERS.find((provider) => p
 // The model-catalogue scope of one account. Keep in sync with ports.ModelCatalogAccountScope in the daemon.
 export const accountModelScope = (accountId: string) => `@account:${accountId}`;
 export const percentLeft = (fraction: number) => Math.max(0, Math.min(100, Math.round(fraction * 100)));
-// What is left of an account's shortest usage window, or null when not reported.
+// What is left of an account's general limit with the least left, or null when not reported.
 export function accountHeadroom(account: ProviderAccount): number | null {
-	const window = account.usage?.status === "available" ? account.usage.windows?.[0] : undefined;
-	return window ? percentLeft(window.remainingFraction) : null;
+	const general = account.usage?.status === "available" ? (account.usage.windows ?? []).filter((window) => !window.scope) : [];
+	return general.length ? percentLeft(Math.min(...general.map((window) => window.remainingFraction))) : null;
 }
 function unwrap<T>({ data, error }: { data?: T; error?: unknown }): T {
 	if (error) throw Object.assign(new Error(apiErrorMessage(error)), { code: (error as { code?: string }).code });

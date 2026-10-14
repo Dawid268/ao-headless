@@ -34,7 +34,7 @@ it("lists the provider's signed-in accounts beside the other session actions and
 	// The item names the session's current account before it is opened.
 	expect(await openAccounts()).toHaveTextContent("Harbor Codex");
 	expect(api.get).toHaveBeenCalledWith(SESSION, { params: { path: { sessionId: "session-1" } } });
-	// Each choice shows what is left of its shortest usage window; the current one cannot be chosen again.
+	// Each choice shows what is left of its tightest general limit; the current one cannot be chosen again.
 	expect((await screen.findAllByRole("menuitem")).map(item => item.textContent).slice(-3)).toEqual(["Harbor CodexDefault62% left", "Summit Codex14% left", "Manage accounts"]);
 	expect(screen.getByRole("menuitem", { name: /Harbor Codex.*62% left/ })).toHaveAttribute("aria-disabled", "true");
 	fireEvent.click(screen.getByRole("menuitem", { name: /Summit Codex/ }));

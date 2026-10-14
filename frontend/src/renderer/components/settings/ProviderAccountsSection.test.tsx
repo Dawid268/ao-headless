@@ -206,7 +206,7 @@ describe("account usage", () => {
 		expect(screen.getAllByRole("progressbar", { name: /alice@example.test/ })).toHaveLength(4);
 		expect(detail()).toHaveTextContent("Codex·Pro");
 		expect(detail()).toHaveTextContent("CreditsUsed when plan limits run out.48,067 credits");
-		expect(listItem(alice)).toHaveTextContent("Default·75% left");
+		expect(listItem(alice)).toHaveTextContent("Default·Limit reached");
 		await open(user, clara);
 		expect(detail()).toHaveTextContent("Claude·Max 20x");
 		expect(screen.getByTestId("provider-account-usage-c")).toHaveTextContent("Weekly34% left");
@@ -219,6 +219,18 @@ describe("account usage", () => {
 		expect(screen.getByTestId("provider-account-usage-b")).toHaveTextContent("Not reported for API keys");
 		expect(detail()).toHaveTextContent("Codex·API key");
 		expect(detail()).toHaveTextContent("Key label");
+	});
+	it("sums an account up by the general limit with the least left, as every account menu does", async () => {
+		inventory.accounts[0].usage = { status: "available", windows: [
+			{ durationSeconds: 18000, remainingFraction: 0.93 },
+			{ durationSeconds: 604800, remainingFraction: 0.57 },
+			{ scope: "code_review", durationSeconds: 604800, remainingFraction: 0.1 },
+		] };
+		const user = await start();
+		expect(listItem(alice)).toHaveTextContent(/^Cedar CodexDefault·57% left$/);
+		await open(user, bob);
+		await user.click(within(detail()).getByRole("button", { name: "Move sessions" }));
+		expect((await screen.findAllByRole("menuitem")).map(option => option.textContent)).toEqual(["Cedar CodexDefault57% left"]);
 	});
 });
 describe("changing the default", () => {
