@@ -116,11 +116,28 @@ func TestIdentityIsCreatedOncePrivateAndReloaded(t *testing.T) {
 	if again, _ := os.ReadFile(path); string(again) != string(saved) {
 		t.Fatal("the identity file was rewritten")
 	}
-	if err = os.WriteFile(path, []byte("{"), 0o600); err != nil {
+}
+
+func TestABrokenIdentityIsReplacedSoAOStillStarts(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "proxy")
+	path := filepath.Join(root, "run", "host.json")
+	first, err := New(root, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = New(root, ""); err == nil {
-		t.Fatal("a corrupt identity was accepted")
+	// Empty is what a start cut short leaves behind.
+	for _, broken := range []string{"", "{", `{"port":4}`} {
+		if err = os.WriteFile(path, []byte(broken), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fresh, err := New(root, "")
+		if err != nil || fresh.id == first.id || fresh.id.Port <= 0 || len(fresh.id.TicketKey) != 64 {
+			t.Fatalf("identity %q: err=%v", broken, err)
+		}
+		reloaded, err := New(root, "")
+		if err != nil || reloaded.id != fresh.id {
+			t.Fatalf("identity %q was not saved in its place: err=%v", broken, err)
+		}
 	}
 }
 

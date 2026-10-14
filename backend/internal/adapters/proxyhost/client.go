@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -75,11 +76,15 @@ func New(root, binary string) (*Client, error) {
 	c := &Client{root: root, binary: binary, http: &http.Client{Timeout: time.Minute, Transport: &http.Transport{Proxy: nil}}}
 	path := filepath.Join(root, "run", "host.json")
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		data, err = newIdentity(path)
-	}
 	if err == nil {
 		err = json.Unmarshal(data, &c.id)
+	}
+	// None yet, or one a crash or a full disk cut short: a new one, so AO still starts.
+	if id := c.id; err != nil || id.Port == 0 || id.ControlKey == "" || id.InferenceKey == "" || id.TicketKey == "" {
+		c.id = identity{}
+		if data, err = newIdentity(path); err == nil {
+			err = json.Unmarshal(data, &c.id)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("account helper identity: %w", err)
@@ -102,7 +107,7 @@ func newIdentity(path string) ([]byte, error) {
 	}
 	data, _ := json.Marshal(id)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	return data, os.WriteFile(path, data, 0o600)
+	return data, hookutil.AtomicWriteFile(path, data, 0o600)
 }
 
 // Endpoint is the loopback address sessions send model requests to.
