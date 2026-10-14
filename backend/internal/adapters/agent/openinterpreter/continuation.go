@@ -1,7 +1,7 @@
 package openinterpreter
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,7 +37,7 @@ func (p *Plugin) ProbeNativeSession(ctx context.Context, ref ports.NativeSession
 	if ref.ConfigDir == "" {
 		return ports.NativeSessionAvailabilityUnknown, ctx.Err()
 	}
-	_, ok, err := findTranscript(ctx, filepath.Join(ref.ConfigDir, "sessions"), ref.NativeSessionID)
+	_, _, ok, err := findTranscript(ctx, filepath.Join(ref.ConfigDir, "sessions"), ref.NativeSessionID)
 	if err != nil {
 		return ports.NativeSessionAvailabilityUnknown, err
 	}
@@ -52,7 +52,7 @@ func (p *Plugin) LocateTranscript(ctx context.Context, ref ports.NativeSessionRe
 	if ref.ConfigDir == "" {
 		return "", false, ctx.Err()
 	}
-	path, ok, err := findTranscript(ctx, filepath.Join(ref.ConfigDir, "sessions"), ref.NativeSessionID)
+	path, _, ok, err := findTranscript(ctx, filepath.Join(ref.ConfigDir, "sessions"), ref.NativeSessionID)
 	// Shared transcript consumers expect plain JSONL; native resume itself
 	// materializes compressed history before appending to it.
 	if strings.HasSuffix(path, ".zst") {
@@ -64,34 +64,35 @@ func (p *Plugin) LocateTranscript(ctx context.Context, ref ports.NativeSessionRe
 // Native --cd suppresses its historical-workspace check. Validate the recorded
 // workspace first, and refuse unreadable history instead of moving a
 // foreign conversation into the AO worktree.
-func (p *Plugin) validateRestoreWorkspace(ctx context.Context, cfg ports.RestoreConfig, id string) error {
+func (p *Plugin) validateRestoreWorkspace(ctx context.Context, cfg ports.RestoreConfig, id string) (bool, error) {
 	home, err := p.NativeSessionConfigDir(ctx, cfg.Env)
 	if err != nil {
-		return err
+		return false, err
 	}
-	path, ok, err := findTranscript(ctx, filepath.Join(home, "sessions"), id)
+	_, metadata, ok, err := findTranscript(ctx, filepath.Join(home, "sessions"), id)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		// Damaged or unreadable history cannot be resumed, but a fresh launch
+		// in the AO workspace can still recover the worker.
+		return false, nil
 	}
 	if !ok {
-		return fmt.Errorf("open-interpreter: cannot verify native session workspace from active history")
-	}
-	metadata, err := readSessionMetadata(path)
-	if err != nil {
-		return err
+		return false, nil
 	}
 	native, err := os.Stat(metadata.CWD)
 	if err != nil {
-		return fmt.Errorf("open-interpreter: native session workspace is unavailable: %w", err)
+		return false, fmt.Errorf("open-interpreter: native session workspace is unavailable: %w", err)
 	}
 	workspace, err := os.Stat(cfg.Session.WorkspacePath)
 	if err != nil {
-		return fmt.Errorf("open-interpreter: AO workspace is unavailable: %w", err)
+		return false, fmt.Errorf("open-interpreter: AO workspace is unavailable: %w", err)
 	}
 	if !native.IsDir() || !workspace.IsDir() || !os.SameFile(native, workspace) {
-		return fmt.Errorf("open-interpreter: native session workspace does not match the AO workspace")
+		return false, fmt.Errorf("open-interpreter: native session workspace does not match the AO workspace")
 	}
-	return nil
+	return true, nil
 }
 
 type sessionMetadata struct {
@@ -114,13 +115,15 @@ func readSessionMetadata(path string) (sessionMetadata, error) {
 		defer decoder.Close()
 		reader = decoder
 	}
-	bounded := &io.LimitedReader{R: reader, N: (64 << 20) + 1}
-	scanner := bufio.NewScanner(bounded)
-	scanner.Buffer(make([]byte, 4096), 8<<20)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return sessionMetadata{}, err
-		}
+	data, err := io.ReadAll(io.LimitReader(reader, (64<<20)+1))
+	if err != nil {
+		return sessionMetadata{}, err
+	}
+	if len(data) > 64<<20 {
+		return sessionMetadata{}, fmt.Errorf("open-interpreter: native history exceeds size limit")
+	}
+	lines := bytes.Split(data, []byte{'\n'})
+	if len(lines[0]) == 0 {
 		return sessionMetadata{}, fmt.Errorf("open-interpreter: empty native transcript")
 	}
 	var record struct {
@@ -128,19 +131,22 @@ func readSessionMetadata(path string) (sessionMetadata, error) {
 		Type      string          `json:"type"`
 		Payload   sessionMetadata `json:"payload"`
 	}
-	if len(scanner.Bytes()) > 256<<10 {
+	if len(lines[0]) > 256<<10 {
 		return sessionMetadata{}, fmt.Errorf("open-interpreter: native metadata exceeds size limit")
 	}
-	if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+	if err := json.Unmarshal(lines[0], &record); err != nil {
 		return sessionMetadata{}, err
 	}
 	if record.Type != "session_meta" || record.Timestamp == nil {
 		return sessionMetadata{}, fmt.Errorf("open-interpreter: missing native session metadata")
 	}
-	// Native resume tolerates malformed records and metadata-only files. Those
-	// cannot prove preserved conversation history, so AO refuses them.
+	// A valid user turn proves preserved conversation history. Native resume
+	// tolerates a torn final write, so it does not invalidate earlier turns.
 	hasUser := false
-	for scanner.Scan() {
+	for index, line := range lines[1:] {
+		if len(line) == 0 {
+			continue
+		}
 		var item struct {
 			Timestamp *string `json:"timestamp"`
 			Type      string  `json:"type"`
@@ -150,7 +156,10 @@ func readSessionMetadata(path string) (sessionMetadata, error) {
 				Content json.RawMessage `json:"content"`
 			} `json:"payload"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
+		if err := json.Unmarshal(line, &item); err != nil {
+			if index == len(lines)-2 && data[len(data)-1] != '\n' {
+				continue
+			}
 			return sessionMetadata{}, fmt.Errorf("open-interpreter: malformed native history: %w", err)
 		}
 		if item.Timestamp == nil {
@@ -162,12 +171,6 @@ func readSessionMetadata(path string) (sessionMetadata, error) {
 			}
 			hasUser = true
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return sessionMetadata{}, err
-	}
-	if bounded.N == 0 {
-		return sessionMetadata{}, fmt.Errorf("open-interpreter: native history exceeds size limit")
 	}
 	if !hasUser {
 		return sessionMetadata{}, fmt.Errorf("open-interpreter: native history has no user conversation")
@@ -216,12 +219,13 @@ func validNativeUserContent(data json.RawMessage) bool {
 	return meaningful
 }
 
-func findTranscript(ctx context.Context, root, value string) (string, bool, error) {
+func findTranscript(ctx context.Context, root, value string) (string, sessionMetadata, bool, error) {
 	id, err := nativeID(value)
 	if err != nil {
-		return "", false, err
+		return "", sessionMetadata{}, false, err
 	}
 	var found string
+	var foundMetadata sessionMetadata
 	visited := 0
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -246,6 +250,7 @@ func findTranscript(ctx context.Context, root, value string) (string, bool, erro
 		}
 		if metadata.ID == id {
 			found = path
+			foundMetadata = metadata
 			return fs.SkipAll
 		}
 		return nil
@@ -253,5 +258,5 @@ func findTranscript(ctx context.Context, root, value string) (string, bool, erro
 	if errors.Is(err, os.ErrNotExist) {
 		err = nil
 	}
-	return found, found != "", err
+	return found, foundMetadata, found != "", err
 }

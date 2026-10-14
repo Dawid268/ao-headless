@@ -132,6 +132,38 @@ func TestPollKeepsGenuineLongCodexTurnActive(t *testing.T) {
 	}
 }
 
+func TestPollCodexUsesCurrentStyledSurface(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	for _, tc := range []struct {
+		name, styled string
+		wantIdle     bool
+	}{
+		{"current composer", "› Write tests for @filename\n\ngpt-5.6-sol low · ~/project\n", true},
+		{"unknown current screen", "Loading", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &fakeSink{}
+			runtime := &fakeStyledRuntime{
+				fakeRuntime: fakeRuntime{output: "• Working (3m 10s • esc to interrupt)\n› Add tests\n\ngpt-5.6-sol low · ~/project\n"},
+				styled:      tc.styled,
+			}
+			observer := New(fakeSessions{rows: []domain.SessionRecord{activeSession(now, domain.HarnessCodex)}}, sink,
+				runtime, fakeAgents{domain.HarnessCodex: codex.New()},
+				Config{Clock: func() time.Time { return now }, Logger: testLogger()})
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantIdle {
+				if len(sink.signals) != 1 || sink.signals[0].State != domain.ActivityIdle {
+					t.Fatalf("styled Codex composer was not reconciled: %+v", sink.signals)
+				}
+			} else if len(sink.signals) != 0 {
+				t.Fatalf("unknown current surface reconciled stale output: %+v", sink.signals)
+			}
+		})
+	}
+}
+
 func TestPollUsesCurrentStyledSurfaceForInspectors(t *testing.T) {
 	// Released Open Interpreter's idle footer, captured from its real PTY and
 	// reduced to the current composer with a neutral workspace path.

@@ -56,18 +56,26 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return p.command(ctx, "", cfg.WorkspacePath, cfg.Prompt, cfg.Config, cfg.Permissions)
 }
 
-// GetRestoreCommand resumes only the exact provider UUID. Missing identity is
-// an error so a restore cannot silently start a different conversation.
+// GetRestoreCommand resumes only a verified provider UUID and workspace.
+// Missing history falls back to a fresh launch in the saved AO workspace.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
-	id, err := nativeID(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
+	value := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
+	if value == "" {
+		return nil, false, nil
+	}
+	id, err := nativeID(value)
 	if err != nil {
 		return nil, false, err
 	}
 	if len(cfg.AllowedTools) != 0 || len(cfg.DisallowedTools) != 0 {
 		return nil, false, fmt.Errorf("open-interpreter: tool allow/deny restrictions are not supported")
 	}
-	if err := p.validateRestoreWorkspace(ctx, cfg, id); err != nil {
+	available, err := p.validateRestoreWorkspace(ctx, cfg, id)
+	if err != nil {
 		return nil, false, err
+	}
+	if !available {
+		return nil, false, nil
 	}
 	cmd, err := p.command(ctx, id, cfg.Session.WorkspacePath, cfg.Prompt, cfg.Config, cfg.Permissions)
 	return cmd, err == nil, err
@@ -171,6 +179,16 @@ func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Hook identities and terminal cues are pinned to the inspected release.
+	// A later Rust CLI can retain the same --help flags while changing both.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	probe := aoprocess.CommandContext(probeCtx, binary, "--version")
+	probe.WaitDelay = 2 * time.Second
+	version, err := probe.CombinedOutput()
+	if err != nil || !isInspectedReleaseVersion(string(version)) {
+		return "", fmt.Errorf("open-interpreter: unsupported interpreter version (requires %s): %s", InspectedRelease, strings.TrimSpace(string(version)))
+	}
 	p.resolvedBinary = binary
 	return binary, nil
 }
@@ -186,6 +204,15 @@ func isRustCLIBinary(ctx context.Context, binary string) bool {
 
 func isRustCLIHelp(output string) bool {
 	return strings.Contains(output, "Open Interpreter") && strings.Contains(output, "--no-daemon") && strings.Contains(output, "--chat-completions") && strings.Contains(output, "resume")
+}
+
+func isInspectedReleaseVersion(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "interpreter "+strings.TrimPrefix(InspectedRelease, "rust-v") {
+			return true
+		}
+	}
+	return false
 }
 
 // InvalidateBinaryResolution refreshes discovery after a provider upgrade.

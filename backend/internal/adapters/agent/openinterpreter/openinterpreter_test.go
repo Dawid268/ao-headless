@@ -88,6 +88,22 @@ func TestBinaryIdentityRejectsPythonInterpreter(t *testing.T) {
 	}
 }
 
+func TestVersionRequiresInspectedRelease(t *testing.T) {
+	for _, tc := range []struct {
+		output string
+		want   bool
+	}{
+		{"interpreter 0.0.56\n", true},
+		{"warning: alias unavailable\ninterpreter 0.0.56\n", true},
+		{"interpreter 0.0.57\n", false},
+		{"Open Interpreter 0.0.56\n", false},
+	} {
+		if got := isInspectedReleaseVersion(tc.output); got != tc.want {
+			t.Fatalf("version %q = %v, want %v", tc.output, got, tc.want)
+		}
+	}
+}
+
 func TestResolveBinarySkipsPythonInterpreterCollision(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix executable fixture")
@@ -102,7 +118,7 @@ func TestResolveBinarySkipsPythonInterpreterCollision(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(rustInterpreter), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'interpreter 0.0.56\\n'; else printf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'; fi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", pathDir)
@@ -115,12 +131,21 @@ func TestResolveBinarySkipsPythonInterpreterCollision(t *testing.T) {
 	if got != rustInterpreter {
 		t.Fatalf("got %q, want %q", got, rustInterpreter)
 	}
+	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'interpreter 0.0.57\\n'; else printf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'; fi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().ResolveBinary(context.Background()); err == nil || !strings.Contains(err.Error(), InspectedRelease) {
+		t.Fatalf("version drift was not reported: %v", err)
+	}
 }
 
 func TestRestoreRequiresExactUUIDAndReappliesHooks(t *testing.T) {
 	p := &Plugin{resolvedBinary: "/bin/interpreter"}
 	const id = "019f706d-1234-7123-8123-123456789abc"
-	for _, value := range []string{"", "latest", "../history", "--last"} {
+	if _, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{}); ok || err != nil {
+		t.Fatalf("missing identity = %v, %v; want fresh-launch fallback", ok, err)
+	}
+	for _, value := range []string{"latest", "../history", "--last"} {
 		_, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{Session: ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: value}}})
 		if ok || err == nil {
 			t.Fatalf("restore %q = %v, %v", value, ok, err)
@@ -158,16 +183,16 @@ func writeNativeHistory(t *testing.T, id, workspace string) string {
 	return home
 }
 
-func TestRestoreRejectsMissingAndForeignNativeWorkspace(t *testing.T) {
+func TestRestoreFallsBackForMissingHistoryButRejectsForeignWorkspace(t *testing.T) {
 	const id = "019f706d-1234-7123-8123-123456789abc"
 	p := &Plugin{resolvedBinary: "/bin/interpreter"}
-	for _, home := range []string{t.TempDir(), writeNativeHistory(t, id, t.TempDir())} {
+	for index, home := range []string{t.TempDir(), writeNativeHistory(t, id, t.TempDir())} {
 		_, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 			Env:     map[string]string{"INTERPRETER_HOME": home},
 			Session: ports.SessionRef{WorkspacePath: t.TempDir(), Metadata: map[string]string{ports.MetadataKeyAgentSessionID: id}},
 		})
-		if err == nil || ok {
-			t.Fatal("restored missing or foreign native workspace")
+		if ok || (index == 0 && err != nil) || (index == 1 && err == nil) {
+			t.Fatalf("history case %d: restore = %v, %v", index, ok, err)
 		}
 	}
 }
@@ -315,7 +340,7 @@ func TestNativeUserEvidenceRequiresTypedMeaningfulContent(t *testing.T) {
 	}
 }
 
-func TestRestoreRejectsCorruptOrEmptyNativeConversation(t *testing.T) {
+func TestRestoreFallsBackForCorruptOrEmptyNativeConversation(t *testing.T) {
 	const id = "019f706d-1234-7123-8123-123456789abc"
 	workspace := t.TempDir()
 	home := writeNativeHistory(t, id, workspace)
@@ -331,9 +356,29 @@ func TestRestoreRejectsCorruptOrEmptyNativeConversation(t *testing.T) {
 		}
 		p := &Plugin{resolvedBinary: "/bin/interpreter"}
 		_, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{Env: map[string]string{"INTERPRETER_HOME": home}, Session: ports.SessionRef{WorkspacePath: workspace, Metadata: map[string]string{ports.MetadataKeyAgentSessionID: id}}})
-		if err == nil || ok {
-			t.Fatal("restored corrupt or empty native conversation")
+		if err != nil || ok {
+			t.Fatalf("expected fresh-launch fallback, got %v, %v", ok, err)
 		}
+	}
+}
+
+func TestRestoreAcceptsTornLastLineAndLargeHistoryRecord(t *testing.T) {
+	const id = "019f706d-1234-7123-8123-123456789abc"
+	workspace := t.TempDir()
+	home := writeNativeHistory(t, id, workspace)
+	path := filepath.Join(home, "sessions", "rollout-now-"+id+".jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeRecord := `{"timestamp":"2026-10-10T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("x", 9<<20) + `"}]}}` + "\n"
+	if err := os.WriteFile(path, append(append(data, []byte(largeRecord)...), []byte(`{"timestamp":`)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &Plugin{resolvedBinary: "/bin/interpreter"}
+	_, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{Env: map[string]string{"INTERPRETER_HOME": home}, Session: ports.SessionRef{WorkspacePath: workspace, Metadata: map[string]string{ports.MetadataKeyAgentSessionID: id}}})
+	if err != nil || !ok {
+		t.Fatalf("valid history with large record and torn tail = %v, %v", ok, err)
 	}
 }
 

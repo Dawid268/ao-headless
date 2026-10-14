@@ -541,7 +541,7 @@ func TestDoctorOpenInterpreterSkipsPythonCollision(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(rustInterpreter), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nprintf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(rustInterpreter, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'interpreter 0.0.56\\n'; else printf 'Open Interpreter\\n--no-daemon\\n--chat-completions\\nresume\\n'; fi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", pathDir)

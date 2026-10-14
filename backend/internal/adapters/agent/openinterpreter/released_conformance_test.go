@@ -114,6 +114,15 @@ func TestReleasedCLIConformance(t *testing.T) {
 	t.Cleanup(server.Close)
 	t.Cleanup(release)
 	config := fmt.Sprintf("model_provider = \"mock\"\nmodel = \"gpt-5.1-codex\"\n[model_providers.mock]\nname = \"CI local mock\"\nbase_url = %q\nwire_api = \"chat\"\nrequires_openai_auth = false\n[projects.%q]\ntrust_level = \"trusted\"\n", server.URL+"/v1", workspace)
+	// A persisted user hook must retain its trust when AO adds session-owned
+	// hook state through CLI overrides. Native merges state across layers.
+	trustedMarker := filepath.Join(home, "trusted-user-hook-ran")
+	trustedCommand := "touch " + trustedMarker
+	trustedKey := filepath.Join(home, "config.toml") + ":session_start:0:0"
+	trustedIdentity := map[string]any{"event_name": "session_start", "hooks": []any{map[string]any{
+		"type": "command", "command": trustedCommand, "timeout": 5, "async": false,
+	}}}
+	config += fmt.Sprintf("[hooks]\nSessionStart = [{ hooks = [{ type = \"command\", command = %q, timeout = 5, async = false }] }]\n[hooks.state]\n%q = { enabled = true, trusted_hash = %q }\n", trustedCommand, trustedKey, hashIdentity(trustedIdentity))
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +173,9 @@ func TestReleasedCLIConformance(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("AO hook trust authorized an unrelated project hook")
+	}
+	if _, err := os.Stat(trustedMarker); err != nil {
+		t.Fatalf("persisted trusted user hook did not run: %v", err)
 	}
 	data, err := os.ReadFile(hookPath)
 	if err != nil {
