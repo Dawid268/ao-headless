@@ -3359,10 +3359,7 @@ type TestingRequest struct {
 	Reason        string   `json:"reason,omitempty" description:"submit with blocked: what failed; required and non-empty."`
 	SkipBase      string   `json:"skipBase,omitempty" description:"submit only: why the base was not run; lets a submit through while a prepared base is unlaunched."`
 	Action        string   `json:"action,omitempty"`
-	Args          []string `json:"args,omitempty" description:"drive: the action's arguments; test: the command and its arguments."`
-	Dir           string   `json:"dir,omitempty" description:"test only: folder inside the leg's checkout to run in, like backend."`
-	WithTestsFrom string   `json:"withTestsFrom,omitempty" enum:"head" description:"test only, with leg base: copy the PR's added or changed test files from the head checkout into a scratch copy of the base checkout and run there."`
-	Minutes       int      `json:"minutes,omitempty" minimum:"1" maximum:"10" description:"test only: how long this command may run, in minutes (default 3)."`
+	Args          []string `json:"args,omitempty" description:"drive: the action's arguments."`
 	Path          string   `json:"path,omitempty"`
 	NoComment     bool     `json:"noComment,omitempty" description:"start only: the run's verdict is written to comment.md but not posted to the pull request."`
 	NoEvidence    bool     `json:"noEvidence,omitempty" description:"start only: no screenshots or GIFs are published to the repo's litmus/evidence branch for the comment."`

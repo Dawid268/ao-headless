@@ -27,10 +27,7 @@ func composeFixture(t *testing.T, name string) (Run, []Check) {
 	for i := range f.Checks {
 		for j := range f.Checks[i].Receipts {
 			r := &f.Checks[i].Receipts[j]
-			if r.OutputPath != "" {
-				r.OutputPath = evidenceFile(t)
-			}
-			if r.AfterPath == "" { // a test run has an output file, no shot
+			if r.AfterPath == "" {
 				continue
 			}
 			r.AfterPath = filepath.Join(dir, filepath.Base(r.AfterPath))
@@ -345,69 +342,6 @@ func TestVerdictLineForAllPartialAndUnreached(t *testing.T) {
 	} {
 		if got := verdictLine(CheckPartial, c.t, "main"); got != c.want {
 			t.Errorf("%s: %q", c.name, got)
-		}
-	}
-}
-
-// TestComposeRun15 is the test-only rerun of #6387: every check is a package test run, so the windows recorded
-// nothing and the comment carries no recordings block.
-func TestComposeRun15(t *testing.T) {
-	run, checks := composeFixture(t, "compose-run15")
-	if !testsOnly(checks) {
-		t.Fatal("the fixture is all test runs")
-	}
-	got, _ := composeComment(t, run, commentVerdict(checks))
-	t.Logf("composed comment:\n%s", got)
-	if strings.Contains(got, "<details>") || strings.Contains(got, "Recordings") {
-		t.Errorf("a recordings block for a run that never touched the screen:\n%s", got)
-	}
-	// the submit path drops the videos the windows recorded anyway
-	svc, gh, runDir := recSubmit(t)
-	line, _ := json.Marshal(actionRec{Seq: 1, Leg: "head", Action: "test", Args: []string{"go", "test", "./internal/cli/"}})
-	is(t, "")(nil, os.WriteFile(filepath.Join(runDir, "actions.jsonl"), append(line, '\n'), 0o600)) // no verb drove a window
-	rc := func(seq int, leg string) []Receipt {
-		return []Receipt{{Seq: seq, Leg: leg, Action: "test", Args: []string{"go", "test", "./internal/cli/"}, OutputPath: filepath.Join(t.TempDir(), "t.txt")}}
-	}
-	is(t, "")(nil, svc.store.SaveChecks("run_s1", []Check{
-		{ID: "c1", Name: "cli tests", Expect: "the cli package's tests pass", State: CheckPass, Note: "1 package ok.", Receipts: rc(1, "head")},
-		{ID: "c2", Name: "cli tests", Expect: "the cli package's tests pass", State: CheckPass, Leg: "base", Note: "1 package ok.", Receipts: rc(2, "base")},
-	}))
-	_, err := svc.Submit(ctx, "s1", "", "")
-	body, saved := gh.field(0, "body"), ""
-	if r, gerr := svc.store.Get("run_s1"); gerr == nil {
-		saved = r.VideoState
-	}
-	if err != nil || strings.Contains(body, "Recordings") || strings.Contains(body, "user-attachments") || gh.uploads != 0 || saved != "off" {
-		t.Fatalf("err %v video state %q uploads %d\n%s", err, saved, gh.uploads, body)
-	}
-}
-
-func TestSubmitNeedsNoLaunchedWindowForTestsAlone(t *testing.T) {
-	test := func(seq int, leg string) []Receipt {
-		return []Receipt{{Seq: seq, Leg: leg, Action: "test", Args: []string{"go", "test", "./internal/cli/"}}}
-	}
-	headTest := Check{ID: "c1", Name: "cli tests", State: CheckPass, Receipts: test(1, "head")}
-	baseTest := Check{ID: "c2", Name: "cli tests", State: CheckPass, Leg: "base", Receipts: test(2, "base")}
-	otherTest := Check{ID: "c4", Name: "other tests", State: CheckPass, Receipts: test(4, "head")}
-	click := Check{ID: "c3", Name: "menu", State: CheckPass, Receipts: []Receipt{{Seq: 3, Leg: "head", Action: "click", AfterPath: "x.png"}}}
-	prepared := []Leg{{Name: "head", State: "prepared"}, {Name: "base", State: "prepared"}}
-	for _, c := range []struct {
-		name, want string
-		checks     []Check
-	}{
-		{"tests on both builds, neither launched", "", []Check{headTest, baseTest}},
-		{"tests on the PR build only", "TESTING_BASE_NOT_RUN", []Check{headTest}},
-		{"a driven check beside the tests", "TESTING_BASE_NOT_RUN", []Check{headTest, baseTest, click}},
-		{"a test with no result on main", "TESTING_BASE_INCOMPLETE", []Check{headTest, baseTest, otherTest}},
-	} {
-		svc, _, _, _ := submitSvc(t)
-		is(t, "")(nil, svc.store.SaveChecks("run_s1", c.checks))
-		_, err := svc.update("run_s1", func(r *Run) { r.Legs, r.Deadline = prepared, svc.clock().Add(10*time.Minute) })
-		is(t, "")(nil, err)
-		v, err := svc.Submit(ctx, "s1", "", "")
-		is(t, c.want)(v, err)
-		if c.name == "tests on the PR build only" && (!strings.Contains(err.Error(), "visible result") || strings.Contains(err.Error(), "ao testing test --leg base")) {
-			t.Errorf("%s: message %q does not direct the tester to an app-visible result", c.name, err)
 		}
 	}
 }

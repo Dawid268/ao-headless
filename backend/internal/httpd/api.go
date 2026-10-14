@@ -230,7 +230,6 @@ func (a *API) Register(root chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
 				ordinary := middleware.Timeout(timeout)(next)
 				upload := middleware.Timeout(max(timeout, 10*time.Minute))(next)
-				long := middleware.Timeout(max(timeout, 11*time.Minute))(next)
 				replay := middleware.Timeout(max(timeout, litmus.RunBudget+time.Minute))(next)
 				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					if attachmentUploadRoute(req) {
@@ -239,10 +238,6 @@ func (a *API) Register(root chi.Router) {
 					}
 					if req.Method == http.MethodPost && chi.RouteContext(req.Context()).RoutePattern() == "/api/v1/testing/checks/{id}/replay" {
 						replay.ServeHTTP(w, req)
-						return
-					}
-					if testingTestRoute(req) {
-						long.ServeHTTP(w, req)
 						return
 					}
 					ordinary.ServeHTTP(w, req)
@@ -287,12 +282,6 @@ func (a *API) Register(root chi.Router) {
 		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
 	})
-}
-
-// testingTestRoute is the Litmus verb that runs a package's tests inside a checkout. Its own cap is 3 minutes (10 with --minutes),
-// so the ordinary 60 s request budget would answer 504 while the tests were still running.
-func testingTestRoute(req *http.Request) bool {
-	return req.Method == http.MethodPost && chi.RouteContext(req.Context()).RoutePattern() == "/api/v1/testing/test"
 }
 
 func attachmentUploadRoute(req *http.Request) bool {

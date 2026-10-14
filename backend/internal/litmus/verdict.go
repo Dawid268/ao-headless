@@ -49,19 +49,9 @@ func baseResult(checks []Check, c Check) string {
 	return ""
 }
 
-// ranAndFailed reports whether a base check shows main failing: it failed, backed by a screenshot or by a test that ran
-// and exited non-zero. A fail that rests only on test files that did not compile, on runs that exited 0, on a timeout or a
-// missing command (exit 127), or on a run that counted no tests, shows nothing.
+// ranAndFailed reports whether a base check failed with a saved screenshot.
 func ranAndFailed(b Check) bool {
-	if b.State != CheckFail {
-		return false
-	}
-	recs := b.legReceipts()
-	tests := slices.DeleteFunc(slices.Clone(recs), func(r Receipt) bool { return r.Action != "test" || r.Exit == nil || !fileExists(r.OutputPath) })
-	if len(tests) > 0 {
-		return slices.ContainsFunc(tests, Receipt.ranAndFailed)
-	}
-	return slices.ContainsFunc(recs, func(r Receipt) bool { return r.Action != "test" && fileExists(r.AfterPath) })
+	return b.State == CheckFail && slices.ContainsFunc(b.legReceipts(), func(r Receipt) bool { return fileExists(r.AfterPath) })
 }
 
 // failedOnBase reports whether the head check's base twin shows main without the behavior: it ran and failed, or the
@@ -83,7 +73,7 @@ func preExisting(checks []Check, c Check) bool {
 }
 
 // headlineRule is the rule derive applies, as verdict.md states it (the result is the overall verdict).
-const headlineRule = "The result is fail if any head check was absent or failed, except a head fail beside an unmarked base fail that ran and has evidence; that finding stays in the comment but leaves the result partial. A --same-fault base fail with evidence is pre-existing and left out. Equal partial labels on both builds still count as a failure unless the tester marked the base twin --same-fault. It is pass if every remaining head check passed and at least one passed on the head while failing on the base or while the base did not have the feature at all (absent), which shows the difference. A base failure counts only with saved test output showing a test ran and failed or an existing after-shot; tests that did not compile, exited 0, timed out or ran no tests show nothing. A head failure or partial beside an absent base is the PR's own, never pre-existing. Otherwise it is partial. Checks the tester could not reach are left out and base-only checks are context."
+const headlineRule = "The result is fail if any head check was absent or failed, except a head fail beside an unmarked base fail that ran and has evidence; that finding stays in the comment but leaves the result partial. A --same-fault base fail with evidence is pre-existing and left out. Equal partial labels on both builds still count as a failure unless the tester marked the base twin --same-fault. It is pass if every remaining head check passed and at least one passed on the head while failing on the base or while the base did not have the feature at all (absent), which shows the difference. A base failure counts only with an existing after-shot. A head failure or partial beside an absent base is the PR's own, never pre-existing. Otherwise it is partial. Checks the tester could not reach are left out and base-only checks are context."
 
 // The reasons derive gives for a partial with nothing worse; the comment says them in its own words.
 const (
@@ -186,7 +176,7 @@ func (s *Service) Submit(ctx context.Context, sessionID, summary, skipBase strin
 	if skip == "" && s.baseFailed(run) {
 		return Verdict{}, conflict("TESTING_BASE_NOT_RUN", run.baseName()+" was prepared but failed to launch, so there are no base results; submit with `--skip-base --reason \"<say that "+run.baseName()+" failed to launch and why>\"`")
 	}
-	if skip == "" && s.baseNeverLaunched(run, checks) {
+	if skip == "" && s.baseNeverLaunched(run) {
 		how := "run " + run.baseName() + " (`ao testing launch base`), repeat each check there in the app and record its visible result"
 		return Verdict{}, conflict("TESTING_BASE_NOT_RUN", how+"; record pass, fail, partial, or skipped with a note saying why, or submit with `--skip-base --reason \"<why main was not run>\"`")
 	}
@@ -247,26 +237,8 @@ func skipOnBase(checks []Check, why string) []Check {
 }
 
 // baseNeverLaunched is true for a run whose base leg was prepared but not launched and that still has time to launch it.
-// A run whose every receipt is a test needs no window: a test result on the base counts as the base having been run.
-func (s *Service) baseNeverLaunched(run Run, checks []Check) bool {
-	if testsOnly(checks) && slices.ContainsFunc(checks, func(c Check) bool { return c.onLeg() == "base" && len(c.Receipts) > 0 }) {
-		return false
-	}
+func (s *Service) baseNeverLaunched(run Run) bool {
 	return slices.ContainsFunc(run.Legs, func(l Leg) bool { return l.Name == "base" && l.State == "prepared" }) && run.Deadline.Sub(s.clock()) >= baseGuardLeft
-}
-
-// testsOnly is true when the checks hold receipts and every one is a test run: no verb drove a window.
-func testsOnly(checks []Check) bool {
-	seen := false
-	for _, c := range checks {
-		for _, r := range c.Receipts {
-			if r.Action != "test" {
-				return false
-			}
-			seen = true
-		}
-	}
-	return seen
 }
 
 // baseFailed is true for a run whose base leg launched and then failed.
@@ -284,11 +256,11 @@ func baseMissing(run Run, ids []string) string {
 }
 
 // notComparedOnBase lists the head checks the tester could reach that have no base result of any kind (a base check
-// ended skipped, with a note saying why, counts), once the base launched (or, for a run of tests alone, was prepared)
+// ended skipped, with a note saying why, counts), once the base launched
 // and while at least baseGuardLeft of the deadline remains: the comment says what each check showed on the base or why it did not.
 func (s *Service) notComparedOnBase(run Run, checks []Check) (ids []string) {
 	ran := func(l Leg) bool {
-		return l.Name == "base" && (l.State == "running" || (l.State == "prepared" && testsOnly(checks)))
+		return l.Name == "base" && l.State == "running"
 	}
 	if run.Deadline.Sub(s.clock()) < baseGuardLeft || !slices.ContainsFunc(run.Legs, ran) {
 		return nil
@@ -528,8 +500,6 @@ func renderVerdict(run Run, v Verdict, claims bool, videos []legVideo, runDir st
 		var links []string
 		for _, r := range c.Receipts {
 			switch {
-			case r.OutputPath != "" && fileExists(r.OutputPath):
-				links = append(links, fmt.Sprintf("[%d](%s)", r.Seq, relPath(runDir, r.OutputPath)))
 			case r.AfterPath == "":
 			case fileExists(r.AfterPath):
 				links = append(links, fmt.Sprintf("[%d](%s)", r.Seq, relPath(runDir, r.AfterPath)))

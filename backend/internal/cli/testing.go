@@ -69,7 +69,7 @@ func newTestingCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(verb("cleanup", "Stop the run's targets and remove its private state", noArgs, func(cmd *cobra.Command, _ []string) error {
 		return testingCall(t, cmd, "testing/cleanup", map[string]any{}, runLine)
 	}))
-	cmd.AddCommand(t.recipeCommand(), t.waitCommand(), t.recordCommand(), t.testCommand())
+	cmd.AddCommand(t.recipeCommand(), t.waitCommand(), t.recordCommand())
 	cmd.AddCommand(t.pruneCommand())
 	cmd.AddCommand(t.runsCommand(), t.rerunCommand(), t.decideCommand("post", "Publish the evidence and post the comment of a run awaiting approval"),
 		t.decideCommand("discard", "Close a run awaiting approval without posting its comment"), t.settingsCommand())
@@ -294,48 +294,6 @@ func (t *testingCLI) waitCommand() *cobra.Command {
 	return cmd
 }
 
-// testCommand runs a package's own tests in a leg's checkout. The daemon runs them, so it needs no launched leg.
-func (t *testingCLI) testCommand() *cobra.Command {
-	var dir, withTestsFrom string
-	var minutes int
-	cmd := verb("test --leg head|base --dir <subdir> -- <command...>", "Run go test, go vet, npm test or vitest/jest in a leg's checkout (3 minute cap, --minutes raises it to 10)", func(cmd *cobra.Command, a []string) error {
-		if err := cobra.MinimumNArgs(1)(cmd, a); err != nil {
-			return usageError{errors.New("usage: ao testing test --leg head|base --dir <subdir> -- <command...>")}
-		}
-		return nil
-	}, func(cmd *cobra.Command, a []string) error {
-		if t.leg != "base" && t.leg != "head" {
-			return usageError{errors.New("usage: --leg must be base or head")}
-		}
-		sessionID, err := testingSessionID()
-		if err != nil {
-			return err
-		}
-		if (cmd.Flags().Changed("minutes") && minutes < 1) || minutes > litmus.MaxTestMin {
-			return usageError{fmt.Errorf("usage: --minutes must be 1 to %d", litmus.MaxTestMin)}
-		}
-		var out litmus.TestResult
-		body := map[string]any{"sessionId": sessionID, "leg": t.leg, "dir": dir, "args": a}
-		if minutes > 0 {
-			body["minutes"] = minutes
-		}
-		if withTestsFrom != "" {
-			body["withTestsFrom"] = withTestsFrom
-		}
-		if err := t.c.doJSONPathWithHeadersAndTimeout(cmd.Context(), http.MethodPost, "/api/v1/testing/test", body, &out, nil, max(testCallTimeout, time.Duration(minutes+1)*time.Minute)); err != nil {
-			return err
-		}
-		return t.show(cmd, out, testLine(out))
-	})
-	cmd.Flags().StringVar(&dir, "dir", "", "Folder inside the checkout to run in, like backend")
-	cmd.Flags().IntVar(&minutes, "minutes", 0, "How long this command may run, 1 to 10 (default 3)")
-	cmd.Flags().StringVar(&withTestsFrom, "with-tests-from", "", "head: with --leg base, run the PR's added or changed test files against the base code (in a scratch copy)")
-	return cmd
-}
-
-// testCallTimeout outlasts the daemon's default 3 minute cap on one test run; --minutes widens it.
-const testCallTimeout = litmus.DefaultTestBudget + time.Minute
-
 // launchCallTimeout covers the default recipe's launch budget plus a minute for the response.
 const launchCallTimeout = litmus.DefaultLaunchBudget + time.Minute
 
@@ -349,20 +307,6 @@ const submitCallTimeout = litmus.SubmitBudget + time.Minute
 // build of both legs runs for minutes, and a call cut short by the client would
 // only come back as a retry that waits for the same build.
 const prepareCallTimeout = litmus.PrepareBudget + time.Minute
-
-func testLine(r litmus.TestResult) string {
-	head := fmt.Sprintf("%s: exit %d in %.1fs", strings.Join(r.Args, " "), r.Exit, r.Seconds)
-	if len(r.CopiedFiles) > 0 {
-		head += "\nPR test files copied from " + r.WithTestsFrom + ": " + strings.Join(r.CopiedFiles, ", ")
-	}
-	if r.TimedOut {
-		head += " (timed out and killed)"
-	}
-	if r.Summary != "" {
-		head += "\n" + r.Summary
-	}
-	return head + "\n" + r.Output + "\nfull output: " + r.Receipt
-}
 
 func (t *testingCLI) recordCommand() *cobra.Command {
 	record := verb("record", "Record the target's window to a video", noArgs, nil)

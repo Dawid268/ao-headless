@@ -3457,23 +3457,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/testing/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Run an allow-listed test command in a prepared leg's checkout, time-boxed; withTestsFrom head runs the PR's test files against the base code */
-        post: operations["runTestingTests"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/usage/memory/pressure": {
         parameters: {
             query?: never;
@@ -4950,23 +4933,6 @@ export interface components {
             lines: string[];
             runs: string[];
         };
-        LitmusTestResult: {
-            args: string[];
-            copiedFiles?: string[];
-            exit: number;
-            failing?: boolean;
-            leg: string;
-            notBuilt?: boolean;
-            output: string;
-            ran?: null | number;
-            receipt: string;
-            /** Format: double */
-            seconds: number;
-            seq: number;
-            summary?: string;
-            timedOut?: boolean;
-            withTestsFrom?: string;
-        };
         MarkAllNotificationsReadRequest: {
             /** @description Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread. */
             ids?: string[];
@@ -6107,15 +6073,10 @@ export interface components {
             beforePath?: string;
             box?: components["schemas"]["TestingElementBox"];
             consoleTail?: string;
-            exit?: null | number;
-            failing?: boolean;
             leg?: string;
             /** Format: int64 */
             ms?: number;
-            notBuilt?: boolean;
-            outputPath?: string;
             pageErrors?: string;
-            ran?: null | number;
             reason?: string;
             seq: number;
             targetName?: string;
@@ -6140,12 +6101,10 @@ export interface components {
         };
         TestingRequest: {
             action?: string;
-            /** @description drive: the action's arguments; test: the command and its arguments. */
+            /** @description drive: the action's arguments. */
             args?: string[];
             /** @description submit only: stop early with a reason; a recorded failure keeps the overall result fail. */
             blocked?: boolean;
-            /** @description test only: folder inside the leg's checkout to run in, like backend. */
-            dir?: string;
             /** @description prune only: report what would be deleted and delete nothing. */
             dryRun?: boolean;
             expect?: string;
@@ -6156,8 +6115,6 @@ export interface components {
             keepRuns?: null | number;
             /** @enum {string} */
             leg?: "base" | "head";
-            /** @description test only: how long this command may run, in minutes (default 3). */
-            minutes?: number;
             name?: string;
             /** @description start only: the run's verdict is written to comment.md but not posted to the pull request. */
             noComment?: boolean;
@@ -6181,11 +6138,6 @@ export interface components {
             /** @description submit only: why the base was not run; lets a submit through while a prepared base is unlaunched. */
             skipBase?: string;
             summary?: string;
-            /**
-             * @description test only, with leg base: copy the PR's added or changed test files from the head checkout into a scratch copy of the base checkout and run there.
-             * @enum {string}
-             */
-            withTestsFrom?: "head";
         };
         TestingRerun: {
             name: string;
@@ -19800,66 +19752,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestingVerdict"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    runTestingTests: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TestingRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LitmusTestResult"];
                 };
             };
             /** @description Bad Request */

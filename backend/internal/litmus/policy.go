@@ -44,7 +44,7 @@ var (
 		"Bash(gh pr unlock:*)", "Bash(gh pr update-branch:*)", "Bash(gh issue:*)", "Bash(gh api:*)", "Bash(gh release:*)",
 		"Bash(gh repo:*)", "Bash(gh workflow:*)", "Bash(gh run:*)", "Bash(gh gist:*)", "Bash(gh label:*)", "Bash(gh secret:*)",
 		"Bash(gh variable:*)", "Bash(gh ssh-key:*)", "Bash(gh gpg-key:*)", "Bash(gh cache:*)", "Bash(gh agent-task:*)", "Bash(gh auth:*)",
-		"Bash(ao testing start:*)", "Bash(ao testing post:*)", "Bash(ao testing prune:*)", "Bash(ao testing test:*)", "Bash(ao spawn:*)", "Bash(ao session:*)", "Bash(ao send:*)", "Bash(ao pr:*)",
+		"Bash(ao testing start:*)", "Bash(ao testing post:*)", "Bash(ao testing prune:*)", "Bash(ao spawn:*)", "Bash(ao session:*)", "Bash(ao send:*)", "Bash(ao pr:*)",
 		"Bash(ao review:*)", "Bash(ao project:*)", "Bash(ao orchestrator:*)", "Bash(ao automation:*)", "Bash(ao cue:*)",
 		"Bash(ao stop:*)", "Bash(ao start:*)", "Bash(ao import:*)", "Bash(ao remote-host:*)", "Bash(ao browser:*)",
 		"Bash(ao preview:*)", "Bash(ao render:*)", "Bash(ao dev:*)",
@@ -81,7 +81,7 @@ func GuardEnv(env map[string]string, runDir string) {
 	env["GIT_CONFIG_COUNT"] = strconv.Itoa(base + len(pushPrefixes))
 }
 
-// RefuseTester refuses a verb only the user may run (start, post, prune, test) when the request names a tester's own session:
+// RefuseTester refuses a verb only the user may run (start, post, prune) when the request names a tester's own session:
 // one that has a run or a spawn marker. The CLI sends AO_SESSION_ID, so this holds for any harness, whatever its tool
 // rules; the deny list and GuardEnv stay as the first line. A request that names no session is the user's.
 func (s *Service) RefuseTester(sessionID, verb string) error {
@@ -91,7 +91,7 @@ func (s *Service) RefuseTester(sessionID, verb string) error {
 	}
 	_, spawnedBy := s.store.spawnedSession(sessionID)
 	if _, gerr := s.store.Get(id); gerr == nil || spawnedBy {
-		return apierr.Forbidden("TESTING_TESTER_FORBIDDEN", fmt.Sprintf("`ao testing %s` is for the user: a Litmus tester cannot run PR tests, start runs, post comments or prune; end the run with `ao testing submit`", verb))
+		return apierr.Forbidden("TESTING_TESTER_FORBIDDEN", fmt.Sprintf("`ao testing %s` is for the user: a Litmus tester cannot start runs, post comments or prune; end the run with `ao testing submit`", verb))
 	}
 	return nil
 }

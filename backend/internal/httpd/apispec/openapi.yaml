@@ -10518,50 +10518,6 @@ paths:
       summary: Submit the verdict built from the checks and their receipts
       tags:
       - testing
-  /api/v1/testing/test:
-    post:
-      operationId: runTestingTests
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TestingRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LitmusTestResult'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Conflict
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Service Unavailable
-      summary: Run an allow-listed test command in a prepared leg's checkout, time-boxed;
-        withTestsFrom head runs the PR's test files against the base code
-      tags:
-      - testing
   /api/v1/usage/memory/pressure:
     get:
       operationId: getMemoryPressure
@@ -14529,52 +14485,6 @@ components:
       - bytesFreed
       - lines
       type: object
-    LitmusTestResult:
-      properties:
-        args:
-          items:
-            type: string
-          type: array
-        copiedFiles:
-          items:
-            type: string
-          type: array
-        exit:
-          type: integer
-        failing:
-          type: boolean
-        leg:
-          type: string
-        notBuilt:
-          type: boolean
-        output:
-          type: string
-        ran:
-          type:
-          - "null"
-          - integer
-        receipt:
-          type: string
-        seconds:
-          format: double
-          type: number
-        seq:
-          type: integer
-        summary:
-          type: string
-        timedOut:
-          type: boolean
-        withTestsFrom:
-          type: string
-      required:
-      - leg
-      - args
-      - exit
-      - seconds
-      - output
-      - receipt
-      - seq
-      type: object
     MarkAllNotificationsReadRequest:
       properties:
         ids:
@@ -17394,27 +17304,13 @@ components:
           $ref: '#/components/schemas/TestingElementBox'
         consoleTail:
           type: string
-        exit:
-          type:
-          - "null"
-          - integer
-        failing:
-          type: boolean
         leg:
           type: string
         ms:
           format: int64
           type: integer
-        notBuilt:
-          type: boolean
-        outputPath:
-          type: string
         pageErrors:
           type: string
-        ran:
-          type:
-          - "null"
-          - integer
         reason:
           type: string
         seq:
@@ -17478,8 +17374,7 @@ components:
         action:
           type: string
         args:
-          description: 'drive: the action''s arguments; test: the command and its
-            arguments.'
+          description: 'drive: the action''s arguments.'
           items:
             type: string
           type: array
@@ -17487,10 +17382,6 @@ components:
           description: 'submit only: stop early with a reason; a recorded failure
             keeps the overall result fail.'
           type: boolean
-        dir:
-          description: 'test only: folder inside the leg''s checkout to run in, like
-            backend.'
-          type: string
         dryRun:
           description: 'prune only: report what would be deleted and delete nothing.'
           type: boolean
@@ -17517,12 +17408,6 @@ components:
           - base
           - head
           type: string
-        minutes:
-          description: 'test only: how long this command may run, in minutes (default
-            3).'
-          maximum: 10
-          minimum: 1
-          type: integer
         name:
           type: string
         noComment:
@@ -17570,13 +17455,6 @@ components:
             while a prepared base is unlaunched.'
           type: string
         summary:
-          type: string
-        withTestsFrom:
-          description: 'test only, with leg base: copy the PR''s added or changed
-            test files from the head checkout into a scratch copy of the base checkout
-            and run there.'
-          enum:
-          - head
           type: string
       type: object
     TestingRerun:

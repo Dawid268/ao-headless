@@ -48,7 +48,6 @@ type Service struct {
 	binary          string          // the agent-browser binary; empty when it was not found (reported on first use)
 	login           string          // the gh token's login, read by the first comment post
 	evidenceMu      sync.Mutex      // one publish at a time: runs of a repo share its evidence clone
-	testCap         time.Duration   // longest a `test` verb may run; tests shorten it
 	prepareBudget   time.Duration   // longest a `prepare` verb may run; tests shorten it
 	keepRuns        int             // retention after every run: finished run dirs kept
 	keepCheckouts   int             // retention after every run: finished runs whose checkouts are kept
@@ -70,7 +69,7 @@ func New(store *Store, clock func() time.Time) *Service {
 	}
 	s := &Service{store: store, clock: clock, gh: execGH{}, runner: execRunner{}, sys: realSys(), nodeDirs: defaultNodeDirs, busy: map[string]busyVerb{},
 		engines: map[string]*Engine{}, seqs: map[string]int{}, engExec: realExec, spawnMarkerWait: 10 * time.Second,
-		media: execMedia{}, testCap: testCap, prepareBudget: PrepareBudget, keepRuns: DefaultKeepRuns, keepCheckouts: DefaultKeepCheckouts, mirrorMu: map[string]*sync.Mutex{}, retryPause: 2 * time.Second}
+		media: execMedia{}, prepareBudget: PrepareBudget, keepRuns: DefaultKeepRuns, keepCheckouts: DefaultKeepCheckouts, mirrorMu: map[string]*sync.Mutex{}, retryPause: 2 * time.Second}
 	s.closeEngine = s.closeEngines
 	s.tokenCache = map[tokenKey]int64{}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -326,77 +325,12 @@ func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result Che
 	})
 }
 
-// notBuiltNote is the note of a fail that rests only on test files that did not compile against main.
-const notBuiltNote = "the PR's tests need code main does not have"
-
-// checkEvidence requires saved evidence for an outcome. Test receipts with exit codes are judged even beside
-// screenshots; otherwise the tester's observation stands. A compile failure on main is stored as skipped.
+// checkEvidence requires a saved screenshot for an outcome unless the check was skipped.
 func checkEvidence(c Check, result CheckState, note string) (CheckState, string, error) {
-	if result == CheckSkipped {
+	if result == CheckSkipped || slices.ContainsFunc(c.legReceipts(), func(r Receipt) bool { return fileExists(r.AfterPath) }) {
 		return result, note, nil
 	}
-	recs := c.legReceipts()
-	shot := slices.ContainsFunc(recs, func(r Receipt) bool { return r.Action != "test" && fileExists(r.AfterPath) })
-	if result == CheckAbsent {
-		if shot {
-			return result, note, nil
-		}
-		if slices.ContainsFunc(recs, func(r Receipt) bool { return r.Action != "test" }) {
-			return "", "", conflict("TESTING_CHECK_EVIDENCE", "no picture was saved; act again or end it skipped")
-		}
-		return "", "", conflict("TESTING_CHECK_EVIDENCE", "absent needs a screenshot of where the feature would be; test receipts cannot back it")
-	}
-	valid := slices.DeleteFunc(slices.Clone(recs), func(r Receipt) bool { return r.Action != "test" || !fileExists(r.OutputPath) })
-	if !shot && len(valid) == 0 {
-		if slices.ContainsFunc(recs, func(r Receipt) bool { return r.Action != "test" }) {
-			return "", "", conflict("TESTING_CHECK_EVIDENCE", "no picture was saved; act again or end it skipped")
-		}
-		return "", "", conflict("TESTING_CHECK_EVIDENCE", "no test output was saved; run it again or end it skipped")
-	}
-	recs = slices.DeleteFunc(valid, func(r Receipt) bool { return r.Exit == nil })
-	if (result != CheckPass && result != CheckFail) || len(recs) == 0 {
-		return result, note, nil
-	}
-	interrupted := slices.ContainsFunc(recs, func(r Receipt) bool { return *r.Exit == -1 || *r.Exit == 127 })
-	refuse := func(r Receipt, what, rule string) error {
-		return conflict("TESTING_CHECK_EVIDENCE", fmt.Sprintf("receipt %d %s; %s", r.Seq, what, rule))
-	}
-	if result == CheckFail {
-		failed := Receipt.failedTest // on the head a build that fails is the PR's failure; on the base only a test that ran counts
-		if c.onLeg() == "base" {
-			failed = Receipt.ranAndFailed
-		}
-		if slices.ContainsFunc(recs, failed) {
-			return result, note, nil
-		}
-		if interrupted {
-			return "", "", conflict("TESTING_CHECK_EVIDENCE", "the test timed out or the command was missing; raise --minutes or end it skipped")
-		}
-		if i := slices.IndexFunc(recs, func(r Receipt) bool { return !r.NotBuilt }); i >= 0 { // the rest exited 0 or ran no test
-			what := "exited 0"
-			if *recs[i].Exit != 0 {
-				what = fmt.Sprintf("exited %d without a test that ran and failed", *recs[i].Exit)
-			} else if recs[i].Ran != nil && *recs[i].Ran > 0 {
-				what += fmt.Sprintf(" with %d passing", *recs[i].Ran)
-			}
-			return "", "", refuse(recs[i], what, "a fail needs a test that ran and failed")
-		}
-		return CheckSkipped, notBuiltNote, nil
-	}
-	if slices.ContainsFunc(recs, Receipt.passedTest) {
-		return result, note, nil
-	}
-	if interrupted {
-		return "", "", conflict("TESTING_CHECK_EVIDENCE", "the test timed out or the command was missing; raise --minutes or end it skipped")
-	}
-	what := "ran 0 tests"
-	switch r := recs[0]; {
-	case r.NotBuilt:
-		what = "did not compile"
-	case *r.Exit != 0:
-		what = fmt.Sprintf("exited %d", *r.Exit)
-	}
-	return "", "", refuse(recs[0], what, "a pass needs a test that ran and passed")
+	return "", "", conflict("TESTING_CHECK_EVIDENCE", "no picture was saved; act again or end it skipped")
 }
 
 // busyVerb is a long verb running for a run: when it began, and a channel that

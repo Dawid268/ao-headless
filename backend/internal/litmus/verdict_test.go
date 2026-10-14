@@ -83,13 +83,7 @@ func TestDeriveOverall(t *testing.T) {
 	base := func(id string, st CheckState) Check {
 		return Check{ID: "b" + id, Name: strings.ToUpper(id), State: st, Leg: "base", Receipts: []Receipt{{Leg: "base", Action: "click", AfterPath: evidenceFile(t)}}}
 	} // same name as head(id), any case, with a screenshot receipt like every ended check
-	exit := func(n int) *int { return &n }
-	baseTest := func(id string, st CheckState, r Receipt) Check { // a base check whose only receipt is a test run
-		r.Leg, r.Action, r.OutputPath = "base", "test", evidenceFile(t)
-		return Check{ID: "b" + id, Name: strings.ToUpper(id), State: st, Leg: "base", Receipts: []Receipt{r}}
-	}
 	same := func(c Check) Check { c.SameFault = true; return c }
-	unbuilt, passing, failing := Receipt{Exit: exit(1), NotBuilt: true}, Receipt{Exit: exit(0), Ran: ranN(3)}, Receipt{Exit: exit(1), Ran: ranN(3)}
 	for i, c := range []struct {
 		checks []Check
 		want   CheckState
@@ -105,38 +99,31 @@ func TestDeriveOverall(t *testing.T) {
 		{[]Check{head("x", CheckFail), base("x", CheckPass), head("y", CheckPartial)}, CheckFail}, // any head fail wins
 		{[]Check{head("x", CheckPass), base("x", CheckFail), head("y", CheckSkipped)}, CheckPass}, // could not reach: left out
 		{[]Check{head("x", CheckSkipped), head("y", CheckPass), base("y", CheckFail)}, CheckPass},
-		{[]Check{head("x", CheckPass), head("y", CheckSkipped)}, CheckPartial},                                                       // nothing differs
-		{[]Check{head("x", CheckSkipped)}, CheckPartial},                                                                             // nothing was reached
-		{[]Check{base("x", CheckFail)}, CheckPartial},                                                                                // a base-only check never decides
-		{[]Check{head("x", CheckPass), base("x", CheckSkipped)}, CheckPartial},                                                       // the base could not be reached either
-		{[]Check{head("x", CheckPartial), base("x", CheckPartial), head("y", CheckPass), base("y", CheckFail)}, CheckFail},           // matching partial labels do not prove the same fault
-		{[]Check{head("x", CheckFail), base("x", CheckFail), head("y", CheckPass), base("y", CheckFail)}, CheckPartial},              // an unproven matching failure stays in the finding but does not block
-		{[]Check{head("x", CheckFail), {ID: "bx", Name: "X", State: CheckFail, Leg: "base"}}, CheckFail},                             // main's failure has no evidence and cannot make the head failure partial
-		{[]Check{head("x", CheckFail), base("x", CheckPass), head("y", CheckPass), base("y", CheckFail)}, CheckFail},                 // a base pass makes it the PR's regression
-		{[]Check{head("x", CheckPartial), base("x", CheckSkipped)}, CheckPartial},                                                    // the base was not reached: not pre-existing
-		{[]Check{head("x", CheckFail), base("x", CheckFail)}, CheckPartial},                                                          // an unproven matching failure does not block
-		{[]Check{head("x", CheckPass), baseTest("x", CheckFail, failing)}, CheckPass},                                                // a base test that ran and failed is the difference
-		{[]Check{head("x", CheckPass), baseTest("x", CheckFail, unbuilt)}, CheckPartial},                                             // tests that do not compile on main are no difference
-		{[]Check{head("x", CheckPass), baseTest("x", CheckFail, passing)}, CheckPartial},                                             // nor is a base "fail" whose run exited 0
-		{[]Check{head("x", CheckPass), {ID: "bx", Name: "x", State: CheckFail, Leg: "base"}}, CheckPartial},                          // nor one with no receipt at all
-		{[]Check{head("x", CheckPass), baseTest("x", CheckFail, Receipt{Exit: nil})}, CheckPartial},                                  // nor a test receipt from before exit codes
-		{[]Check{head("x", CheckFail), base("x", CheckSkipped), head("y", CheckPass), base("y", CheckFail)}, CheckFail},              // a head fail beside a base skip is not pre-existing
-		{[]Check{head("x", CheckFail), base("x", CheckPartial), head("y", CheckPass), base("y", CheckFail)}, CheckFail},              // nor beside a base partial
-		{[]Check{head("x", CheckFail), baseTest("x", CheckFail, unbuilt), head("y", CheckPass), base("y", CheckFail)}, CheckFail},    // a base test that never ran cannot make the head failure partial
-		{[]Check{head("x", CheckFail), baseTest("x", CheckFail, failing), head("y", CheckPass), base("y", CheckFail)}, CheckPartial}, // even a failed base test needs explicit sameness to be pre-existing
-		{[]Check{head("x", CheckPass), base("x", CheckAbsent)}, CheckPass},                                                           // a feature main lacks is a difference in the PR's favour
-		{[]Check{head("x", CheckFail), base("x", CheckAbsent)}, CheckFail},                                                           // a head fail beside an absent main is the PR's own
-		{[]Check{head("x", CheckFail), base("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckFail},               // it is never pre-existing, whatever else passes
-		{[]Check{head("x", CheckPartial), base("x", CheckAbsent)}, CheckPartial},                                                     // a head partial still counts against the PR
-		{[]Check{head("x", CheckPartial), base("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckPartial},         // and is not pre-existing
-		{[]Check{head("x", CheckAbsent), base("x", CheckAbsent)}, CheckFail},                                                         // a promised feature absent on head failed
-		{[]Check{head("x", CheckAbsent)}, CheckFail},                                                                                 // a head absent alone is a failure
-		{[]Check{head("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckFail},                                     // absence on the PR build counts as a failure
-		{[]Check{head("x", CheckAbsent), base("x", CheckPass), head("y", CheckPass), base("y", CheckAbsent)}, CheckFail},             // a head absent beside a base pass is a failure
-		{[]Check{head("x", CheckPass), base("x", CheckAbsent), head("y", CheckPass)}, CheckPass},                                     // y was never compared; the difference on x carries it
+		{[]Check{head("x", CheckPass), head("y", CheckSkipped)}, CheckPartial},                                               // nothing differs
+		{[]Check{head("x", CheckSkipped)}, CheckPartial},                                                                     // nothing was reached
+		{[]Check{base("x", CheckFail)}, CheckPartial},                                                                        // a base-only check never decides
+		{[]Check{head("x", CheckPass), base("x", CheckSkipped)}, CheckPartial},                                               // the base could not be reached either
+		{[]Check{head("x", CheckPartial), base("x", CheckPartial), head("y", CheckPass), base("y", CheckFail)}, CheckFail},   // matching partial labels do not prove the same fault
+		{[]Check{head("x", CheckFail), base("x", CheckFail), head("y", CheckPass), base("y", CheckFail)}, CheckPartial},      // an unproven matching failure stays in the finding but does not block
+		{[]Check{head("x", CheckFail), {ID: "bx", Name: "X", State: CheckFail, Leg: "base"}}, CheckFail},                     // main's failure has no evidence and cannot make the head failure partial
+		{[]Check{head("x", CheckFail), base("x", CheckPass), head("y", CheckPass), base("y", CheckFail)}, CheckFail},         // a base pass makes it the PR's regression
+		{[]Check{head("x", CheckPartial), base("x", CheckSkipped)}, CheckPartial},                                            // the base was not reached: not pre-existing
+		{[]Check{head("x", CheckFail), base("x", CheckFail)}, CheckPartial},                                                  // an unproven matching failure does not block
+		{[]Check{head("x", CheckPass), {ID: "bx", Name: "x", State: CheckFail, Leg: "base"}}, CheckPartial},                  // nor one with no receipt at all
+		{[]Check{head("x", CheckFail), base("x", CheckSkipped), head("y", CheckPass), base("y", CheckFail)}, CheckFail},      // a head fail beside a base skip is not pre-existing
+		{[]Check{head("x", CheckFail), base("x", CheckPartial), head("y", CheckPass), base("y", CheckFail)}, CheckFail},      // nor beside a base partial
+		{[]Check{head("x", CheckPass), base("x", CheckAbsent)}, CheckPass},                                                   // a feature main lacks is a difference in the PR's favour
+		{[]Check{head("x", CheckFail), base("x", CheckAbsent)}, CheckFail},                                                   // a head fail beside an absent main is the PR's own
+		{[]Check{head("x", CheckFail), base("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckFail},       // it is never pre-existing, whatever else passes
+		{[]Check{head("x", CheckPartial), base("x", CheckAbsent)}, CheckPartial},                                             // a head partial still counts against the PR
+		{[]Check{head("x", CheckPartial), base("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckPartial}, // and is not pre-existing
+		{[]Check{head("x", CheckAbsent), base("x", CheckAbsent)}, CheckFail},                                                 // a promised feature absent on head failed
+		{[]Check{head("x", CheckAbsent)}, CheckFail},                                                                         // a head absent alone is a failure
+		{[]Check{head("x", CheckAbsent), head("y", CheckPass), base("y", CheckFail)}, CheckFail},                             // absence on the PR build counts as a failure
+		{[]Check{head("x", CheckAbsent), base("x", CheckPass), head("y", CheckPass), base("y", CheckAbsent)}, CheckFail},     // a head absent beside a base pass is a failure
+		{[]Check{head("x", CheckPass), base("x", CheckAbsent), head("y", CheckPass)}, CheckPass},                             // y was never compared; the difference on x carries it
 		{[]Check{head("x", CheckFail), same(base("x", CheckFail)), head("y", CheckPass), base("y", CheckFail)}, CheckPass},
 		{[]Check{head("x", CheckPartial), same(base("x", CheckPartial)), head("y", CheckPass), base("y", CheckFail)}, CheckPass},
-		{[]Check{head("x", CheckFail), same(baseTest("x", CheckFail, failing)), head("y", CheckPass), base("y", CheckFail)}, CheckPass},
 		{[]Check{head("x", CheckFail), same(base("x", CheckFail))}, CheckPartial},
 		{[]Check{head("x", CheckPass), {Name: "x", State: CheckFail, Leg: "base", Receipts: []Receipt{{Action: "click", Leg: "base"}}}}, CheckPartial},
 		{[]Check{base("x", CheckAbsent)}, CheckPartial}, // a base-only check never decides

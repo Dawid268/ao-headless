@@ -28,7 +28,6 @@ type TestingService interface {
 	SubmitBlocked(ctx context.Context, sessionID, reason string) (litmus.Verdict, error)
 	Cleanup(ctx context.Context, sessionID string) (litmus.Run, error)
 	Drive(ctx context.Context, sessionID, action string, args []string) (map[string]any, error)
-	Test(ctx context.Context, sessionID, leg, dir string, argv []string, withTestsFrom string, minutes int) (litmus.TestResult, error)
 	RecipeValidate(ctx context.Context, path string) (litmus.Recipe, error)
 	RefuseTester(sessionID, verb string) error
 	Prune(ctx context.Context, keepRuns, keepCheckouts int) (litmus.PruneReport, error)
@@ -131,12 +130,6 @@ func (c *TestingController) Register(r chi.Router) {
 	}))
 	r.Post("/testing/drive", testingPost(func(r *http.Request, in TestingRequest) (map[string]any, error) {
 		return s.Drive(r.Context(), in.SessionID, strings.ToLower(strings.TrimSpace(in.Action)), in.Args)
-	}))
-	r.Post("/testing/test", testingPost(func(r *http.Request, in TestingRequest) (litmus.TestResult, error) {
-		if err := s.RefuseTester(in.SessionID, "test"); err != nil {
-			return litmus.TestResult{}, err
-		}
-		return s.Test(r.Context(), in.SessionID, in.Leg, in.Dir, in.Args, in.WithTestsFrom, in.Minutes)
 	}))
 	r.Post("/testing/recipe/validate", testingPost(func(r *http.Request, in TestingRequest) (litmus.Recipe, error) {
 		return s.RecipeValidate(r.Context(), in.Path)

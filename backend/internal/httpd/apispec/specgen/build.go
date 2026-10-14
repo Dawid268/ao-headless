@@ -890,7 +890,6 @@ func testingOperations() []operation {
 		post("/submit", "submitTesting", "Submit the verdict built from the checks and their receipts", litmus.Verdict{}),
 		post("/cleanup", "cleanupTesting", "Stop the run's targets and remove its private state", litmus.Run{}),
 		post("/drive", "driveTesting", "Run one driving action on a launched leg", map[string]any{}),
-		post("/test", "runTestingTests", "Run an allow-listed test command in a prepared leg's checkout, time-boxed; withTestsFrom head runs the PR's test files against the base code", litmus.TestResult{}),
 		post("/recipe/validate", "validateTestingRecipe", "Validate a per-repo recipe file", litmus.Recipe{}),
 		{method: http.MethodGet, path: "/api/v1/testing/runs", id: "listTestingRuns", tag: "testing", summary: "List a project's testing runs, newest first, with verdict, duration and comment state",
 			pathParams: []any{controllers.TestingRunsQuery{}}, resps: append([]respUnit{{http.StatusOK, litmus.RunList{}}}, errs...)},

@@ -154,10 +154,14 @@ func TestTestingAPICheckEndSameFaultAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestTestingAPITestVerbTakesWithTestsFrom(t *testing.T) {
-	do := testingServer(t, httpd.APIDeps{Testing: litmus.New(litmus.NewStore(t.TempDir()), nil).WithGH(recordedGH{t: t})})
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","withTestsFrom":"head","args":["go","test"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"base","withTestsFrom":"base","args":["go","test"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
+func TestTestingAPITestVerbRemoved(t *testing.T) {
+	router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil,
+		httpd.APIDeps{Testing: litmus.New(litmus.NewStore(t.TempDir()), nil)}, httpd.ControlDeps{})
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/api/v1/testing/test", strings.NewReader(`{}`)))
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("removed test route = %d: %s", res.Code, res.Body.String())
+	}
 }
 
 func TestTestingAPIStartSpawnsWorker(t *testing.T) {
@@ -224,19 +228,6 @@ func TestTestingAPISubmitSkipBase(t *testing.T) {
 	do("POST", "/intake", `{"sessionId":"ao-1","prUrl":"https://github.com/aoagents/agent-orchestrator/pull/6394"}`, http.StatusOK)
 	do("POST", "/submit", `{"sessionId":"ao-1","skipBase":"  "}`, http.StatusBadRequest, "TESTING_REASON_REQUIRED")
 	do("POST", "/submit", `{"sessionId":"ao-1","skipBase":"base build is broken"}`, http.StatusBadRequest, "TESTING_NO_CHECKS") // the field reaches the service
-}
-
-func TestTestingAPITestRoute(t *testing.T) {
-	store := litmus.NewStore(t.TempDir())
-	do := testingServer(t, httpd.APIDeps{Testing: litmus.New(store, nil).WithGH(recordedGH{t: t})})
-	do("POST", "/intake", `{"sessionId":"ao-1","prUrl":"https://github.com/aoagents/agent-orchestrator/pull/6394"}`, http.StatusOK)
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test"]}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
-	// Owner calls reach command validation. Execution still needs a run, whose
-	// session the current guard would reject; no real HTTP happy path exists.
-	do("POST", "/test", `{"leg":"head","args":["sh","-c","id"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
-	do("POST", "/test", `{"sessionId":"ao-owner","leg":"head","args":["sh","-c","id"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
-	do("POST", "/test", `{"leg":"head","args":["go","test"]}`, http.StatusBadRequest, "SESSION_ID_REQUIRED")
-	do("POST", "/test", `{"sessionId":"ao-owner","leg":"head","args":["go","test"]}`, http.StatusNotFound, "TESTING_RUN_NOT_FOUND")
 }
 
 func TestTestingAPIPrune(t *testing.T) {
@@ -376,7 +367,7 @@ func TestTestingAPIProjectSettingsReviewPreservesOmittedValue(t *testing.T) {
 	put(`{"askBeforePosting":true,"review":false}`, `"review":false`)
 }
 
-// The daemon, not the prompt, keeps a tester out of start, post, prune and package tests.
+// The daemon, not the prompt, keeps a tester out of start, post and prune.
 func TestTestingAPIRefusesTheTesterOnUserVerbs(t *testing.T) {
 	svc := litmus.New(litmus.NewStore(t.TempDir()), nil).WithGH(recordedGH{t: t}).WithSpawner(func(context.Context, litmus.SpawnRequest) (string, error) { return "ao-9", nil })
 	do := testingServer(t, httpd.APIDeps{Testing: svc})
@@ -385,11 +376,9 @@ func TestTestingAPIRefusesTheTesterOnUserVerbs(t *testing.T) {
 	do("POST", "/prune", `{"sessionId":"ao-1","dryRun":true}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 	do("POST", "/start", `{"sessionId":"ao-1","projectId":"p1","prUrl":"aoagents/agent-orchestrator#6394"}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 	do("POST", "/runs/run_ao-1/post", `{"sessionId":"ao-1"}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test"]}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 
 	// The user's own session, or no session, is allowed through.
 	do("POST", "/prune", `{"sessionId":"ao-orch","dryRun":true}`, http.StatusOK, `"dryRun":true`)
 	do("POST", "/prune", `{"dryRun":true}`, http.StatusOK, `"dryRun":true`)
 	do("POST", "/start", `{"sessionId":"ao-orch","projectId":"p1","prUrl":"aoagents/agent-orchestrator#6394"}`, http.StatusOK, `"sessionId":"ao-9"`)
-	do("POST", "/test", `{"sessionId":"ao-orch","leg":"head","args":["go","test"]}`, http.StatusNotFound, "TESTING_RUN_NOT_FOUND")
 }

@@ -519,44 +519,6 @@ func TestVerdictLineSentences(t *testing.T) {
 	}
 }
 
-func TestVerdictLineSaysWhenOnlyTestsRan(t *testing.T) {
-	const tests = "tests only, the app was not opened"
-	for _, c := range []struct {
-		overall CheckState
-		t       tally
-		want    string
-	}{
-		{CheckPass, tally{passed: 1, shown: 1, testsOnly: true}, "the PR does what it says in the 1 check I finished; " + tests},
-		{CheckPass, tally{passed: 3, shown: 1, notCompared: 2, testsOnly: true}, "the PR does what it says in the 3 checks I finished; " + tests + ". A few checks only ran on the PR build"},
-		{CheckFail, tally{failed: 1, testsOnly: true}, "something broke; do not merge yet"},
-		{CheckPartial, tally{passed: 1, testsOnly: true}, "the PR build works, but nothing differed from main; read the diff before merging"},
-	} {
-		if got := verdictLine(c.overall, c.t, "main"); got != c.want {
-			t.Errorf("%s %+v:\n got %q\nwant %q", c.overall, c.t, got, c.want)
-		}
-	}
-	zero, one := 0, 1
-	test := func(leg string, state CheckState, r Receipt) Check {
-		r.Action, r.Leg, r.OutputPath = "test", leg, evidenceFile(t)
-		return Check{Name: "pkg", Expect: "the tests pass", State: state, Leg: leg, Receipts: []Receipt{r}}
-	}
-	head := test("head", CheckPass, Receipt{Exit: &zero, Ran: ranN(3)})
-	if c := count([]Check{head, test("base", CheckFail, Receipt{Exit: &one, Ran: ranN(2)})}); !c.testsOnly || c.shown != 1 || c.passed != 1 {
-		t.Errorf("tests that failed on main are a pass shown against it: %+v", c)
-	}
-	if c := count([]Check{head, test("base", CheckFail, Receipt{Exit: &one, NotBuilt: true})}); !c.testsOnly || c.shown != 0 {
-		t.Errorf("tests that did not compile on main show nothing: %+v", c)
-	}
-	if c := count(commentChecks(t)); c.testsOnly {
-		t.Errorf("a run that clicked through the app is not tests only: %+v", c)
-	}
-	// The same line reaches the comment.
-	v := commentVerdict([]Check{head, test("base", CheckFail, Receipt{Exit: &one, Ran: ranN(2)})})
-	if body := renderComment(commentRun, v, evidence{}, commentRun.CreatedAt.Add(time.Minute)); !strings.Contains(body, "**Result: the PR does what it says in the 1 check I finished; "+tests+".**") {
-		t.Errorf("comment lacks the tests-only result:\n%s", body)
-	}
-}
-
 func TestAreaLineSaysWhichChangedAreasTheChecksDidNotCover(t *testing.T) {
 	// run 11: three e2e specs, two unit tests and one component. The component's file name shares the stem "nav" with
 	// "navigate", and it is the only area that is not tests, so it counts as covered either way. Tests are never run.

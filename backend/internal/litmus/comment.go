@@ -278,9 +278,6 @@ func summaryCommentBody(run Run, v Verdict, now time.Time, marker bool) string {
 			word = "check"
 		}
 		result = fmt.Sprintf("the PR does what it says in the %d %s I finished", tally.passed, word)
-		if tally.testsOnly {
-			result += "; tests only, the app was not opened"
-		}
 	}
 	paragraphs = append(paragraphs, lowerFirst(result)+".")
 	for _, gap := range run.Gaps {
@@ -555,12 +552,10 @@ func cellWord(s string) string { return cmp.Or(cellWords[s], s) }
 // tally counts the head checks by what they showed.
 type tally struct {
 	passed, shown, pre, prePartial, notCompared, failed, partial, unreached int
-	compared, notRun                                                        int  // head checks with and without a result on main (baseCoverage)
-	testsOnly                                                               bool // no window was driven: every receipt is a test run
+	compared, notRun                                                        int // head checks with and without a result on main (baseCoverage)
 }
 
 func count(checks []Check) (t tally) {
-	t.testsOnly = testsOnly(checks)
 	compared, notRun := baseCoverage(checks)
 	t.compared, t.notRun = len(compared), len(notRun)
 	for _, c := range checks {
@@ -618,9 +613,6 @@ func verdictLine(overall CheckState, t tally, main string) string {
 			word = "check"
 		}
 		line := fmt.Sprintf("the PR does what it says in the %d %s I finished", t.passed, word)
-		if t.testsOnly {
-			line += "; tests only, the app was not opened"
-		}
 		if left > 0 {
 			line += ". " + leftover(t.notCompared+t.partial, t.unreached)
 		}

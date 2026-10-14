@@ -182,8 +182,6 @@ type Receipt struct {
 	ThemeNote   string      `json:"themeNote,omitempty"`
 	ConsoleTail string      `json:"consoleTail,omitempty"`
 	At          time.Time   `json:"at"`
-	// OutputPath is the full output of a test action (receipts/<n>-test.txt). It is not a shot: AfterPath stays empty.
-	OutputPath string `json:"outputPath,omitempty"`
 	// TargetRole and TargetName are what the tester's last snapshot called the element it acted on, for plain captions.
 	TargetRole string      `json:"targetRole,omitempty"`
 	TargetName string      `json:"targetName,omitempty"`
@@ -191,13 +189,6 @@ type Receipt struct {
 	Reason     string      `json:"reason,omitempty"` // why a click was refused
 	PageErrors string      `json:"pageErrors,omitempty"`
 	MS         int64       `json:"ms,omitempty"`
-	// Exit, NotBuilt, Ran and Failing are test only: the command's exit code, whether the PR's test files did not compile,
-	// how many tests the runner counted (nil: the runner prints no counts, 0: it counted none) and whether the output names
-	// a failing test. A receipt from before them has no Exit and is unjudged.
-	Exit     *int `json:"exit,omitempty"`
-	NotBuilt bool `json:"notBuilt,omitempty"`
-	Ran      *int `json:"ran,omitempty"`
-	Failing  bool `json:"failing,omitempty"`
 }
 
 // ThemeShot is an opaque after-shot saved at check end for a system preference.
@@ -264,28 +255,6 @@ func (r Run) sideName(leg string) string {
 }
 
 func (r Receipt) onLeg() string { return cmp.Or(r.Leg, "head") }
-
-// failedTest is a test run that compiled and exited non-zero, excluding a timeout or missing command.
-func (r Receipt) failedTest() bool {
-	return r.Action == "test" && r.Exit != nil && *r.Exit != 0 && *r.Exit != -1 && *r.Exit != 127 && !r.NotBuilt
-}
-
-// ranAndFailed is a failedTest that shows a test ran: not a timeout or a missing command (exit 127), and the runner
-// counted at least one test or, when it prints no counts, the output names a failing one.
-func (r Receipt) ranAndFailed() bool {
-	if !r.failedTest() || *r.Exit < 0 || *r.Exit == 127 {
-		return false
-	}
-	if r.Ran != nil {
-		return *r.Ran > 0
-	}
-	return r.Failing
-}
-
-// passedTest is a test run that compiled, exited 0 and did not count zero tests (a runner with no counts is judged by its exit code).
-func (r Receipt) passedTest() bool {
-	return r.Action == "test" && r.Exit != nil && *r.Exit == 0 && !r.NotBuilt && (r.Ran == nil || *r.Ran > 0)
-}
 
 // Verdict is the submitted result: per-check outcomes with their receipts.
 type Verdict struct {

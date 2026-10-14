@@ -205,10 +205,6 @@ func TestIntakeCutsThePatchAtTheCapAndKeepsTheFileList(t *testing.T) {
 	if want := []string{"The PR's patch is longer than 5.0 MB; I was shown the first 5.0 MB of it and read the rest with git (files.txt lists every file)."}; !slices.Equal(run.Gaps, want) {
 		t.Fatalf("gaps %q", run.Gaps)
 	}
-	list := readRunFile(t, svc, run, "files.txt")
-	if got := prTestFiles(list); !slices.Equal(got, []string{"frontend/src/renderer/components/chat/TurnSettingsBar.test.tsx"}) {
-		t.Fatalf("test files from files.txt: %q\n%s", got, list)
-	}
 }
 
 func TestIntakeReadsTheLinkedIssueAsAGapOnTheClosingIssuesPath(t *testing.T) {
@@ -485,9 +481,6 @@ func TestChangedFilesParsesRenamesCopiesAndBinaries(t *testing.T) {
 	}
 	if len(lines) != len(wantLines)+1 || !strings.HasPrefix(lines[0], "# status\tadded\tdeleted\tpath\t[from]") || !slices.Equal(lines[1:], wantLines) {
 		t.Fatalf("files.txt:\n%s", text)
-	}
-	if got := prTestFiles(text); !slices.Equal(got, []string{"new/a.test.ts"}) { // the deleted test is skipped, the renamed one is taken
-		t.Fatalf("test files: %q", got)
 	}
 }
 

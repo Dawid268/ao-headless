@@ -476,11 +476,6 @@ type actionRec struct {
 	Warnings    []string    `json:"warnings,omitempty"`
 	TargetRole  string      `json:"targetRole,omitempty"` // from the last snapshot: the element acted on, for plain captions
 	TargetName  string      `json:"targetName,omitempty"`
-	Exit        *int        `json:"exit,omitempty"`    // test only: the command's exit code
-	NoTests     bool        `json:"noTests,omitempty"` // test only: it exited 0 and its runner counted no tests, so it is not one of the maxTests runs
-	// WithTestsFrom and CopiedFiles are test only: the PR's test files copied from that leg onto the base checkout.
-	WithTestsFrom string   `json:"withTestsFrom,omitempty"`
-	CopiedFiles   []string `json:"copiedFiles,omitempty"`
 }
 
 // receipt settles the UI, takes the after-shot and the console tail, appends the record to

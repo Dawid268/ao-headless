@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -159,9 +158,6 @@ func TestTestingLongCallsOutlastServerBudgets(t *testing.T) {
 		{"recipe validate with SHA", "/testing/recipe/validate", []string{"recipe", "validate", "recipe.yaml", "--sha", strings.Repeat("a", 40)}, litmus.RecipeValidateBudget},
 		{"post", "/testing/runs/run_w1/post", []string{"post", "run_w1"}, litmus.PostBudget},
 		{"submit", "/testing/submit", []string{"submit"}, litmus.SubmitBudget},
-		{"test default", "/testing/test", []string{"test", "--leg", "head", "--", "go", "test"}, litmus.DefaultTestBudget},
-		{"test extended", "/testing/test", []string{"test", "--leg", "head", "--minutes", "7", "--", "go", "test"}, 7 * time.Minute},
-		{"test maximum", "/testing/test", []string{"test", "--leg", "base", "--minutes", strconv.Itoa(litmus.MaxTestMin), "--", "go", "test"}, time.Duration(litmus.MaxTestMin) * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("AO_SESSION_ID", "w1")
@@ -446,25 +442,6 @@ func TestTestingSettingsHarnessChangeNeedsTheModel(t *testing.T) {
 	got = testingDaemon(t, http.StatusOK, `{"askBeforePosting":true}`)
 	if _, err := runTesting(t, "settings", "--project", "p1", "--harness", "codex"); err != nil || got.method != "PUT" {
 		t.Fatalf("harness change with no stored model: err=%v method=%s", err, got.method)
-	}
-}
-
-func TestTestingTestMinutesIsSentAndBounded(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "w1")
-	got := testingDaemon(t, http.StatusOK, `{}`)
-	if _, err := runTesting(t, "test", "--leg", "head", "--minutes", "7", "--", "go", "test", "./..."); err != nil {
-		t.Fatal(err)
-	}
-	if got.path != "/api/v1/testing/test" || fmt.Sprint(got.body["minutes"]) != "7" {
-		t.Fatalf("request %s body %v", got.path, got.body)
-	}
-	if _, err := runTesting(t, "test", "--leg", "head", "--", "go", "test"); err != nil || got.body["minutes"] != nil {
-		t.Fatalf("no --minutes must send none: err=%v body=%v", err, got.body)
-	}
-	for _, m := range []string{"0", "11", "-1"} {
-		if _, err := runTesting(t, "test", "--leg", "head", "--minutes", m, "--", "go", "test"); ExitCode(err) != 2 {
-			t.Errorf("--minutes %s: err=%v", m, err)
-		}
 	}
 }
 
