@@ -68,7 +68,7 @@ import {
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1137,7 +1137,13 @@ function editorStateDir(): string {
 const workspaceCheckUnavailable = (message: string) =>
 	Object.assign(new Error(message), { code: "SERVICE_UNAVAILABLE" });
 
-async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+// Reads one absolute session path from the loopback-only desktop routes.
+async function fetchDesktopSessionPath(
+	sessionId: string,
+	route: "workspace" | "artifacts",
+	field: "workspacePath" | "artifactDir",
+	unavailableMessage: string,
+): Promise<string> {
 	if (daemonStatus.state !== "ready" || !daemonStatus.port) {
 		throw workspaceCheckUnavailable("AO daemon is not ready.");
 	}
@@ -1145,7 +1151,7 @@ async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<str
 	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
 	try {
 		const response = await net.fetch(
-			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/workspace`,
+			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/${route}`,
 			{ signal: controller.signal },
 		).catch((error: unknown) => {
 			if (error instanceof Error && error.name === "AbortError") throw error;
@@ -1156,14 +1162,14 @@ async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<str
 			throw error;
 		}) as Record<string, unknown>;
 		if (!response.ok) {
-			const message = typeof body.message === "string" ? body.message : "Session workspace is not available.";
+			const message = typeof body.message === "string" ? body.message : unavailableMessage;
 			throw Object.assign(new Error(message), typeof body.code === "string" ? { code: body.code } : {});
 		}
-		const workspacePath = body.workspacePath;
-		if (typeof workspacePath !== "string" || !path.isAbsolute(workspacePath)) {
-			throw new Error("Session workspace is not available.");
+		const sessionPath = body[field];
+		if (typeof sessionPath !== "string" || !path.isAbsolute(sessionPath)) {
+			throw new Error(unavailableMessage);
 		}
-		return workspacePath;
+		return sessionPath;
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") {
 			throw workspaceCheckUnavailable("Timed out while resolving the session workspace.");
@@ -1174,14 +1180,14 @@ async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<str
 	}
 }
 
-// Session artifacts live in <data dir>/artifacts/<session id> (see the
-// daemon's sessionartifacts.Dir). The id must be one plain path segment.
-async function resolveSessionArtifactDirForDesktop(sessionId: string): Promise<string> {
-	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId)) throw new Error("Session is not valid.");
-	const artifactDir = path.join(desktopDataDir, "artifacts", sessionId);
-	const info = await stat(artifactDir).catch(() => undefined);
-	if (!info?.isDirectory()) throw new Error("This session has no artifacts folder yet.");
-	return artifactDir;
+function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+	return fetchDesktopSessionPath(sessionId, "workspace", "workspacePath", "Session workspace is not available.");
+}
+
+// The daemon owns each session's artifact directory, which can live outside
+// this app's data dir when the daemon runs with its own AO_DATA_DIR.
+function resolveSessionArtifactDirForDesktop(sessionId: string): Promise<string> {
+	return fetchDesktopSessionPath(sessionId, "artifacts", "artifactDir", "This session has no artifacts folder yet.");
 }
 
 const editorHandoff = createEditorHandoff({
@@ -1203,6 +1209,7 @@ const editorHandoff = createEditorHandoff({
 		if (!(await stat(filePath).catch(() => undefined))) throw new Error(`${filePath} does not exist`);
 		shell.showItemInFolder(filePath);
 	},
+	realPath: (candidatePath) => realpath(candidatePath),
 	copyText: (text) => clipboard.writeText(text),
 	logError: (message, error) => console.error(message, error),
 });

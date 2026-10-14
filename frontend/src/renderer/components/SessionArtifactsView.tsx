@@ -21,6 +21,9 @@ import { PanelMessage } from "./WorkspaceDiffView";
 
 export type ArtifactOpenRequest = { feedback?: boolean; key: number; path: string };
 
+// How long a failed open or copy stays in the header.
+const ERROR_CLEAR_MS = 5_000;
+
 /** The session's artifacts, newest first. */
 function sortedArtifacts(artifacts: SessionArtifact[]): SessionArtifact[] {
 	return [...artifacts].sort(
@@ -40,6 +43,12 @@ function terminalName(): string {
 function OpenArtifactsFolderButtons({ sessionId }: { sessionId: string }) {
 	const { t } = useTranslation();
 	const open = useOpenSessionArtifacts();
+	const resetOpen = open.reset;
+	useEffect(() => {
+		if (!open.error) return;
+		const timer = setTimeout(resetOpen, ERROR_CLEAR_MS);
+		return () => clearTimeout(timer);
+	}, [open.error, resetOpen]);
 	const targets: { id: OpenArtifactsTargetId; label: string; icon: typeof FolderOpen }[] = [
 		{ id: "file-manager", label: t("editor.openInTarget", { name: fileManagerName() }), icon: FolderOpen },
 		{ id: "terminal", label: t("editor.openInTarget", { name: terminalName() }), icon: SquareTerminal },
@@ -108,6 +117,15 @@ function ArtifactMenu({ artifact, hostId, session }: { artifact: SessionArtifact
 		}
 	};
 	const error = open.error?.message || copyError;
+	const resetOpen = open.reset;
+	useEffect(() => {
+		if (!error) return;
+		const timer = setTimeout(() => {
+			resetOpen();
+			setCopyError("");
+		}, ERROR_CLEAR_MS);
+		return () => clearTimeout(timer);
+	}, [error, resetOpen]);
 	return (
 		<>
 			<DropdownMenu>
@@ -216,7 +234,7 @@ export function SessionArtifactsView({
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-sm" />
 					</Button>
-					<ArtifactMenu artifact={selected} hostId={hostId} session={session} />
+					<ArtifactMenu artifact={selected} hostId={hostId} key={selected.path} session={session} />
 					<div className="ml-auto flex shrink-0 items-center" ref={setToolbarHost} />
 				</div>
 				<div className="min-h-0 flex-1">

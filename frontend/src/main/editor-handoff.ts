@@ -84,6 +84,8 @@ export type EditorHandoffDeps = {
 	openDirectory: (workspacePath: string) => Promise<void>;
 	/** Shows one file selected in the system file manager. */
 	revealPath: (filePath: string) => Promise<void>;
+	/** Resolves symlinks in an existing path. */
+	realPath: (candidatePath: string) => Promise<string>;
 	/** Puts text on the system clipboard. The workspace path never reaches the renderer. */
 	copyText?: (text: string) => void;
 	isExecutable?: (candidatePath: string) => boolean;
@@ -119,17 +121,30 @@ function pathAPI(platform: Platform) {
 	return platform === "win32" ? path.win32 : path.posix;
 }
 
-// An artifact's absolute path, which must stay inside the artifact directory.
-function artifactFilePath(api: typeof path.posix, artifactDir: string, relativePath: string): string {
+function isInside(api: typeof path.posix, dir: string, candidate: string): boolean {
+	const relative = api.relative(dir, candidate);
+	return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${api.sep}`) && !api.isAbsolute(relative);
+}
+
+// An artifact's absolute path with symlinks resolved, which must stay inside
+// the artifact directory both as written and once resolved.
+async function artifactFilePath(
+	api: typeof path.posix,
+	realPath: (candidatePath: string) => Promise<string>,
+	artifactDir: string,
+	relativePath: string,
+): Promise<string> {
 	if (typeof relativePath !== "string" || !relativePath.trim() || api.isAbsolute(relativePath)) {
 		throw new Error("That artifact is not valid.");
 	}
 	const filePath = api.resolve(artifactDir, relativePath);
-	const relative = api.relative(artifactDir, filePath);
-	if (!relative || relative === ".." || relative.startsWith(`..${api.sep}`) || api.isAbsolute(relative)) {
-		throw new Error("That artifact is not valid.");
-	}
-	return filePath;
+	if (!isInside(api, artifactDir, filePath)) throw new Error("That artifact is not valid.");
+	const realDir = await realPath(artifactDir);
+	const realFile = await realPath(filePath).catch(() => {
+		throw new Error("That artifact no longer exists.");
+	});
+	if (!isInside(api, realDir, realFile)) throw new Error("That artifact is not valid.");
+	return realFile;
 }
 
 function executableNames(command: string, platform: Platform, env: NodeJS.ProcessEnv): string[] {
@@ -427,7 +442,7 @@ export function createEditorHandoff(deps: EditorHandoffDeps): EditorHandoff {
 			const target = input.targetId === "file-manager" ? fileManager : terminal?.target;
 			if (!target) throw new Error("That open target is not available.");
 			const artifactDir = await deps.resolveArtifactDir(sessionId);
-			const filePath = input.path === undefined ? undefined : artifactFilePath(pathAPI(deps.platform), artifactDir, input.path);
+			const filePath = input.path === undefined ? undefined : await artifactFilePath(pathAPI(deps.platform), deps.realPath, artifactDir, input.path);
 			await openTarget(target, terminal?.command, filePath ? pathAPI(deps.platform).dirname(filePath) : artifactDir, filePath);
 			return target;
 		},

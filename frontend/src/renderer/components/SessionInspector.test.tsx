@@ -1238,6 +1238,28 @@ describe("SessionInspector Artifacts section", () => {
     expect(screen.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("keeps the Artifacts tab for a requested artifact the session does not list yet", () => {
+    const onViewChange = vi.fn();
+    renderWithQuery(
+      <SessionInspector
+        artifactRequest={{ key: 1, path: "fresh.md" }}
+        onViewChange={onViewChange}
+        session={session([], { artifactFiles: [] })}
+        view="artifacts"
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
+    expect(onViewChange).not.toHaveBeenCalledWith("summary");
+  });
+
+  it("keeps a requested Artifacts view while the session is loading", () => {
+    const onViewChange = vi.fn();
+    renderWithQuery(<SessionInspector onViewChange={onViewChange} view="artifacts" />);
+
+    expect(onViewChange).not.toHaveBeenCalled();
+  });
+
   it("hides the Artifacts tab when the session has no artifacts", () => {
     renderWithQuery(<SessionInspector session={session([], { artifactFiles: [] })} view="artifacts" />);
 

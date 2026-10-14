@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,6 +89,24 @@ describe("SessionArtifactsView", () => {
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("This session has no artifacts folder yet.");
 		openArtifacts.mockRestore();
+	});
+
+	it("clears a failed open after a few seconds", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const openArtifacts = vi.spyOn(aoBridge.editorHandoff, "openArtifacts").mockRejectedValue(new Error("Could not open Terminal."));
+		try {
+			renderView(<SessionArtifactsView request={{ key: 1, path: "notes.md" }} session={session()} />);
+
+			await userEvent.click(screen.getByRole("button", { name: "notes.md" }));
+			await userEvent.click(screen.getAllByRole("menuitem")[1]);
+			expect(await screen.findByRole("alert")).toHaveTextContent("Could not open Terminal.");
+
+			await act(() => vi.advanceTimersByTimeAsync(5_000));
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		} finally {
+			openArtifacts.mockRestore();
+			vi.useRealTimers();
+		}
 	});
 
 	it("hides the folder actions for a session on a remote host", () => {

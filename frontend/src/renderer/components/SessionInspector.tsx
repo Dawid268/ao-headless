@@ -251,11 +251,22 @@ export const SessionInspector = memo(function SessionInspector({
 	const cloudFilesChangedCount = cloudReview.data?.summary.files;
 	const filesChangedCount = session?.cloud ? (cloudFilesChangedCount ? cloudFilesChangedCount : undefined) : localFilesChangedCount;
 	const hasWorkspaceInventory = session?.cloud ? Boolean(cloudReview.data?.files.length) : Boolean(localWorkspaceData?.files?.length);
+	// An artifact link can open the Artifacts tab before a session refresh lists
+	// the file. The request keeps the tab available until the file is listed or
+	// another tab is picked.
+	const [settledArtifactRequestKey, setSettledArtifactRequestKey] = useState<number>();
+	const artifactRequestPending = artifactRequest != null && artifactRequest.key !== settledArtifactRequestKey;
+	useEffect(() => {
+		if (artifactRequest && session?.artifactFiles?.some((file) => file.path === artifactRequest.path)) {
+			setSettledArtifactRequestKey(artifactRequest.key);
+		}
+	}, [artifactRequest, session?.artifactFiles]);
 	const setView = useCallback((next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
-	}, [onOpenFiles, onViewChange]);
+		if (next !== "artifacts" && artifactRequest) setSettledArtifactRequestKey(artifactRequest.key);
+	}, [artifactRequest, onOpenFiles, onViewChange]);
 	const openReviews = useCallback(() => setView("reviews"), [setView]);
 	const openFilesView = useCallback(() => setView("files"), [setView]);
 	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
@@ -266,13 +277,15 @@ export const SessionInspector = memo(function SessionInspector({
 			// The host passes a side chat view only where side chats can run.
 			&& (entry.id !== "sideChat" || sideChatView !== undefined)
 			// The Artifacts tab shows only when the session has artifact files to list.
-			&& (entry.id !== "artifacts" || (session?.artifactFiles?.length ?? 0) > 0));
+			&& (entry.id !== "artifacts" || (session?.artifactFiles?.length ?? 0) > 0 || artifactRequestPending));
 	const view: InspectorView = onlyBrowser ? "browser" : availableViewDefs.some((entry) => entry.id === requestedView) ? requestedView : "summary";
+	const sessionLoaded = session !== undefined;
 	useEffect(() => {
-		if (view === requestedView) return;
+		// Until the session loads, its tabs are unknown: keep the requested view.
+		if (view === requestedView || (!sessionLoaded && !onlyBrowser)) return;
 		setInternalView(view);
 		onViewChange?.(view);
-	}, [onViewChange, requestedView, view]);
+	}, [onViewChange, onlyBrowser, requestedView, sessionLoaded, view]);
 	const tabs = availableViewDefs.map((entry) => {
 		const label = t(entry.labelKey);
 		return {

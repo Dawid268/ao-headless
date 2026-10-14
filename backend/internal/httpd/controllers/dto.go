@@ -772,6 +772,14 @@ type DesktopWorkspaceLocationResponse struct {
 	WorkspacePath string           `json:"workspacePath"`
 }
 
+// DesktopArtifactLocationResponse is returned only by the LAN-blocked desktop
+// artifact route. Electron main consumes the absolute path and never exposes it
+// through the preload bridge.
+type DesktopArtifactLocationResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	ArtifactDir string           `json:"artifactDir"`
+}
+
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
 type SessionPreviewResponse struct {
 	SessionID  domain.SessionID `json:"sessionId"`

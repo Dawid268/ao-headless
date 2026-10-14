@@ -15,6 +15,7 @@ function deps(overrides: Partial<EditorHandoffDeps> = {}): EditorHandoffDeps {
 		launch: vi.fn().mockResolvedValue(undefined),
 		openDirectory: vi.fn().mockResolvedValue(undefined),
 		revealPath: vi.fn().mockResolvedValue(undefined),
+		realPath: vi.fn(async (candidatePath: string) => candidatePath),
 		isExecutable: (candidatePath) => candidatePath === "/bin/code",
 		isDirectory: (candidatePath) => candidatePath === "/Applications/Cursor.app",
 		...overrides,
@@ -184,6 +185,30 @@ describe("editor handoff", () => {
 			"That artifact is not valid.",
 		);
 		expect(input.revealPath).not.toHaveBeenCalled();
+	});
+
+	it("refuses an artifact whose symlinks resolve outside the artifact directory", async () => {
+		const input = deps({
+			realPath: vi.fn(async (candidatePath: string) => candidatePath.replace("/ao/data/artifacts/ao-1/plans", "/elsewhere")),
+		});
+		const handoff = createEditorHandoff(input);
+		await expect(handoff.openArtifacts({ sessionId: "ao-1", targetId: "terminal", path: "plans/notes.md" })).rejects.toThrow(
+			"That artifact is not valid.",
+		);
+		expect(input.launch).not.toHaveBeenCalled();
+	});
+
+	it("says when the artifact is gone", async () => {
+		const input = deps({
+			realPath: vi.fn(async (candidatePath: string) => {
+				if (candidatePath.endsWith("notes.md")) throw new Error("ENOENT");
+				return candidatePath;
+			}),
+		});
+		const handoff = createEditorHandoff(input);
+		await expect(handoff.openArtifacts({ sessionId: "ao-1", targetId: "file-manager", path: "notes.md" })).rejects.toThrow(
+			"That artifact no longer exists.",
+		);
 	});
 
 	it("refuses to open artifacts in an editor", async () => {

@@ -1596,6 +1596,45 @@ paths:
         shell terminal
       tags:
       - cues
+  /api/v1/desktop/sessions/{sessionId}/artifacts:
+    get:
+      operationId: getDesktopSessionArtifacts
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopArtifactLocationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve a session artifact directory for the loopback desktop supervisor
+      tags:
+      - sessions
   /api/v1/desktop/sessions/{sessionId}/workspace:
     get:
       operationId: getDesktopSessionWorkspace
@@ -13379,6 +13418,16 @@ components:
       required:
       - ok
       - workerId
+      type: object
+    DesktopArtifactLocationResponse:
+      properties:
+        artifactDir:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - artifactDir
       type: object
     DesktopWorkspaceLocationResponse:
       properties:
