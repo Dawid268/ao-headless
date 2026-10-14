@@ -54,7 +54,7 @@ func TestPermissions(t *testing.T) {
 	}{
 		{ports.PermissionModeDefault, nil, false},
 		{ports.PermissionModeAcceptEdits, []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}, false},
-		{ports.PermissionModeAuto, []string{"--auto-review"}, false},
+		{ports.PermissionModeAuto, []string{"--approve-for-me"}, false},
 		{ports.PermissionModeBypassPermissions, []string{"--dangerously-bypass-approvals-and-sandbox"}, false},
 		{"typo", nil, true},
 	} {
@@ -64,6 +64,18 @@ func TestPermissions(t *testing.T) {
 				t.Fatalf("args = %q, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestLaunchAutoPermissionUsesNativeFlag(t *testing.T) {
+	p := &Plugin{resolvedBinary: "/bin/interpreter"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Permissions: ports.PermissionModeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cmd, " ")
+	if !strings.Contains(joined, "--approve-for-me") || strings.Contains(joined, "--auto-review") {
+		t.Fatalf("auto launch argv: %q", cmd)
 	}
 }
 
@@ -252,7 +264,7 @@ func TestNativeConfigUsesInvocationEnvironment(t *testing.T) {
 	p := New()
 	t.Setenv("INTERPRETER_HOME", "/daemon/profile")
 	got, err := p.NativeSessionConfigDir(context.Background(), map[string]string{"INTERPRETER_HOME": "/child/profile"})
-	if err != nil || got != "/child/profile" {
+	if err != nil || got != filepath.Clean("/child/profile") {
 		t.Fatalf("home = %q, %v", got, err)
 	}
 }

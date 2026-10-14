@@ -115,7 +115,7 @@ func permissionArgs(mode ports.PermissionMode) ([]string, error) {
 	case ports.PermissionModeAcceptEdits:
 		return []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}, nil
 	case ports.PermissionModeAuto:
-		return []string{"--auto-review"}, nil
+		return []string{"--approve-for-me"}, nil
 	case ports.PermissionModeBypassPermissions:
 		return []string{"--dangerously-bypass-approvals-and-sandbox"}, nil
 	default:
