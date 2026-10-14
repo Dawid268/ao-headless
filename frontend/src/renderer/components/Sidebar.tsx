@@ -88,6 +88,7 @@ import { resumeOrchestrator, spawnOrchestrator } from "../lib/spawn-orchestrator
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
+import { useLatestCallback } from "../hooks/useStable";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
 import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
@@ -910,6 +911,11 @@ export function Sidebar({
 		[workspaces, remoteWorkspaces],
 	);
 
+	const openPinnedSession = useLatestCallback((target: WorkspaceSession) => {
+		if (target.kind === "worker") recordManualWorkerOpen(target.id, target.hostId);
+		if (target.hostId) void remoteNavigate(sessionNavigateTarget(target.workspaceId, target.id, target.hostId));
+		else selection.goSession(target.workspaceId, target.id);
+	});
 	const handlePinnedSessionKilled = useCallback(
 		(killedSession: WorkspaceSession) => {
 			if (killedSession.hostId) {
@@ -1059,11 +1065,7 @@ export function Sidebar({
 											: selection.activeSessionId === session.id}
 										hostLabel={session.hostId ? remoteHosts.find((host) => host.hostId === session.hostId)?.label ?? session.hostId : undefined}
 										onKilled={handlePinnedSessionKilled}
-										onOpenSession={(target) => {
-											if (session.kind === "worker") recordManualWorkerOpen(target.id, target.hostId);
-											if (target.hostId) void remoteNavigate(sessionNavigateTarget(target.workspaceId, target.id, target.hostId));
-											else selection.goSession(target.workspaceId, target.id);
-										}}
+										onOpenSession={openPinnedSession}
 									/>
 								))}
 							</SidebarMenuSub>
@@ -1393,6 +1395,30 @@ type ProjectItemProps = {
 	onProjectDrop: (event: ReactDragEvent<HTMLElement>) => void;
 };
 
+// The part of the route selection one project row renders from. A switch
+// between two other projects' sessions leaves it unchanged. The active project
+// keys on the raw session id: a just-opened session may not be listed yet.
+function projectSelectionKey(workspace: WorkspaceSummary, selection: Selection): string {
+	const sessionId = selection.activeSessionId ?? "";
+	if (selection.activeProjectId === workspace.id) return `active\u0000${sessionId}`;
+	return workspace.sessions.some((session) => session.id === sessionId) ? sessionId : "";
+}
+
+// Session switches replace the shared selection object. Re-render a project
+// only when its own slice of the selection (or any other prop) changed, so a
+// switch does not re-render every project's rows, menus, and dialogs.
+function projectItemPropsEqual(previous: ProjectItemProps, next: ProjectItemProps): boolean {
+	const keys = Object.keys(next) as (keyof ProjectItemProps)[];
+	if (keys.length !== Object.keys(previous).length) return false;
+	for (const key of keys) {
+		if (key !== "selection" && !Object.is(previous[key], next[key])) return false;
+	}
+	const a = previous.selection;
+	const b = next.selection;
+	return a.goSession === b.goSession && a.goProject === b.goProject && a.goHome === b.goHome &&
+		a.goSettings === b.goSettings && projectSelectionKey(previous.workspace, a) === projectSelectionKey(next.workspace, b);
+}
+
 const ProjectItem = memo(function ProjectItem({
 	workspace,
 	hostLabel,
@@ -1478,24 +1504,23 @@ const ProjectItem = memo(function ProjectItem({
 		},
 		[sessions],
 	);
-	const openSession = useCallback((sessionId: string) => {
+	// Stable row handlers: selection changes on every session switch, and a new
+	// handler would re-render every row (with its menus, tooltips, and dialogs).
+	const openSession = useLatestCallback((sessionId: string) => {
 		recordManualWorkerOpen(sessionId);
 		selection.goSession(workspace.id, sessionId);
-	}, [selection, workspace.id]);
-	const handleSessionKilled = useCallback(
-		(killedSession: WorkspaceSession) => {
-			if (selection.activeSessionId !== killedSession.id) return;
-			const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id, sessions);
-			if (nextRoute.target === "session") {
-				selection.goSession(workspace.id, nextRoute.sessionId);
-			} else if (workspace.id === STANDALONE_WORKSPACE_ID) {
-				selection.goHome();
-			} else {
-				selection.goProject(workspace.id);
-			}
-		},
-		[selection, sessions, workspace],
-	);
+	});
+	const handleSessionKilled = useLatestCallback((killedSession: WorkspaceSession) => {
+		if (selection.activeSessionId !== killedSession.id) return;
+		const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id, sessions);
+		if (nextRoute.target === "session") {
+			selection.goSession(workspace.id, nextRoute.sessionId);
+		} else if (workspace.id === STANDALONE_WORKSPACE_ID) {
+			selection.goHome();
+		} else {
+			selection.goProject(workspace.id);
+		}
+	});
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -1951,7 +1976,7 @@ const ProjectItem = memo(function ProjectItem({
 			</ContextMenuContent>
 		</ContextMenu>
 	);
-});
+}, projectItemPropsEqual);
 
 /** Projectless ("ad hoc") agents. Their own section under Projects — same
  *  header chrome, own capped scroller, own Show more — instead of a project row
@@ -2006,26 +2031,20 @@ function ScratchpadSection({
 		},
 		[sessions],
 	);
-	const openSession = useCallback(
-		(sessionId: string) => {
-			recordManualWorkerOpen(sessionId);
-			selection.goSession(STANDALONE_WORKSPACE_ID, sessionId);
-		},
-		[selection],
-	);
-	const handleSessionKilled = useCallback(
-		(killedSession: WorkspaceSession) => {
-			if (selection.activeSessionId !== killedSession.id) return;
-			const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id, sessions);
-			// An ad hoc agent has no project board to fall back to.
-			if (nextRoute.target === "session") {
-				selection.goSession(STANDALONE_WORKSPACE_ID, nextRoute.sessionId);
-			} else {
-				selection.goHome();
-			}
-		},
-		[selection, sessions, workspace],
-	);
+	const openSession = useLatestCallback((sessionId: string) => {
+		recordManualWorkerOpen(sessionId);
+		selection.goSession(STANDALONE_WORKSPACE_ID, sessionId);
+	});
+	const handleSessionKilled = useLatestCallback((killedSession: WorkspaceSession) => {
+		if (selection.activeSessionId !== killedSession.id) return;
+		const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id, sessions);
+		// An ad hoc agent has no project board to fall back to.
+		if (nextRoute.target === "session") {
+			selection.goSession(STANDALONE_WORKSPACE_ID, nextRoute.sessionId);
+		} else {
+			selection.goHome();
+		}
+	});
 
 	return (
 		<div

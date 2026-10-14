@@ -1,13 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SessionView } from "../components/SessionView";
-import { useCloudOrg } from "../hooks/useCloudOrg";
+import { loadSessionView } from "../lib/session-view-chunk";
 
+// SessionView renders from LocalSessionHost in the shell so switching between
+// project sessions and scratchpads reuses one mounted instance. Awaiting the
+// chunk keeps the previous screen up until the session can paint.
 export const Route = createFileRoute("/_shell/projects/$projectId_/sessions/$sessionId")({
-	component: ProjectSessionRoute,
+	loader: async () => {
+		await loadSessionView();
+	},
 });
-
-function ProjectSessionRoute() {
-	const { projectId, sessionId } = Route.useParams();
-	const { org } = useCloudOrg();
-	return <SessionView sessionId={sessionId} projectId={projectId} cloudOrgId={org?.id} />;
-}

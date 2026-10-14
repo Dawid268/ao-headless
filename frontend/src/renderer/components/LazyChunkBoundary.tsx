@@ -4,10 +4,22 @@ import { captureRendererException } from "../lib/telemetry";
 import { Button } from "./ui/button";
 
 type Props = { children: React.ReactNode };
-type BoundaryProps = Props & { title: string; reloadLabel: string };
 type State = { hasError: boolean };
 
-class LazyChunkErrorBoundary extends React.Component<BoundaryProps, State> {
+/** The in-panel crash state: a short message and a full reload. */
+export function LazyChunkErrorPanel() {
+	const { t } = useTranslation();
+	return (
+		<div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center" role="alert">
+			<p className="text-sm text-muted-foreground">{t("appError.title")}</p>
+			<Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+				{t("titlebar.reload")}
+			</Button>
+		</div>
+	);
+}
+
+class LazyChunkErrorBoundary extends React.Component<Props, State> {
 	state: State = { hasError: false };
 
 	static getDerivedStateFromError(): State {
@@ -20,14 +32,7 @@ class LazyChunkErrorBoundary extends React.Component<BoundaryProps, State> {
 
 	render() {
 		if (!this.state.hasError) return this.props.children;
-		return (
-			<div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center" role="alert">
-				<p className="text-sm text-muted-foreground">{this.props.title}</p>
-				<Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
-					{this.props.reloadLabel}
-				</Button>
-			</div>
-		);
+		return <LazyChunkErrorPanel />;
 	}
 }
 
@@ -38,10 +43,5 @@ class LazyChunkErrorBoundary extends React.Component<BoundaryProps, State> {
  * caches the rejection, so recovery is a reload.
  */
 export function LazyChunkBoundary({ children }: Props) {
-	const { t } = useTranslation();
-	return (
-		<LazyChunkErrorBoundary reloadLabel={t("titlebar.reload")} title={t("appError.title")}>
-			{children}
-		</LazyChunkErrorBoundary>
-	);
+	return <LazyChunkErrorBoundary>{children}</LazyChunkErrorBoundary>;
 }

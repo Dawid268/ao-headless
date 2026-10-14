@@ -2290,6 +2290,36 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
 }
 
+/* Inspector rail geometry is plain CSS so a session switch paints the
+ * destination's open state and width in its first frame. Only an open/close
+ * inside the current session (data-motion="animated") slides. */
+[data-slot="inspector-container"][data-state="collapsed"] {
+	transform: translateX(100%);
+}
+
+[data-slot="inspector-gap"][data-motion="animated"],
+[data-slot="inspector-container"][data-motion="animated"] {
+	transition:
+		width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out),
+		transform var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out);
+}
+
+/* Opening a settled (display: none) rail has no before-change style. */
+@starting-style {
+	[data-slot="inspector-container"][data-motion="animated"][data-state="expanded"] {
+		transform: translateX(100%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-slot="inspector-gap"][data-motion="animated"],
+	[data-slot="inspector-container"][data-motion="animated"] {
+		transition: none;
+	}
+}
+
 /* Browser is an automatic co-work canvas, while Summary/Reviews/Files retain
  * the utility rail width. Interpolate the shared gap + panel boxes together;
  * direct pointer resizing remains immediate. */
@@ -2299,6 +2329,8 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		width var(--session-inspector-motion-duration, 300ms)
 			var(--session-inspector-motion-easing, ease-out),
 		max-width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out),
+		transform var(--session-inspector-motion-duration, 300ms)
 			var(--session-inspector-motion-easing, ease-out);
 }
 
@@ -3359,6 +3391,14 @@ html.sidebar-reordering * {
 .session-pinned-actions-reserve[data-state="expanded"] {
 	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
 	margin-left: 0;
+}
+
+/* Session switches restore the destination's topbar in its first frame; these
+ * transitions are only for changes inside a session (useSessionSwitchSnap). */
+:root[data-session-switching] .session-pinned-actions-reserve,
+:root[data-session-switching] .workspace-topbar-actions .topbar-control,
+:root[data-session-switching] .workspace-topbar-actions [data-compact-label] {
+	transition: none !important;
 }
 
 .session-pinned-actions {
