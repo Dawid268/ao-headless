@@ -71,6 +71,25 @@ and the configured run file/data directory (`AO_RUN_FILE` / `AO_DATA_DIR` when s
 The primary daemon normally uses loopback port 3001; port alone does not establish
 which version or installation is affected. Consult the installed CLI help for commands.
 
+For local-daemon evidence, start with the affected binary's `--version` and
+`status --json`. The status command reads the configured run file, checks process
+identity, and probes loopback health and readiness without starting the daemon.
+For a known affected session, use
+`session get <id> --json` and extract only the fields relevant to the symptom.
+If the daemon is unavailable, record the local version, status or exact error, mark
+session evidence unavailable, and continue preparing the report.
+
+Record app and CLI versions separately from daemon identity. Health probes do not
+provide a daemon release version; `dev` or missing build metadata is not an exact
+source match. Mark unavailable facts unknown. When investigating a checkout that
+cannot be matched to the affected build, label source findings as approximate.
+
+Do not run `doctor` or `agent ls` as routine evidence collectors: doctor creates
+directories, writes probe files, and checks remote authentication; agent listing
+ensures readiness through a POST. `remote-host status` can print the pairing password.
+The desktop's `daemon.getStatus()` may start a replacement daemon on ownership mismatch;
+use the observational CLI status check or already available evidence instead.
+
 Collect only what helps explain this symptom:
 
 | Symptom | Potential evidence |
@@ -80,6 +99,13 @@ Collect only what helps explain this symptom:
 | Daemon or CLI failure | Version/status, exact command and error, relevant daemon logs |
 | Persisted state mismatch | Relevant rows and schema from a read-only SQLite query |
 
+Locate logs for the affected process rather than assuming `~/.ao/daemon.log` is current.
+The daemon normally writes to stderr; the desktop keeps a bounded in-memory tail,
+and keep-alive launches may append to that file. Persistent Chat provider stderr may be
+unavailable. Record missing evidence; do not restart AO or enable logging to create it.
+Use selected excerpts around the failure time, not entire transcripts or Electron
+profile folders, which also contain browser state.
+
 Use the daemon API/CLI for state first. If database evidence is needed, discover the
 actual database location and schema, open it read-only, and select only relevant rows
 and columns. Never attach an entire database or broad log dump. Redact tokens,
@@ -88,24 +114,41 @@ artifact, including screenshots. Keep diagnostic artifacts under `~/.ao` and out
 Git commits. Preserve evidentiary content when redacting, and verify that unrelated
 content did not change. Share a useful excerpt rather than a wall of output.
 
+The report form's sanitizer masks known patterns, not all private text or screenshots.
+Review the exact draft and artifacts before sharing. Saving a redacted artifact does
+not restrict an agent's file access. Giving it to an online agent can send its contents
+to that provider.
+
 Try a safe reproduction when practical, recording the build actually tested. Failure
 to reproduce does not invalidate the human report. Code tracing or dependency research
 is optional when it can add concrete evidence. Keep findings in the separate evidence.
 
 ## Check for duplicates
 
-Search open and closed issues and related PRs using the symptom or exact error:
+Resolve AO's canonical repository name before searching. GitHub issue and PR searches
+can return empty results for a former owner even when repository API requests redirect.
+Use the resolved name, not the reporter's project repository. Search open and closed
+issues and related PRs using the symptom or exact error:
 
 ```bash
-gh issue list --repo Untrivial-ai/agent-orchestrator --state all --search '<symptom or error>'
-gh pr list --repo Untrivial-ai/agent-orchestrator --state all --search '<symptom or error>'
+if ao_triage_repo=$(gh api repos/OrchestratorInc/agent-orchestrator --jq .full_name) && [ -n "$ao_triage_repo" ]; then
+  gh issue list --repo "$ao_triage_repo" --state all --search '<symptom or error>' --limit 100
+  gh pr list --repo "$ao_triage_repo" --state all --search '<symptom or error>' --limit 100
+else
+  printf '%s\n' 'Repository lookup failed; duplicate search skipped.' >&2
+fi
 ```
+
+Record the repository, queries, collection time, and candidates considered in the
+separate evidence. Try useful symptom synonyms or a shorter error fragment when needed.
+Empty or truncated results do not prove that no duplicate exists.
 
 Read likely matches before calling a report a duplicate. If one matches, give the
 reporter its link and draft only their new observation for a comment, with evidence
 attached separately. If a closed issue appears to have regressed, explain that to the
-reporter rather than silently treating it as resolved. If search is unavailable,
-state that briefly; it does not block preparing the report.
+reporter rather than silently treating it as resolved. If repository lookup or either
+search fails or is unavailable, say which part could not be checked. Do not describe
+a failed check as finding no duplicates; continue preparing the report.
 
 ## Preserve attribution and submission scope
 
@@ -126,3 +169,5 @@ Finish with the concise draft (or issue link if submitted), any duplicate link, 
 attachment paths/links. Do not automatically file an issue, implement a fix, push a
 PR, or spawn a worker. Follow the user's requested scope and the repository's normal
 contribution workflow if they separately ask for implementation.
+
+The bundled `scripts/push_fix_to_github.py` is a legacy fix publisher, not a triage step.
