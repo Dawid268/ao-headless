@@ -255,6 +255,7 @@ func acquireHostLock(dataDir, sessionID string) (func(), error) {
 			releaseGate()
 		}
 	}()
+	identity := processalive.Identify(context.Background(), os.Getpid())
 	path, _ := lockPath(dataDir, sessionID)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // AO-owned capability directory.
 	if errors.Is(err, os.ErrExist) {
@@ -276,7 +277,6 @@ func acquireHostLock(dataDir, sessionID string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	identity := processalive.Identify(context.Background(), os.Getpid())
 	if err := json.NewEncoder(f).Encode(hostLockOwner{
 		PID: os.Getpid(), ProcessStartID: identity.StartID, StartedAt: time.Now().UTC(),
 	}); err != nil {
