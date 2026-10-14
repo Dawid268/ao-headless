@@ -223,4 +223,4 @@ workspace user.
 - **"The working directory can't be used".** Fix the directory in the
   workspace (or the connection's **Working directory**), then reopen the
   session. AO restarts the session's worker to check the directory again, which
-  takes about a minute.
+  can take a few minutes.
