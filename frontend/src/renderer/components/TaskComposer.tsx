@@ -929,6 +929,8 @@ function TaskModelPicker({
 	const selectCatalogModel = (nextModel: string) => {
 		onModelChange(nextModel);
 	};
+	const allowsDirectEntry = catalog?.customModelEntry === "direct" &&
+		(catalog.selectionMode === "text" || agentId === "open-interpreter");
 
 	return (
 		<AgentModelCombobox
@@ -936,10 +938,8 @@ function TaskModelPicker({
 			aria-label={t("newTask.model")}
 			value={value}
 			models={displayModels}
-			allowCustom={catalog?.selectionMode === "text" && catalog.allowCustom}
-			customModelEntry={catalog?.selectionMode === "text" && catalog.customModelEntry === "direct"
-				? "direct"
-				: catalog?.customModelEntry === "configured" ? "configured" : "none"}
+			allowCustom={allowsDirectEntry}
+			customModelEntry={allowsDirectEntry ? "direct" : catalog?.customModelEntry === "configured" ? "configured" : "none"}
 			agentLabel={agentLabel}
 			onRefresh={onRefresh}
 			refreshing={catalog?.refreshState === "queued" || catalog?.refreshState === "refreshing"}
