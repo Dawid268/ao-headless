@@ -34,7 +34,12 @@ export function useSessionSwitchSnap() {
 			root.removeAttribute(SESSION_SWITCHING_ATTR);
 		};
 		const offBeforeNavigate = router.subscribe("onBeforeNavigate", (event) => {
-			if (!event.pathChanged || !SESSION_PATH.test(event.toLocation.pathname)) return;
+			if (!event.pathChanged) return;
+			// A newer navigation away from sessions supersedes a pending switch.
+			if (!SESSION_PATH.test(event.toLocation.pathname)) {
+				if (target !== undefined) clear();
+				return;
+			}
 			cancel();
 			target = event.toLocation.href;
 			root.setAttribute(SESSION_SWITCHING_ATTR, "");

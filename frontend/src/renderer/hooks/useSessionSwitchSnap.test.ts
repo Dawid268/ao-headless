@@ -56,6 +56,13 @@ describe("useSessionSwitchSnap", () => {
 		expect(document.documentElement).not.toHaveAttribute(SESSION_SWITCHING_ATTR);
 	});
 
+	it("clears a pending switch when a navigation away from sessions supersedes it", () => {
+		renderHook(() => useSessionSwitchSnap());
+		navigate("/sessions/s1");
+		navigate("/projects/p1");
+		expect(document.documentElement).not.toHaveAttribute(SESSION_SWITCHING_ATTR);
+	});
+
 	it("leaves non-session navigation animated", () => {
 		renderHook(() => useSessionSwitchSnap());
 		navigate("/projects/p1");

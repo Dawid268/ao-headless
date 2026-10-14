@@ -141,6 +141,10 @@ function ShellOutlet({ startingChat }: { startingChat: ReactNode }) {
 	);
 }
 
+function captureSessionViewCrash(error: Error) {
+	void captureRendererException(error, { source: "react-error-boundary", operation: "session_view" });
+}
+
 /**
  * Project sessions and scratchpads are separate routes, so rendering
  * SessionView from each route remounted the whole session surface (chat,
@@ -148,10 +152,6 @@ function ShellOutlet({ startingChat }: { startingChat: ReactNode }) {
  * nothing; this host keeps one SessionView mounted at a stable position and
  * only swaps its props. Remote host routes stay keyed per session.
  */
-function captureSessionViewCrash(error: Error) {
-	void captureRendererException(error, { source: "react-error-boundary", operation: "session_view" });
-}
-
 function LocalSessionHost() {
 	const scratchpadSessionId = useMatch({
 		from: "/_shell/sessions/$sessionId",
