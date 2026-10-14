@@ -171,6 +171,7 @@
 	"cloud.startupError.copyDetails": "詳細をコピー",
 	"cloud.startupError.copied": "コピーしました",
 	"cloud.startupError.retrying": "再試行中…",
+	"cloud.startupError.workspaceRerunningTitle": "ワークスペースを準備しています",
 	"cloud.startupError.workspaceRerunning": "ワークスペースを再度準備しています。プロジェクトのセットアップが長い場合は数分かかることがあります。",
 	"cloud.startupError.retryFailed": "再試行できませんでした: {{message}}",
 	"cloud.startupError.retryUnavailable": "このセッションは現在再試行できません。",

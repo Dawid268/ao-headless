@@ -171,6 +171,7 @@
 	"cloud.startupError.copyDetails": "Copiar detalles",
 	"cloud.startupError.copied": "Copiado",
 	"cloud.startupError.retrying": "Reintentando…",
+	"cloud.startupError.workspaceRerunningTitle": "Preparando el espacio de trabajo",
 	"cloud.startupError.workspaceRerunning": "Se está preparando de nuevo el espacio de trabajo. Puede tardar unos minutos si el Setup del proyecto es largo.",
 	"cloud.startupError.retryFailed": "No se pudo reintentar: {{message}}",
 	"cloud.startupError.retryUnavailable": "Esta sesión no se puede reintentar ahora.",

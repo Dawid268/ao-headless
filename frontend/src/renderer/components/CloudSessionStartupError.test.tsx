@@ -54,11 +54,13 @@ describe("CloudSessionStartupError", () => {
 		const { rerender } = mount(failure);
 		await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 		expect(await screen.findByText(/Preparing the workspace again/)).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Preparing the workspace" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
 		expect(screen.queryByTestId("cloud-session-startup-detail")).not.toBeInTheDocument();
 
 		// The same step failed again: the new failure and its output show, and Retry is back.
 		rerender({ ...failure, detail: "still missing", at: "2026-10-14T10:05:00Z" });
+		expect(screen.getByRole("heading", { name: "The project's Setup script failed" })).toBeInTheDocument();
 		expect(screen.getByText("Setup step 1 failed: exit status 3.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
 		expect(screen.getByTestId("cloud-session-startup-detail")).toHaveTextContent("still missing");

@@ -171,6 +171,7 @@
 	"cloud.startupError.copyDetails": "复制详情",
 	"cloud.startupError.copied": "已复制",
 	"cloud.startupError.retrying": "正在重试…",
+	"cloud.startupError.workspaceRerunningTitle": "正在准备工作区",
 	"cloud.startupError.workspaceRerunning": "正在重新准备工作区。如果项目的设置步骤较长，可能需要几分钟。",
 	"cloud.startupError.retryFailed": "无法重试：{{message}}",
 	"cloud.startupError.retryUnavailable": "此会话现在无法重试。",

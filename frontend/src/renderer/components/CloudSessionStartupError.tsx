@@ -59,7 +59,9 @@ export function CloudSessionStartupError({
 	// check, and the details carry its last output.
 	const setupNotReady = problem.phase === "failed" && problem.code === "workspace_setup_not_ready";
 	const projectSetupFailed = problem.phase === "failed" && problem.code === "project_setup_failed";
-	const title = setupNotReady
+	const title = rerunning
+		? t("cloud.startupError.workspaceRerunningTitle")
+		: setupNotReady
 		? t("cloud.startupError.workspaceSetupNotReadyTitle")
 		: projectSetupFailed
 			? t("cloud.startupError.projectSetupFailedTitle")
