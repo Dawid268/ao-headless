@@ -258,7 +258,7 @@ func TestStartedSDKNamesTheSessionOfEachUsageRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	var manager *coreauth.Manager
-	service, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).WithLocalManagementPassword(control).
+	service, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).
 		WithServerOptions(proxyapi.WithEngineConfigurator(func(engine *gin.Engine) { engine.Use(boundary.Middleware) }), proxyapi.WithMiddleware(counted.bind), proxyapi.WithRouterConfigurator(func(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg *config.Config) {
 			boundary.Configure(engine, h, cfg)
 			manager = h.AuthManager

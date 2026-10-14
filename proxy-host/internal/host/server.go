@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	proxyapi "github.com/router-for-me/CLIProxyAPI/v8/sdk/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	proxycore "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -21,6 +22,7 @@ import (
 type Boundary struct {
 	Routes                   *Routes
 	ControlKey, InferenceKey string
+	ConfigPath               string // where the management calls save the SDK's configuration
 	Logins                   *Logins
 	Activity                 *Activity
 }
@@ -38,11 +40,21 @@ type request struct {
 	Label    string           `json:"label"`
 }
 
-var management = map[string]bool{
-	"GET /v8/management/credentials": true, "POST /v8/management/credentials": true, "DELETE /v8/management/credentials": true,
-	"GET /v8/management/oauth/auth-url": true, "GET /v8/management/oauth/status": true, "POST /v8/management/oauth/callback": true, "DELETE /v8/management/oauth/session": true,
-	"GET /v0/management/codex-api-key": true, "PUT /v0/management/codex-api-key": true, "DELETE /v0/management/codex-api-key": true,
-	"GET /v0/management/claude-api-key": true, "PUT /v0/management/claude-api-key": true, "DELETE /v0/management/claude-api-key": true,
+// management is every management call AO makes, each served by the SDK's own handler for it, and no other.
+var management = map[string]func(*proxyapi.Handler, *gin.Context){
+	"GET /v8/management/credentials":       (*proxyapi.Handler).ListAuthFiles,
+	"POST /v8/management/credentials":      (*proxyapi.Handler).UploadAuthFile,
+	"DELETE /v8/management/credentials":    (*proxyapi.Handler).DeleteAuthFile,
+	"GET /v8/management/oauth/auth-url":    (*proxyapi.Handler).StartOAuthV8,
+	"GET /v8/management/oauth/status":      (*proxyapi.Handler).GetAuthStatus,
+	"POST /v8/management/oauth/callback":   (*proxyapi.Handler).PostOAuthCallback,
+	"DELETE /v8/management/oauth/session":  (*proxyapi.Handler).CancelAuthSession,
+	"GET /v0/management/codex-api-key":     (*proxyapi.Handler).GetCodexKeys,
+	"PUT /v0/management/codex-api-key":     (*proxyapi.Handler).PutCodexKeys,
+	"DELETE /v0/management/codex-api-key":  (*proxyapi.Handler).DeleteCodexKey,
+	"GET /v0/management/claude-api-key":    (*proxyapi.Handler).GetClaudeKeys,
+	"PUT /v0/management/claude-api-key":    (*proxyapi.Handler).PutClaudeKeys,
+	"DELETE /v0/management/claude-api-key": (*proxyapi.Handler).DeleteClaudeKey,
 }
 
 // sessionPaths names the provider whose sessions may call each path; any session may list its models.
@@ -63,7 +75,7 @@ func (b Boundary) Middleware(c *gin.Context) {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
-		if !own && !management[r.Method+" "+path] {
+		if !own && management[r.Method+" "+path] == nil {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -115,10 +127,17 @@ func call(handle func(context.Context, request) (int, any)) gin.HandlerFunc {
 		}
 	}
 }
-func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, _ *config.Config) {
+func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg *config.Config) {
 	m := h.AuthManager
 	m.SetSelector(exactSelector{})
 	b.Logins.auth = m
+	sdk := proxyapi.NewHandler(cfg, b.ConfigPath, m)
+	sdk.SetPostAuthHook(tagLogin)
+	sdk.SetPostAuthPersistHook(registered(m))
+	for call, handle := range management {
+		method, path, _ := strings.Cut(call, " ")
+		engine.Handle(method, path, func(c *gin.Context) { handle(sdk, c) })
+	}
 	forAccount := func(handle func(context.Context, *coreauth.Auth, request) (int, any)) gin.HandlerFunc {
 		return call(func(ctx context.Context, body request) (int, any) {
 			auth, ok := m.GetByID(body.AuthID)

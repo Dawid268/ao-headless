@@ -13,7 +13,6 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,17 +37,13 @@ func Build(root string, port int, controlKey, inferenceKey string, routes *Route
 	if err != nil {
 		return nil, err
 	}
-	// The SDK accepts its local management password only when a secret is configured.
-	secret, err := bcrypt.GenerateFromPassword([]byte(controlKey), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
 	cfg.Host, cfg.Port, cfg.AuthDir, cfg.APIKeys = "127.0.0.1", port, authDir, []string{inferenceKey}
 	cfg.CommercialMode, cfg.MaxRetryCredentials, cfg.WebsocketAuth = true, 1, true
 	// AO names the exact account for every request; the SDK must not choose one itself.
 	cfg.Routing.Strategy, cfg.Routing.SessionAffinity = "fill-first", false
-	cfg.RemoteManagement.DisableControlPanel, cfg.RemoteManagement.DisableAutoUpdatePanel = true, true
-	cfg.RemoteManagement.SecretKey = string(secret)
+	// The SDK's management stays off, including a secret an earlier helper saved: it comes with a Redis listener on this port
+	// whose failed sign-ins ban 127.0.0.1, the daemon's address. The boundary serves AO's management calls itself.
+	cfg.RemoteManagement.DisableControlPanel, cfg.RemoteManagement.DisableAutoUpdatePanel, cfg.RemoteManagement.SecretKey = true, true, ""
 	data, err := yaml.Marshal(cfg)
 	if err == nil {
 		err = writePrivate(path, data)
@@ -56,11 +51,11 @@ func Build(root string, port int, controlKey, inferenceKey string, routes *Route
 	if err != nil {
 		return nil, err
 	}
-	b := Boundary{Routes: routes, ControlKey: controlKey, InferenceKey: inferenceKey, Logins: newLogins(authDir), Activity: activity}
+	b := Boundary{Routes: routes, ControlKey: controlKey, InferenceKey: inferenceKey, ConfigPath: path, Logins: newLogins(authDir), Activity: activity}
 	coreusage.RegisterNamedPlugin("ao-activity", activity)
 	// The SDK runs an added middleware after its logger, which gives a request the id that bind goes by.
-	return cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).WithLocalManagementPassword(controlKey).
-		WithPostAuthHook(tagLogin).WithServerOptions(proxyapi.WithEngineConfigurator(func(e *gin.Engine) { e.Use(b.Middleware) }), proxyapi.WithMiddleware(activity.bind), proxyapi.WithRouterConfigurator(b.Configure)).Build()
+	return cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).
+		WithServerOptions(proxyapi.WithEngineConfigurator(func(e *gin.Engine) { e.Use(b.Middleware) }), proxyapi.WithMiddleware(activity.bind), proxyapi.WithRouterConfigurator(b.Configure)).Build()
 }
 func Run(ctx context.Context, root string, port int, controlKey, inferenceKey string) error {
 	activity := OpenActivity(filepath.Join(root, "run", "activity.json"))

@@ -172,13 +172,14 @@ func bareFixture(t *testing.T, providers ...*fakeProvider) (*fixture, *handlers.
 	for _, provider := range providers {
 		manager.RegisterExecutor(provider)
 	}
-	f := &fixture{t: t, engine: gin.New(), manager: manager, logins: newLogins(t.TempDir())}
+	authDir := t.TempDir()
+	f := &fixture{t: t, engine: gin.New(), manager: manager, logins: newLogins(authDir)}
 	f.routes = OpenRoutes(filepath.Join(t.TempDir(), "run", "routes.json"))
 	f.counted = OpenActivity(filepath.Join(t.TempDir(), "run", "activity.json"))
 	boundary := Boundary{Routes: f.routes, ControlKey: control, InferenceKey: inference, Logins: f.logins, Activity: f.counted}
 	base := handlers.NewBaseAPIHandlers(&config.SDKConfig{}, manager)
 	f.engine.Use(boundary.Middleware)
-	boundary.Configure(f.engine, base, &config.Config{})
+	boundary.Configure(f.engine, base, &config.Config{AuthDir: authDir})
 	return f, base
 }
 

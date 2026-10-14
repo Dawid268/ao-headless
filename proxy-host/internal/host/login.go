@@ -125,6 +125,17 @@ func (l *Logins) run(ctx context.Context, id string, poll []byte, interval time.
 		_ = os.Remove(file)
 	}
 }
+
+// registered holds a sign-in the SDK just saved until the SDK holds it, a few seconds at most, so that it is reported done only then:
+// the SDK's own management registers it at once, its file watcher a moment later.
+func registered(manager *coreauth.Manager) coreauth.PostAuthHook {
+	return func(ctx context.Context, saved *coreauth.Auth) error {
+		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_, _ = waitAuth(wait, manager, func(a *coreauth.Auth) bool { return a.ID == saved.ID })
+		return nil
+	}
+}
 func waitAuth(ctx context.Context, manager *coreauth.Manager, match func(*coreauth.Auth) bool) (*coreauth.Auth, error) {
 	for {
 		for _, a := range manager.List() {

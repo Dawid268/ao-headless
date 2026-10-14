@@ -329,6 +329,23 @@ func TestLoginResultAsksTheProviderWhoseThisComputersClaudeLoginIs(t *testing.T)
 	}
 }
 
+// The daemon asks for the login result as soon as a sign-in reports done; the SDK's file watcher registers a saved one a moment later.
+func TestASavedSignInIsReportedDoneOnlyOnceTheSDKHoldsIt(t *testing.T) {
+	f, _ := bareFixture(t)
+	late := time.AfterFunc(100*time.Millisecond, func() {
+		if _, err := f.manager.Register(coreauth.WithSkipPersist(context.Background()), &coreauth.Auth{ID: "saved.json", Provider: "codex", Status: coreauth.StatusActive}); err != nil {
+			t.Error(err)
+		}
+	})
+	defer late.Stop()
+	if err := registered(f.manager)(context.Background(), &coreauth.Auth{ID: "saved.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, held := f.manager.GetByID("saved.json"); !held {
+		t.Fatal("the sign-in was reported before the SDK held it")
+	}
+}
+
 func TestJWTClaimsReadOnlyAWellFormedPayload(t *testing.T) {
 	claims := jwtClaims(idToken(`{"email":"person@example.test","nested":{"value":"ok"}}`))
 	if nested, _ := claims["nested"].(map[string]any); claims["email"] != "person@example.test" || nested["value"] != "ok" {

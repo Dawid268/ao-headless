@@ -25,8 +25,6 @@ func echoFixture(t *testing.T) *fixture {
 	for path := range sessionPaths {
 		f.engine.Any(path, echo)
 	}
-	f.engine.Any("/v8/management/*path", echo)
-	f.engine.Any("/v0/management/*path", echo)
 	return f
 }
 
@@ -60,7 +58,13 @@ func TestControlKeyAndSessionTicketsOpenDifferentDoors(t *testing.T) {
 }
 
 func TestManagementAllowlist(t *testing.T) {
-	f := echoFixture(t)
+	f, _ := bareFixture(t)
+	// The boundary alone, in front of a stand-in that reports the query that reached it.
+	echo := gin.New()
+	echo.Use(Boundary{ControlKey: control}.Middleware)
+	for _, prefix := range []string{"/v8/management/*path", "/v0/management/*path"} {
+		echo.Any(prefix, func(c *gin.Context) { c.String(http.StatusOK, c.Request.URL.RawQuery) })
+	}
 	allowed := map[string]bool{}
 	for _, call := range []string{"GET /v8/management/credentials", "POST /v8/management/credentials", "DELETE /v8/management/credentials", "GET /v8/management/oauth/auth-url",
 		"GET /v8/management/oauth/status", "POST /v8/management/oauth/callback", "DELETE /v8/management/oauth/session", "GET /v0/management/codex-api-key",
@@ -79,16 +83,22 @@ func TestManagementAllowlist(t *testing.T) {
 				if allowed[method+" "+version+path] {
 					want = http.StatusOK
 				}
-				if response := f.send(method, version+path+"?name=account.json", control, "{}"); response.Code != want {
+				if response := send(echo, method, version+path+"?name=account.json", control, "{}"); response.Code != want {
 					t.Fatalf("%s %s%s: %d, want %d", method, version, path, response.Code, want)
 				}
 			}
 		}
 	}
 	// The SDK's own OAuth forwarder would bind every interface; AO never lets it be asked for.
-	response := f.send(http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&is_webui=true", control, "")
-	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "is_webui") || !strings.Contains(response.Body.String(), "provider=codex") {
-		t.Fatalf("auth-url query reached the SDK as %s", response.Body.String())
+	if response := send(echo, http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&is_webui=true", control, ""); response.Body.String() != "provider=codex" {
+		t.Fatalf("auth-url query reached the SDK as %q", response.Body.String())
+	}
+	// Every allowed call reaches the SDK's own handler for it, which answers where the boundary's refusal is bare.
+	for call := range management {
+		method, path, _ := strings.Cut(call, " ")
+		if response := f.send(method, path, control, "{}"); response.Body.Len() == 0 {
+			t.Fatalf("%s reached no handler: %d", call, response.Code)
+		}
 	}
 }
 

@@ -115,6 +115,13 @@ func savedConfig(t *testing.T, root string) (config.Config, string) {
 func TestBuildKeepsEverythingPrivateAndUnderItsDataDirectory(t *testing.T) {
 	for _, name := range []string{"ordinary", "folder with spaces", "account#data?", "账户"} {
 		root := filepath.Join(t.TempDir(), name)
+		// An earlier helper saved a management secret; it turned on the SDK's management and its Redis listener.
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("remote-management:\n  secret-key: \"$2a$10$7EqJtq98hPqEX7fNZaFWoOhi5BWX4Z8KCVwxH4D1Kj6EwP7v5V0Cy\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		routes := OpenRoutes(filepath.Join(root, "run", "routes.json"))
 		if service, err := Build(root, 12345, control, inference, routes, openTestActivity(t)); err != nil || service == nil {
 			t.Fatalf("%s: %v", name, err)
@@ -126,7 +133,7 @@ func TestBuildKeepsEverythingPrivateAndUnderItsDataDirectory(t *testing.T) {
 		if len(cfg.APIKeys) != 1 || cfg.APIKeys[0] != inference || strings.Contains(raw, control) {
 			t.Fatalf("%s: the control key is saved, or the inference key is not the only API key", name)
 		}
-		if !cfg.RemoteManagement.DisableControlPanel || !cfg.RemoteManagement.DisableAutoUpdatePanel || cfg.RemoteManagement.AllowRemote {
+		if !cfg.RemoteManagement.DisableControlPanel || !cfg.RemoteManagement.DisableAutoUpdatePanel || cfg.RemoteManagement.AllowRemote || cfg.RemoteManagement.SecretKey != "" {
 			t.Fatalf("%s: a management surface AO does not use is open", name)
 		}
 		if cfg.MaxRetryCredentials != 1 || cfg.Routing.Strategy != "fill-first" || cfg.Routing.SessionAffinity || !cfg.CommercialMode || !cfg.WebsocketAuth {
@@ -319,6 +326,38 @@ func TestBuiltHelperServesTheSDKsSignInsAndKeepsAPIKeysAcrossRestarts(t *testing
 	}
 }
 
+// The SDK's management comes with a Redis listener on the same port, whose failed
+// sign-ins ban 127.0.0.1 for half an hour: the daemon's own address.
+func TestRedisCommandsOnThePortGetNoAnswerAndLockNobodyOut(t *testing.T) {
+	root, port := t.TempDir(), freePort(t)
+	service, err := Build(root, port, control, inference, openTestRoutes(t), openTestActivity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, _ := running(t, service, port)
+	served := []string{}
+	for attempt := 0; attempt < 10; attempt++ {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		_, _ = conn.Write([]byte("*2\r\n$4\r\nAUTH\r\n$1\r\nx\r\n"))
+		// Closed at once, with nothing said.
+		answer, err := bufio.NewReader(conn).ReadString('\n')
+		if timeout, _ := err.(net.Error); answer != "" || timeout != nil && timeout.Timeout() {
+			served = append(served, fmt.Sprintf("%q %v", answer, err))
+		}
+		_ = conn.Close()
+	}
+	if status, body := call(http.MethodGet, "/v8/management/credentials", control, ""); status != http.StatusOK {
+		t.Fatalf("after ten Redis sign-ins the daemon is locked out: %d %s", status, body)
+	}
+	if len(served) > 0 {
+		t.Fatalf("the port served Redis: %v", served)
+	}
+}
+
 // The SDK configures its own account selection while it starts; AO's exact
 // selector and model filter must still be the ones in force afterwards.
 func TestStartedSDKStillRunsEachSessionOnItsOwnAccount(t *testing.T) {
@@ -338,7 +377,7 @@ func TestStartedSDKStillRunsEachSessionOnItsOwnAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	var manager *coreauth.Manager
-	service, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).WithLocalManagementPassword(control).
+	service, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).
 		WithServerOptions(proxyapi.WithEngineConfigurator(func(engine *gin.Engine) { engine.Use(boundary.Middleware) }), proxyapi.WithRouterConfigurator(func(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg *config.Config) {
 			boundary.Configure(engine, h, cfg)
 			manager = h.AuthManager
