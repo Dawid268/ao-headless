@@ -308,6 +308,25 @@ func TestAccountModelsListsTheRequestedAccountsModelsWithEfforts(t *testing.T) {
 	}
 }
 
+func TestAccountModelsAreListedNewestFirst(t *testing.T) {
+	f, _ := bareFixture(t)
+	f.account(&coreauth.Auth{ID: "dated", Provider: "codex"})
+	proxycore.GlobalModelRegistry().RegisterClient("dated", "codex", []*proxycore.ModelInfo{{ID: "gpt-old", Created: 100}, {ID: "gpt-new", Created: 300}, {ID: "gpt-mid-a", Created: 200}, {ID: "gpt-undated"}, {ID: "gpt-mid-b", Created: 200}})
+	response := f.send(http.MethodPost, "/ao/account-models", control, `{"auth_id":"dated","provider":"codex"}`)
+	var listed struct{ Models []struct{ ID string } }
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil || response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	ids := []string{}
+	for _, model := range listed.Models {
+		ids = append(ids, model.ID)
+	}
+	// Models of the same date keep the provider's own order.
+	if got := strings.Join(ids, ","); got != "gpt-new,gpt-mid-a,gpt-mid-b,gpt-old,gpt-undated" {
+		t.Fatalf("listed %s", got)
+	}
+}
+
 func TestLoginResultNamesTheCredentialOfOneLoginAndNothingSecret(t *testing.T) {
 	f, _ := bareFixture(t)
 	for _, auth := range []*coreauth.Auth{

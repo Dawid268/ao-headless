@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,8 +175,10 @@ func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg 
 		return http.StatusNoContent, nil
 	}))
 	engine.POST("/ao/account-models", forAccount(func(_ context.Context, auth *coreauth.Auth, _ request) (int, any) {
-		models := []gin.H{}
-		for _, model := range proxycore.GlobalModelRegistry().GetModelsForClient(auth.ID) {
+		models, listed := []gin.H{}, proxycore.GlobalModelRegistry().GetModelsForClient(auth.ID)
+		// Newest first; models of the same date keep the provider's order.
+		slices.SortStableFunc(listed, func(x, y *proxycore.ModelInfo) int { return cmp.Compare(y.Created, x.Created) })
+		for _, model := range listed {
 			entry := gin.H{"id": model.ID, "label": cmp.Or(strings.TrimSpace(model.DisplayName), model.ID), "provider": model.Type}
 			if model.Thinking != nil {
 				entry["efforts"] = model.Thinking.Levels
