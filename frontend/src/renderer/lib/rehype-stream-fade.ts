@@ -41,14 +41,31 @@ function textLength(parent: Parent): number {
 	return length;
 }
 
-function wrap(parent: Parent, settledOffset: number) {
+// Characters of `value` to keep plain: the source before `settledOffset`,
+// rounded down to a grapheme boundary so an emoji is never split.
+function settledPrefix(value: string, start: number, settledOffset: number): number {
+	const limit = Math.min(value.length, Math.max(0, settledOffset - start));
+	if (limit === 0 || limit === value.length) return limit;
+	let boundary = 0;
+	for (const { index } of SEGMENTER.segment(value)) {
+		if (index > limit) break;
+		boundary = index;
+	}
+	return boundary;
+}
+
+function wrap(parent: Parent & { position?: Element["position"] }, settledOffset: number) {
 	parent.children = parent.children.flatMap((child): ElementContent[] => {
 		// Whitespace-only text is structural (between table rows, list items).
 		if (child.type === "text") {
 			if (child.value.trim() === "") return [child];
-			// Source text that was already on screen stays plain, so it never fades in again.
+			// Source text that was already on screen stays plain, so it never fades in
+			// again. Text a remark plugin split off has no position: judge it by its
+			// enclosing element instead.
 			const start = child.position?.start.offset;
-			const kept = start === undefined ? 0 : Math.min(child.value.length, Math.max(0, settledOffset - start));
+			const parentEnd = parent.position?.end.offset;
+			if (start === undefined && parentEnd !== undefined && parentEnd <= settledOffset) return [child];
+			const kept = start === undefined ? 0 : settledPrefix(child.value, start, settledOffset);
 			if (kept === child.value.length) return [child];
 			const plain: ElementContent[] = kept > 0 ? [{ type: "text", value: child.value.slice(0, kept) }] : [];
 			return plain.concat(Array.from(SEGMENTER.segment(child.value.slice(kept)), ({ segment }): ElementContent =>

@@ -159,6 +159,12 @@ function chatUrlTransform(url: string, key: string): string | undefined {
 	return defaultUrlTransform(url);
 }
 
+/**
+ * True while the surrounding chat is rendering its first commit. A stable ref,
+ * not a value, so ending the opening never re-renders every reply.
+ */
+export const ChatOpeningRef = createContext<{ readonly current: boolean }>({ current: false });
+
 export const ChatMarkdown = memo(function ChatMarkdown({
 	text,
 	streaming = false,
@@ -181,9 +187,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	// beat past the end of the stream.
 	const [fading, setFading] = useState(streaming);
 	if (streaming && !fading) setFading(true);
-	// Text already on screen when the reply mounts (opening or switching to a chat
-	// mid-stream) is not new; only characters that arrive afterwards fade in.
-	const [settledOffset] = useState(() => text.length);
+	// A reply already on screen when its chat opens (switching to a chat
+	// mid-stream) is not new; only characters that arrive afterwards fade in. A
+	// reply that arrives later fades from its first character.
+	const chatOpening = useContext(ChatOpeningRef);
+	const [settledOffset] = useState(() => (chatOpening.current ? text.length : 0));
 	const streamingRehype = useMemo<Options["rehypePlugins"]>(() => [[rehypeStreamFade, { settledOffset }]], [settledOffset]);
 	useEffect(() => {
 		if (streaming) return;

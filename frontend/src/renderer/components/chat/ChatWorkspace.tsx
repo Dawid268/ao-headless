@@ -123,7 +123,7 @@ import {
 	type TurnOutcomeRetryControl,
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
-import { ChatLinkProvider } from "./ChatMarkdown";
+import { ChatLinkProvider, ChatOpeningRef } from "./ChatMarkdown";
 import { ChatImageSourceProvider } from "./chat-image-source";
 import type { ComposerPromptSuggestion } from "./ComposerEditor";
 import { ChatComposer, type ChatComposerHandle, type StoredComposerAttachment } from "./ChatComposer";
@@ -2697,6 +2697,12 @@ export function Timeline({
 	// widens chat; shorter histories (common on non-Codex harnesses) often
 	// stop overflowing and used to lose the minimap exactly then.
 	const minimapEnabled = scrollbar.markers.length > 0;
+	// Replies rendered with the chat's first commit were already on screen
+	// before the switch; streamed text in them must not fade in again.
+	const chatOpening = useRef(true);
+	useEffect(() => {
+		chatOpening.current = false;
+	}, []);
 	// The minimap appears once the opened chat is measured. That first reveal is
 	// part of opening the chat, so it is instant; only later changes (the inspector
 	// covering it) fade.
@@ -3752,6 +3758,7 @@ export function Timeline({
 	}
 
 	return (
+		<ChatOpeningRef.Provider value={chatOpening}>
 		<div
 			className="relative min-h-0 flex-1"
 			data-testid="chat-timeline"
@@ -4042,6 +4049,7 @@ export function Timeline({
 				</Button>
 			) : null}
 		</div>
+		</ChatOpeningRef.Provider>
 	);
 }
 
