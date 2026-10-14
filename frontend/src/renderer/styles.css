@@ -6235,6 +6235,17 @@ html[data-window-translucent="true"] .ao-startup-screen {
 	background-color: transparent;
 }
 
+/* A loader inside the running shell (remote host loading, missing
+ * dependency) would let the shell show through it. Hide the shell, tint
+ * included, and keep only the loader visible. */
+html[data-window-translucent="true"] .app-shell-root:has(.ao-startup-screen) {
+	visibility: hidden;
+}
+
+html[data-window-translucent="true"] .app-shell-root .ao-startup-screen {
+	visibility: visible;
+}
+
 /* The live page is a native view below the shell. Cut the tint out over its
  * rect (published by useBrowserView) so the page is not tinted. */
 html[data-window-translucent="true"][data-browser-hole="true"]:has(.browser-panel[data-browser-native-page="live"]) .app-shell-root::before {
