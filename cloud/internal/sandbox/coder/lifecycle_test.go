@@ -419,3 +419,13 @@ func TestCleanupHookCommandRunsTheCurrentCommands(t *testing.T) {
 		t.Fatal("80 KiB of random Cleanup fits the URL payload limit")
 	}
 }
+
+// The reconciler's last Delete before it gives up skips Cleanup without
+// asking Coder about the workspace.
+func TestCleanupSkippedDeletesAtOnce(t *testing.T) {
+	t.Parallel()
+	c := &Client{baseURL: "http://127.0.0.1:1", durableRoot: sandbox.CoderHomeDurableRoot}
+	if !c.cleanupFinished(sandbox.WithoutCleanup(context.Background()), "workspace-1") {
+		t.Fatal("a Delete that skips Cleanup waited for it")
+	}
+}

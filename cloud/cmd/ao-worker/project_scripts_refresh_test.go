@@ -54,7 +54,7 @@ func TestReopenedSessionRetriesSetupWithTheProjectsCurrentCommands(t *testing.T)
 	c := projectScriptsServer(t, []string{"echo fixed > setup-ran"}, []string{"echo bye"}, nil)
 
 	booted := projectScripts{PostCreate: []string{"exit 3"}, PreRemove: []string{"echo old-cleanup"}}
-	if failed := runProjectSetup(ctx, logger, c, dataDir, booted.PostCreate, workspace, environment); failed == nil {
+	if failed := runProjectSetup(ctx, logger, c, dataDir, true, booted.PostCreate, workspace, environment); failed == nil {
 		t.Fatal("Setup with the boot-time commands succeeded, want a failure")
 	}
 
@@ -62,7 +62,7 @@ func TestReopenedSessionRetriesSetupWithTheProjectsCurrentCommands(t *testing.T)
 	if strings.Join(refreshed.PostCreate, "|") != "echo fixed > setup-ran" || strings.Join(refreshed.PreRemove, "|") != "echo bye" {
 		t.Fatalf("refreshed scripts = %+v, want the project's current commands", refreshed)
 	}
-	if failed := runProjectSetup(ctx, logger, c, dataDir, refreshed.PostCreate, workspace, environment); failed != nil {
+	if failed := runProjectSetup(ctx, logger, c, dataDir, true, refreshed.PostCreate, workspace, environment); failed != nil {
 		t.Fatalf("retry with the current commands failed: %+v", *failed)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "setup-ran")); err != nil {

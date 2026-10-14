@@ -61,6 +61,7 @@ var workerCapabilities = []string{
 	"terminal.workspace",
 	"terminal.agent",
 	"notification.events",
+	worker.CapabilityWorkspacePathPlaceholder,
 }
 
 func main() {
@@ -126,6 +127,12 @@ func run(logger *slog.Logger) error {
 	if err := selfUpdateIfStale(ctx, logger, publicURL, dataDir); err != nil {
 		logger.Warn("worker self-update check failed; continuing", "error", err)
 	}
+
+	// The session's first worker start has no persisted worker token yet (a
+	// self-update re-exec happens before connect, so it still counts).
+	// Project Setup runs only when the session's workspace is first prepared.
+	_, tokenErr := os.Stat(client.tokenFile)
+	firstStart := errors.Is(tokenErr, os.ErrNotExist)
 
 	bootstrap, err := client.connect(ctx, logger, bootstrapToken)
 	if err != nil {
@@ -464,6 +471,14 @@ func run(logger *slog.Logger) error {
 			case <-checkoutRequested:
 				reopened = true
 			}
+			if workingDirectoryErr != nil {
+				// The whole worker (agent, terminal, Cleanup hook) was set up
+				// around the fallback workspace, so the configured directory is
+				// resolved again by a fresh worker: the control plane starts a
+				// new one when this one exits.
+				logger.Info("working directory: session reopened; restarting the worker to check the directory again")
+				os.Exit(workingDirectoryRetryExitCode)
+			}
 		}
 		// Restore a previously deleted session's state before the agent launches.
 		// A fresh session finds nothing captured and this returns quickly.
@@ -481,7 +496,7 @@ func run(logger *slog.Logger) error {
 			if reopened {
 				scripts = refreshProjectScripts(runCtx, logger, client, dataDir, workspace, scriptEnvironment, scripts)
 			}
-			failed := runProjectSetup(runCtx, logger, client, dataDir, scripts.PostCreate, workspace, scriptEnvironment)
+			failed := runProjectSetup(runCtx, logger, client, dataDir, firstStart, scripts.PostCreate, workspace, scriptEnvironment)
 			if failed == nil {
 				break
 			}
@@ -1482,6 +1497,7 @@ func (c *client) doMethod(
 	}
 	if token := c.currentToken(); token != "" {
 		request.Header.Set("Authorization", "Worker "+token)
+		request.Header.Set(worker.CapabilitiesHeader, strings.Join(workerCapabilities, ","))
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -1538,6 +1554,11 @@ func (c *client) currentToken() string {
 	defer c.mu.RUnlock()
 	return c.token
 }
+
+// workingDirectoryRetryExitCode is how the worker exits when a session that
+// failed on its configured working directory is reopened, so a fresh worker
+// resolves the directory again (EX_TEMPFAIL).
+const workingDirectoryRetryExitCode = 75
 
 // secretFileGuardCommand is the hook command that runs this binary's
 // secret-file guard. A self-updated worker re-execs from its healed copy, so

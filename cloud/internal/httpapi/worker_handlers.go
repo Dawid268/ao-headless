@@ -139,7 +139,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	launchContext, err := launchContextFrom(launch)
+	launchContext, err := launchContextFrom(launch, slices.Contains(input.Capabilities, worker.CapabilityWorkspacePathPlaceholder))
 	if err != nil {
 		s.logger.Error("build worker launch context", "error", err, "project_id", launch.ProjectID, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "BOOTSTRAP_FAILED", "The project's role instructions are invalid.")
@@ -231,7 +231,7 @@ func (s *Server) workerReconnect(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	launchContext, err := launchContextFrom(launch)
+	launchContext, err := launchContextFrom(launch, headerReportsCapability(r, worker.CapabilityWorkspacePathPlaceholder))
 	if err != nil {
 		s.logger.Error("build worker reconnect context", "error", err, "project_id", launch.ProjectID, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "RECONNECT_FAILED", "The project's role instructions are invalid.")
@@ -246,9 +246,21 @@ func (s *Server) workerReconnect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// headerReportsCapability reports whether a worker request's
+// worker.CapabilitiesHeader lists capability.
+func headerReportsCapability(r *http.Request, capability string) bool {
+	for _, reported := range strings.Split(r.Header.Get(worker.CapabilitiesHeader), ",") {
+		if strings.TrimSpace(reported) == capability {
+			return true
+		}
+	}
+	return false
+}
+
 // launchContextFrom projects a stored launch spec onto the wire type shared by
-// bootstrap and reconnect.
-func launchContextFrom(launch domain.WorkerLaunch) (worker.LaunchContext, error) {
+// bootstrap and reconnect. resolvesWorkspacePath is whether the worker
+// substitutes worker.WorkspacePathPlaceholder.
+func launchContextFrom(launch domain.WorkerLaunch, resolvesWorkspacePath bool) (worker.LaunchContext, error) {
 	var agentConfig domain.ProjectAgentConfig
 	if len(launch.AgentConfig) > 0 {
 		if err := json.Unmarshal(launch.AgentConfig, &agentConfig); err != nil {
@@ -283,8 +295,9 @@ func launchContextFrom(launch domain.WorkerLaunch) (worker.LaunchContext, error)
 		DefaultBranch: launch.DefaultBranch,
 		// The worker knows where the session actually works (it depends on the
 		// provider, the workspace user's home and a Coder connection's working
-		// directory) and substitutes it before launching the agent.
-		WorkspacePath:     worker.WorkspacePathPlaceholder,
+		// directory) and substitutes it before launching the agent. An older
+		// worker shows the prompt as is, so it gets the path it always showed.
+		WorkspacePath:     workspacePathFor(resolvesWorkspacePath),
 		AgentRules:        agentRules,
 		OrchestratorRules: orchestratorRules,
 		ExtraRepos:        promptExtras,
@@ -1366,4 +1379,11 @@ func (s *Server) workerTokenTTL() time.Duration {
 		return s.workerTokenLifetime
 	}
 	return worker.DefaultTokenTTL
+}
+
+func workspacePathFor(resolvesWorkspacePath bool) string {
+	if resolvesWorkspacePath {
+		return worker.WorkspacePathPlaceholder
+	}
+	return worker.LegacyWorkspacePath
 }

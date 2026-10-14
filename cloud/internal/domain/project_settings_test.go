@@ -188,9 +188,15 @@ func TestProjectSettingsScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(settings.PostCreate, "|") != "npm ci|make up" || strings.Join(settings.PreRemove, "|") != "make down" ||
+	postCreate, preRemove := ProjectScripts(merged)
+	if strings.Join(postCreate, "|") != "npm ci|make up" || strings.Join(preRemove, "|") != "make down" ||
 		settings.Coder == nil || settings.Coder.TemplateID != "t" {
-		t.Fatalf("settings = %+v", settings)
+		t.Fatalf("settings = %+v, scripts = %q %q", settings, postCreate, preRemove)
+	}
+	// A stored value of an unexpected shape (written before the keys were
+	// checked) does not block reading the project for a new session.
+	if _, err := DecodeProjectSettings(json.RawMessage(`{"postCreate":"npm ci","preRemove":[" "]}`)); err != nil {
+		t.Fatalf("legacy scripts blocked decoding: %v", err)
 	}
 	cleared, err := MergeProjectSettingsConfig(merged, json.RawMessage(`{"preRemove":[]}`))
 	if err != nil {

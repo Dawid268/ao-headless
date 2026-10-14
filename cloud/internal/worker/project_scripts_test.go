@@ -27,7 +27,7 @@ func TestSetupRunsCommandsInOrderOncePerSession(t *testing.T) {
 		"  ",
 		`echo "two $(pwd) $AO_WORKTREE_PATH $AO_SOURCE_TREE_PATH $AO_PROJECT_NAME" >> trace`,
 	}
-	event, ran := SetupRunner{DataDir: dataDir}.Run(context.Background(), commands, workspace, scriptEnvironment(workspace))
+	event, ran := SetupRunner{DataDir: dataDir, FirstStart: true}.Run(context.Background(), commands, workspace, scriptEnvironment(workspace))
 	if !ran || event.Status != SetupSucceeded || event.Step != 0 {
 		t.Fatalf("event = %+v, ran = %v", event, ran)
 	}
@@ -40,10 +40,10 @@ func TestSetupRunsCommandsInOrderOncePerSession(t *testing.T) {
 	if string(trace) != want {
 		t.Fatalf("trace = %q, want %q", trace, want)
 	}
-	if _, ran := (SetupRunner{DataDir: dataDir}).Run(context.Background(), commands, workspace, scriptEnvironment(workspace)); ran {
+	if _, ran := (SetupRunner{DataDir: dataDir, FirstStart: true}).Run(context.Background(), commands, workspace, scriptEnvironment(workspace)); ran {
 		t.Fatal("setup ran twice for the session")
 	}
-	if _, ran := (SetupRunner{DataDir: t.TempDir()}).Run(context.Background(), nil, workspace, scriptEnvironment(workspace)); ran {
+	if _, ran := (SetupRunner{DataDir: t.TempDir(), FirstStart: true}).Run(context.Background(), nil, workspace, scriptEnvironment(workspace)); ran {
 		t.Fatal("ran with no commands")
 	}
 }
@@ -54,7 +54,7 @@ func TestSetupStopsAtTheFailingStepAndRetries(t *testing.T) {
 	t.Parallel()
 	dataDir, workspace := t.TempDir(), t.TempDir()
 	commands := []string{"true", "echo installing; echo broken >&2; exit 3", "touch never-ran"}
-	event, ran := SetupRunner{DataDir: dataDir}.Run(context.Background(), commands, workspace, scriptEnvironment(workspace))
+	event, ran := SetupRunner{DataDir: dataDir, FirstStart: true}.Run(context.Background(), commands, workspace, scriptEnvironment(workspace))
 	if !ran || event.Status != SetupFailed || event.Step != 2 || event.ExitCode != 3 ||
 		!strings.Contains(event.Output, "broken") {
 		t.Fatalf("event = %+v", event)
@@ -65,7 +65,7 @@ func TestSetupStopsAtTheFailingStepAndRetries(t *testing.T) {
 	if message := event.Message(); !strings.HasPrefix(message, "Setup step 2 failed: exit status 3: ") {
 		t.Fatalf("message = %q", message)
 	}
-	if _, ran := (SetupRunner{DataDir: dataDir}).Run(context.Background(), commands, workspace, scriptEnvironment(workspace)); !ran {
+	if _, ran := (SetupRunner{DataDir: dataDir, FirstStart: true}).Run(context.Background(), commands, workspace, scriptEnvironment(workspace)); !ran {
 		t.Fatal("a failed setup was recorded as done")
 	}
 }
@@ -73,16 +73,25 @@ func TestSetupStopsAtTheFailingStepAndRetries(t *testing.T) {
 // A step over its deadline is stopped together with what it started.
 func TestSetupStepTimeout(t *testing.T) {
 	t.Parallel()
-	event, _ := SetupRunner{DataDir: t.TempDir(), StepTimeout: 200 * time.Millisecond}.Run(
+	event, _ := SetupRunner{DataDir: t.TempDir(), FirstStart: true, StepTimeout: 200 * time.Millisecond}.Run(
 		context.Background(), []string{"sleep 30 & wait"}, t.TempDir(), scriptEnvironment(t.TempDir()))
 	if event.Status != SetupTimedOut || event.Step != 1 || !strings.Contains(event.Message(), "timed out") {
 		t.Fatalf("event = %+v", event)
 	}
 }
 
+func TestSetupPublishesNoOutputOnSuccess(t *testing.T) {
+	t.Parallel()
+	event, ran := SetupRunner{DataDir: t.TempDir(), FirstStart: true}.Run(context.Background(),
+		[]string{"echo DB_PASS=hunter2"}, t.TempDir(), scriptEnvironment(t.TempDir()))
+	if !ran || event.Status != SetupSucceeded || event.Output != "" {
+		t.Fatalf("event = %+v", event)
+	}
+}
+
 func TestSetupKeepsTheTailOfLongOutput(t *testing.T) {
 	t.Parallel()
-	event, _ := SetupRunner{DataDir: t.TempDir()}.Run(context.Background(),
+	event, _ := SetupRunner{DataDir: t.TempDir(), FirstStart: true}.Run(context.Background(),
 		[]string{"head -c 20000 /dev/zero | tr '\\0' a; echo; echo the-end; exit 1"}, t.TempDir(), scriptEnvironment(t.TempDir()))
 	if len(event.Output) > ProjectScriptOutputLimit || !strings.HasSuffix(event.Output, "the-end") {
 		t.Fatalf("output (%d bytes) ends %q", len(event.Output), event.Output[max(0, len(event.Output)-20):])
@@ -138,5 +147,44 @@ func TestCleanupHookRunsCommandsOnce(t *testing.T) {
 	}()
 	if err != nil || strings.TrimSpace(output) != "" {
 		t.Fatalf("hook with no Cleanup commands: output = %q, err = %v; want a silent success", output, err)
+	}
+}
+
+// Setup runs when the session's workspace is first prepared. A restarted
+// worker never runs a Setup the project gained later inside the session's
+// live workspace, but it does retry one that failed.
+func TestSetupRunsOnlyForTheSessionsFirstPreparation(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	env := scriptEnvironment(workspace)
+	marker := "touch " + filepath.Join(workspace, "ran")
+
+	// Started without Setup, then the project gains one.
+	dataDir := t.TempDir()
+	if _, ran := (SetupRunner{DataDir: dataDir, FirstStart: true}).Run(context.Background(), nil, workspace, env); ran {
+		t.Fatal("ran with no commands")
+	}
+	if _, ran := (SetupRunner{DataDir: dataDir}).Run(context.Background(), []string{marker}, workspace, env); ran {
+		t.Fatal("a Setup added later ran in the prepared workspace")
+	}
+
+	// A session from before Setup existed, restarted under this worker.
+	if _, ran := (SetupRunner{DataDir: t.TempDir()}).Run(context.Background(), []string{marker}, workspace, env); ran {
+		t.Fatal("a pre-Setup session ran Setup on restart")
+	}
+
+	// A failed Setup keeps running on later starts until it succeeds.
+	dataDir = t.TempDir()
+	if event, ran := (SetupRunner{DataDir: dataDir, FirstStart: true}).Run(context.Background(), []string{"exit 3"}, workspace, env); !ran || event.Status == SetupSucceeded {
+		t.Fatalf("first run = %+v, %v", event, ran)
+	}
+	if event, ran := (SetupRunner{DataDir: dataDir}).Run(context.Background(), []string{marker}, workspace, env); !ran || event.Status != SetupSucceeded {
+		t.Fatalf("retry after restart = %+v, %v", event, ran)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "ran")); err != nil {
+		t.Fatal("the retried Setup did not run")
+	}
+	if _, ran := (SetupRunner{DataDir: dataDir}).Run(context.Background(), []string{marker}, workspace, env); ran {
+		t.Fatal("Setup ran again after it succeeded")
 	}
 }

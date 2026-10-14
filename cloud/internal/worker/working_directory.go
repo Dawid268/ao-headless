@@ -28,6 +28,20 @@ const (
 // workspace before launching the agent.
 const WorkspacePathPlaceholder = "{{AO_WORKSPACE_DIR}}"
 
+// CapabilityWorkspacePathPlaceholder is the worker capability that it
+// substitutes WorkspacePathPlaceholder. A control plane sends the placeholder
+// only to a worker reporting it; an older worker gets the literal default
+// path it always showed, never the raw placeholder.
+const CapabilityWorkspacePathPlaceholder = "workspace.path-placeholder"
+
+// CapabilitiesHeader carries a worker's capabilities, comma separated, on its
+// requests (the reconnect GET has no body to report them in).
+const CapabilitiesHeader = "AO-Worker-Capabilities"
+
+// LegacyWorkspacePath is the working directory older workers' instructions
+// named before the worker resolved it.
+const LegacyWorkspacePath = "/workspace/repository"
+
 // workingDirectoryFile, in the worker data directory, records how a session
 // settled on its configured working directory ("adopted <path>" or "cloned
 // <path>"), so a restarted worker treats the directory the same way.

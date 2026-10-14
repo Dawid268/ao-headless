@@ -68,19 +68,19 @@ func runProjectSetup(
 	logger *slog.Logger,
 	client *client,
 	dataDir string,
+	firstStart bool,
 	commands []string,
 	workspace string,
 	environment worker.SessionScriptEnvironment,
 ) (failed *worker.SetupEvent) {
-	if len(commands) == 0 {
-		return nil
-	}
-	logger.Info("project setup: running", "workspace", workspace, "steps", len(commands))
-	event, ran := worker.SetupRunner{DataDir: dataDir}.Run(ctx, commands, workspace, environment)
+	event, ran := worker.SetupRunner{DataDir: dataDir, FirstStart: firstStart}.Run(ctx, commands, workspace, environment)
 	if !ran {
-		logger.Info("project setup: already ran for this session")
+		if len(commands) > 0 {
+			logger.Info("project setup: not run; the session's workspace was set up before", "steps", len(commands))
+		}
 		return nil
 	}
+	logger.Info("project setup: ran", "workspace", workspace, "steps", len(commands))
 	attrs := []any{
 		"status", event.Status, "step", event.Step, "exit_code", event.ExitCode,
 		"duration_ms", event.DurationMS, "output", activity.Redact(event.Output),

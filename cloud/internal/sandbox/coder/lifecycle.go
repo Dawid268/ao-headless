@@ -102,7 +102,7 @@ func (c *Client) addLifecycleEnvironment(environment map[string]string, workspac
 // a stage. Like local cleanup it runs only before permanent removal, never on
 // stop or pause.
 func (c *Client) cleanupFinished(ctx context.Context, id sandbox.ID) bool {
-	if c.durableRoot == "" {
+	if c.durableRoot == "" || sandbox.CleanupSkipped(ctx) {
 		return true
 	}
 	var view workspace
@@ -262,9 +262,15 @@ func cleanupHookCommand(durableRoot string, budget time.Duration, override strin
 	command := "ao_hook=" + hook + "\n" +
 		"ao_skip() { printf '\\n%s:%s\\n' " + cleanupMarker + " " + cleanupSkipped + "; exit 0; }\n" +
 		"ao_owner=\n" +
-		"if [ -x \"$ao_hook\" ]; then set -- \"$ao_hook\"\n" +
+		// The PTY runs as the workspace login user. A hook it owns (workspace
+		// worker user) runs directly; any other hook runs only as its owner
+		// through sudo, never as root or as the login user, so an ao-worker
+		// agent that rewrites or chmods its hook cannot borrow the login
+		// user's (sudo-capable) account.
+		"if [ -O \"$ao_hook\" ] && [ -x \"$ao_hook\" ]; then set -- \"$ao_hook\"\n" +
 		"elif sudo -n test -x \"$ao_hook\" 2>/dev/null; then\n" +
 		"  ao_owner=$(sudo -n stat -c %U \"$ao_hook\" 2>/dev/null) || ao_skip\n" +
+		"  case \"$ao_owner\" in ''|root|\"$(id -un)\") ao_skip ;; esac\n" +
 		"  set -- sudo -n -H -u \"$ao_owner\" \"$ao_hook\"\n" +
 		"else ao_skip; fi\n"
 	if override != "" {

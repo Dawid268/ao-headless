@@ -37,12 +37,10 @@ type ProjectSettingsConfig struct {
 	// workspaceNamePrefix and template parameters; the rest is chosen when the
 	// project is created.
 	Coder *ProjectCoderConfig `json:"coder,omitempty"`
-	// PostCreate and PreRemove are the project's Setup and Cleanup commands,
-	// the same settings a local project has (Project settings > Scripts).
-	// Setup runs in the session's workspace after its checkout and before the
-	// coding agent starts; Cleanup runs before the workspace is deleted.
-	PostCreate []string `json:"postCreate,omitempty"`
-	PreRemove  []string `json:"preRemove,omitempty"`
+	// The project's Setup and Cleanup commands (postCreate and preRemove) are
+	// read by ProjectScripts and checked on write (ValidateProjectScriptsConfig
+	// and the settings patch); they are not decoded here, so a stored value of
+	// an unexpected shape never blocks creating a session.
 }
 
 // Bounds for a project's Setup and Cleanup commands.
@@ -179,12 +177,6 @@ func DecodeProjectSettings(raw json.RawMessage) (ProjectSettingsConfig, error) {
 		return settings, fmt.Errorf("invalid project settings: %w", err)
 	}
 	if err := validateSessionPrefix(settings.SessionPrefix); err != nil {
-		return settings, err
-	}
-	if err := ValidateProjectScriptCommands("postCreate", settings.PostCreate); err != nil {
-		return settings, err
-	}
-	if err := ValidateProjectScriptCommands("preRemove", settings.PreRemove); err != nil {
 		return settings, err
 	}
 	if settings.Coder != nil {

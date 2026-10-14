@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/sandbox"
@@ -52,5 +53,49 @@ func TestDeletionCarriesTheProjectsCurrentCleanup(t *testing.T) {
 	ctx = reconciler(&lifecycleStore{}).withCleanupCommands(context.Background(), record)
 	if _, ok := sandbox.CleanupCommands(ctx); ok {
 		t.Fatal("a store without the lookup must leave the provider's installed commands in charge")
+	}
+}
+
+// deadlineDeleteProvider records the Deletes it receives and whether each
+// asked to skip the project's Cleanup.
+type deadlineDeleteProvider struct {
+	lifecycleProvider
+	deletes []bool
+}
+
+func (p *deadlineDeleteProvider) Delete(ctx context.Context, _ sandbox.ID) error {
+	p.deletes = append(p.deletes, sandbox.CleanupSkipped(ctx))
+	return nil
+}
+
+// Past the deletion deadline the reconciler gives up on the row, but first
+// sends one Delete that skips Cleanup, so a Cleanup that outlived the deadline
+// never leaves the workspace running.
+func TestDeletionDeadlineDeletesWithoutCleanupBeforeGivingUp(t *testing.T) {
+	requested := time.Now().Add(-time.Hour)
+	record := domain.Sandbox{
+		OrgID: "org-1", SessionID: "session-1", Provider: "coder",
+		ProviderEnvironmentID: "workspace-1", DeletionRequestedAt: &requested,
+	}
+	provider := &deadlineDeleteProvider{lifecycleProvider: lifecycleProvider{
+		environment: sandbox.Environment{ID: "workspace-1", State: sandbox.StateRunning},
+	}}
+	reconciler := New(&lifecycleStore{}, lifecycleResolver{provider: provider}, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err := reconciler.reconcileDeletion(context.Background(), record, provider); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.deletes) != 1 || !provider.deletes[0] {
+		t.Fatalf("deletes = %v, want one that skips Cleanup", provider.deletes)
+	}
+
+	// Before the deadline Delete keeps running Cleanup.
+	fresh := time.Now()
+	record.DeletionRequestedAt = &fresh
+	provider.deletes = nil
+	if err := reconciler.reconcileDeletion(context.Background(), record, provider); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.deletes) != 1 || provider.deletes[0] {
+		t.Fatalf("deletes = %v, want one with Cleanup", provider.deletes)
 	}
 }

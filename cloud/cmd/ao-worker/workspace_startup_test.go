@@ -75,7 +75,7 @@ func TestFailedSetupIsReportedAsTheWorkspaceStartupError(t *testing.T) {
 	c := recorder.server(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	workspace := t.TempDir()
-	failed := runProjectSetup(context.Background(), logger, c, t.TempDir(),
+	failed := runProjectSetup(context.Background(), logger, c, t.TempDir(), true,
 		[]string{"echo starting stack; echo missing secret >&2; exit 4", "echo never"}, workspace,
 		worker.SessionScriptEnvironment{SessionID: "session-1", WorkspaceDir: workspace})
 	if failed == nil {
@@ -117,7 +117,7 @@ func TestReadyWorkspaceIsReported(t *testing.T) {
 	recorder := &workerEventRecorder{}
 	c := recorder.server(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if failed := runProjectSetup(context.Background(), logger, c, t.TempDir(), []string{"true"}, t.TempDir(),
+	if failed := runProjectSetup(context.Background(), logger, c, t.TempDir(), true, []string{"true"}, t.TempDir(),
 		worker.SessionScriptEnvironment{SessionID: "session-1"}); failed != nil {
 		t.Fatalf("setup failed: %+v", failed)
 	}

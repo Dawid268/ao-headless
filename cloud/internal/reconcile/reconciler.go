@@ -837,6 +837,15 @@ func (r *Reconciler) reconcileDeletion(
 			"provider_state", environment.State,
 			"deadline", r.options.DeletionDeadline,
 		)
+		// One last Delete without the project's Cleanup, so a Cleanup that
+		// outlived the deadline (a slow script, or a control plane restart
+		// that started it again) never leaves the workspace running.
+		if environment.State != sandbox.StateDeleting {
+			if err := provider.Delete(sandbox.WithoutCleanup(ctx), environment.ID); err != nil && !errors.Is(err, sandbox.ErrNotFound) {
+				r.log.WarnContext(ctx, "final sandbox delete before abandoning failed",
+					"session_id", record.SessionID, "provider_id", record.ProviderEnvironmentID, "err", err)
+			}
+		}
 		return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
 	}
 

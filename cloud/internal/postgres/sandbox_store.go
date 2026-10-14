@@ -1033,8 +1033,10 @@ func (s *Store) WorkerLaunchSpec(
 // ProjectCleanupCommands returns the current Cleanup commands (Project
 // settings > Scripts) of the project a session belongs to, read when its
 // sandbox is deleted so Cleanup follows the project's config at removal time.
-// A session whose project is gone or archived is ErrNotFound; the caller then
-// falls back to the commands the worker installed.
+// That includes a project being removed: archiving it marks its sandboxes
+// deleted, and their Cleanup is the project's last commands. A session whose
+// project is gone is ErrNotFound; the caller then falls back to the commands
+// the worker installed.
 func (s *Store) ProjectCleanupCommands(ctx context.Context, orgID, sessionID string) ([]string, error) {
 	var commands []string
 	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
@@ -1044,7 +1046,7 @@ func (s *Store) ProjectCleanupCommands(ctx context.Context, orgID, sessionID str
 			`SELECT project.config
 			FROM ao_sessions session
 			JOIN ao_projects project ON project.id = session.project_id AND project.org_id = session.org_id
-			WHERE session.id = $1 AND session.org_id = $2 AND project.archived_at IS NULL`,
+			WHERE session.id = $1 AND session.org_id = $2`,
 			sessionID,
 			orgID,
 		).Scan(&config)

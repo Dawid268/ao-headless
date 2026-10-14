@@ -1,9 +1,13 @@
 package workerexec
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -337,5 +341,54 @@ func TestCodexAppServerTrustsSecretFileGuard(t *testing.T) {
 	}
 	if status := listGuard(); status != "trusted" {
 		t.Fatalf("after trusting: guard is %q", status)
+	}
+}
+
+// fakeCodexAppServer answers each request line with respond(method).
+func fakeCodexAppServer(t *testing.T, respond func(method string) string) *codexRPC {
+	t.Helper()
+	requestsReader, requestsWriter := io.Pipe()
+	responsesReader, responsesWriter := io.Pipe()
+	t.Cleanup(func() { _ = requestsWriter.Close(); _ = responsesWriter.Close() })
+	go func() {
+		scanner := bufio.NewScanner(requestsReader)
+		for scanner.Scan() {
+			var request struct {
+				ID     int64  `json:"id"`
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(scanner.Bytes(), &request) != nil {
+				continue
+			}
+			_, _ = fmt.Fprintf(responsesWriter, `{"id":%d,%s}`+"\n", request.ID, respond(request.Method))
+		}
+	}()
+	return newCodexRPC(requestsWriter, responsesReader)
+}
+
+// A Codex without session hooks reports errCodexHooksUnsupported, which Chat
+// logs and runs without the guard; other failures still fail the turn.
+func TestTrustCodexSecretFileGuardOnACodexWithoutHooks(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	guard := "env -u AO_CLOUD_PUBLIC_URL /opt/ao/ao-worker " + SecretFileGuardArg
+
+	noMethod := fakeCodexAppServer(t, func(string) string {
+		return `"error":{"code":-32601,"message":"method not found"}`
+	})
+	if err := trustCodexSecretFileGuard(ctx, noMethod, "/w", guard); !errors.Is(err, errCodexHooksUnsupported) {
+		t.Fatalf("no hooks/list: err = %v", err)
+	}
+
+	notLoaded := fakeCodexAppServer(t, func(string) string { return `"result":{"data":[{"hooks":[]}]}` })
+	if err := trustCodexSecretFileGuard(ctx, notLoaded, "/w", guard); !errors.Is(err, errCodexHooksUnsupported) {
+		t.Fatalf("guard not loaded: err = %v", err)
+	}
+
+	broken := fakeCodexAppServer(t, func(string) string {
+		return `"error":{"code":-32603,"message":"internal error"}`
+	})
+	if err := trustCodexSecretFileGuard(ctx, broken, "/w", guard); err == nil || errors.Is(err, errCodexHooksUnsupported) {
+		t.Fatalf("internal error: err = %v", err)
 	}
 }

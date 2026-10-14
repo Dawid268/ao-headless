@@ -33,6 +33,10 @@ const (
 	// workspace stop/start keeps the prepared checkout and does not run it
 	// again.
 	setupDoneFile = "setup.done"
+	// setupAttemptedFile records that this session's Setup started running,
+	// so a worker restart after a failed Setup runs it again (and keeps the
+	// agent blocked) instead of treating the session as already set up.
+	setupAttemptedFile = "setup.attempted"
 	// CleanupHookFile and CleanupCommandsFile, in the worker data directory,
 	// are what the control plane runs before it deletes a Coder workspace: the
 	// hook enters the session's workspace with the session environment and
@@ -145,6 +149,12 @@ func (e SessionScriptEnvironment) Map() map[string]string {
 // SetupRunner runs a project's Setup commands once per session.
 type SetupRunner struct {
 	DataDir string
+	// FirstStart is true on the session's first worker start (no worker
+	// token persisted yet). Setup runs when the session's workspace is first
+	// prepared, like a local workspace's: a session that started without Setup
+	// (or under a worker from before Setup existed) never runs one added to
+	// the project later inside its already-prepared workspace.
+	FirstStart bool
 	// StepTimeout overrides ProjectScriptStepTimeout for tests.
 	StepTimeout time.Duration
 }
@@ -160,13 +170,19 @@ func (r SetupRunner) Run(
 	environment SessionScriptEnvironment,
 ) (event SetupEvent, ran bool) {
 	commands = nonEmptyCommands(commands)
-	if len(commands) == 0 {
-		return SetupEvent{}, false
-	}
 	marker := filepath.Join(r.DataDir, setupDoneFile)
 	if _, err := os.Stat(marker); err == nil {
 		return SetupEvent{}, false
 	}
+	attempted := filepath.Join(r.DataDir, setupAttemptedFile)
+	_, attemptErr := os.Stat(attempted)
+	if len(commands) == 0 || (!r.FirstStart && attemptErr != nil) {
+		// Nothing to run, or a restarted worker whose session never started a
+		// Setup: the workspace is already prepared, so record it as set up.
+		r.writeMarker(marker)
+		return SetupEvent{}, false
+	}
+	r.writeMarker(attempted)
 	timeout := r.StepTimeout
 	if timeout <= 0 {
 		timeout = ProjectScriptStepTimeout
@@ -175,7 +191,9 @@ func (r SetupRunner) Run(
 	event = SetupEvent{Status: SetupSucceeded}
 	for index, command := range commands {
 		step := runProjectScriptStep(ctx, command, timeout, dir, environment.Map())
-		event.Output = step.Output
+		// Only a failure carries output: it is what the startup screen shows to
+		// fix the step. A successful Setup's output (often secrets a step
+		// loaded or printed) is never published to the session's events.
 		if step.Status != SetupSucceeded {
 			step.Step = index + 1
 			step.DurationMS = time.Since(started).Milliseconds()
@@ -183,10 +201,14 @@ func (r SetupRunner) Run(
 		}
 	}
 	event.DurationMS = time.Since(started).Milliseconds()
-	if err := os.MkdirAll(r.DataDir, 0o700); err == nil {
-		_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
-	}
+	r.writeMarker(marker)
 	return event, true
+}
+
+func (r SetupRunner) writeMarker(path string) {
+	if err := os.MkdirAll(r.DataDir, 0o700); err == nil {
+		_ = os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+	}
 }
 
 func nonEmptyCommands(commands []string) []string {

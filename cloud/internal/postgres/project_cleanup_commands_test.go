@@ -37,7 +37,12 @@ func TestProjectCleanupCommandsReadsTheCurrentProjectConfig(t *testing.T) {
 		WHERE id = (SELECT project_id FROM ao_sessions WHERE id = $1)`, fixture.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ProjectCleanupCommands(ctx, fixture.orgID, fixture.sessionID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("archived project lookup err = %v, want ErrNotFound", err)
+	// Removing a project deletes its sandboxes; they run its last Cleanup.
+	setCleanup(`{"preRemove": ["docker compose down"]}`)
+	if commands, err := store.ProjectCleanupCommands(ctx, fixture.orgID, fixture.sessionID); err != nil || strings.Join(commands, "|") != "docker compose down" {
+		t.Fatalf("archived project Cleanup = %v (%v), want its last commands", commands, err)
+	}
+	if _, err := store.ProjectCleanupCommands(ctx, fixture.orgID, "00000000-0000-4000-8000-000000000999"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown session lookup err = %v, want ErrNotFound", err)
 	}
 }

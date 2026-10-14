@@ -20,3 +20,19 @@ func CleanupCommands(ctx context.Context) ([]string, bool) {
 	commands, ok := ctx.Value(cleanupCommandsKey{}).([]string)
 	return commands, ok
 }
+
+type skipCleanupKey struct{}
+
+// WithoutCleanup tells Provider.Delete to delete at once without running or
+// waiting for the project's Cleanup. The reconciler uses it for its last
+// Delete before it gives up on a deletion, so a slow or restarted Cleanup can
+// delay a deletion but never leave the workspace running.
+func WithoutCleanup(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipCleanupKey{}, true)
+}
+
+// CleanupSkipped reports whether WithoutCleanup marked ctx.
+func CleanupSkipped(ctx context.Context) bool {
+	skip, _ := ctx.Value(skipCleanupKey{}).(bool)
+	return skip
+}

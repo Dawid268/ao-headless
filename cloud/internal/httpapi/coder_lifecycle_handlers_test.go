@@ -188,22 +188,40 @@ func TestWorkerEventRecordsSetupOutcome(t *testing.T) {
 }
 
 // The project context names the session's real working directory, which only
-// the worker knows; the control plane sends a placeholder for it.
+// the worker knows: a worker that substitutes it gets a placeholder, and an
+// older worker (which shows the prompt as is) the path it always showed.
 func TestLaunchContextLeavesTheWorkspaceToTheWorker(t *testing.T) {
 	t.Parallel()
-	launch, err := launchContextFrom(domain.WorkerLaunch{
+	spec := domain.WorkerLaunch{
 		SessionID: "session-1", ProjectID: "project-1", ProjectName: "alice", Kind: "worker",
 		Harness: "claude-code", RepositoryURL: "https://github.com/11x-ai/alice", DefaultBranch: "main",
-	})
+	}
+	launch, err := launchContextFrom(spec, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(launch.SystemPrompt, "- Workspace: "+worker.WorkspacePathPlaceholder) ||
-		strings.Contains(launch.SystemPrompt, "/workspace/repository") {
+		strings.Contains(launch.SystemPrompt, worker.LegacyWorkspacePath) {
 		t.Fatalf("system prompt workspace line:\n%s", launch.SystemPrompt)
 	}
 	if launch.ProjectName != "alice" {
 		t.Fatalf("project name = %q", launch.ProjectName)
+	}
+	legacy, err := launchContextFrom(spec, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(legacy.SystemPrompt, "- Workspace: "+worker.LegacyWorkspacePath) ||
+		strings.Contains(legacy.SystemPrompt, worker.WorkspacePathPlaceholder) {
+		t.Fatalf("older worker's workspace line:\n%s", legacy.SystemPrompt)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/worker/reconnect", nil)
+	if headerReportsCapability(request, worker.CapabilityWorkspacePathPlaceholder) {
+		t.Fatal("a request without the header reported the capability")
+	}
+	request.Header.Set(worker.CapabilitiesHeader, "worker.events, "+worker.CapabilityWorkspacePathPlaceholder)
+	if !headerReportsCapability(request, worker.CapabilityWorkspacePathPlaceholder) {
+		t.Fatal("the header's capability was not found")
 	}
 }
 
@@ -214,7 +232,7 @@ func TestLaunchContextCarriesProjectScripts(t *testing.T) {
 	launch, err := launchContextFrom(domain.WorkerLaunch{
 		SessionID: "session-1", ProjectID: "project-1", Kind: "worker", Harness: "claude-code",
 		ProjectConfig: json.RawMessage(`{"postCreate":["npm ci","  ","make up"],"preRemove":["make down"],"coder":{"templateId":"x"}}`),
-	})
+	}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +242,7 @@ func TestLaunchContextCarriesProjectScripts(t *testing.T) {
 	launch, err = launchContextFrom(domain.WorkerLaunch{
 		SessionID: "session-1", Kind: "worker", Harness: "claude-code",
 		ProjectConfig: json.RawMessage(`{"postCreate":"npm ci"}`),
-	})
+	}, true)
 	if err != nil || launch.PostCreate != nil || launch.PreRemove != nil {
 		t.Fatalf("malformed scripts: launch = %+v, err = %v", launch, err)
 	}

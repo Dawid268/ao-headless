@@ -230,14 +230,19 @@ func (b HarnessBuilder) secretFileGuard() string {
 	return "env -u AO_CLOUD_PUBLIC_URL " + guard
 }
 
+// errCodexHooksUnsupported is a Codex app-server that cannot run session hooks
+// (too old for hooks/list or session-flag hooks).
+var errCodexHooksUnsupported = errors.New("Codex does not support session hooks")
+
 // trustCodexSecretFileGuard marks the guard hook trusted in a Codex
 // app-server. Codex runs a session-flag hook only once its hash is trusted;
 // the terminal and exec launches pass --dangerously-bypass-hook-trust, which
 // app-server does not accept, so Chat records the trust the way Codex's own
 // hook review does: hooks/list reports the hook's current hash and
 // hooks.state.<key>.trusted_hash stores it in AO's CODEX_HOME config. Only the
-// guard is trusted. Protection was asked for, so a Codex that does not load
-// the guard fails the turn instead of running unprotected.
+// guard is trusted. A Codex without session hooks returns
+// errCodexHooksUnsupported, which the caller logs and runs without the guard;
+// any other failure fails the turn.
 func trustCodexSecretFileGuard(ctx context.Context, conn *codexRPC, cwd, guard string) error {
 	var listed struct {
 		Data []struct {
@@ -251,6 +256,10 @@ func trustCodexSecretFileGuard(ctx context.Context, conn *codexRPC, cwd, guard s
 		} `json:"data"`
 	}
 	if err := conn.request(ctx, "hooks/list", map[string]any{"cwds": []string{cwd}}, &listed); err != nil {
+		var rpcErr *codexRPCError
+		if errors.As(err, &rpcErr) && rpcErr.Code == codexMethodNotFound {
+			return fmt.Errorf("%w: %v", errCodexHooksUnsupported, err)
+		}
 		return fmt.Errorf("list Codex hooks: %w", err)
 	}
 	found := false
@@ -267,7 +276,7 @@ func trustCodexSecretFileGuard(ctx context.Context, conn *codexRPC, cwd, guard s
 		}
 	}
 	if !found {
-		return errors.New("Codex did not load the secret file guard hook")
+		return fmt.Errorf("%w: Codex did not load the secret file guard hook", errCodexHooksUnsupported)
 	}
 	if len(trust) == 0 {
 		return nil
