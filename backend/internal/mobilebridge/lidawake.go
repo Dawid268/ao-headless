@@ -24,6 +24,8 @@ import (
 const lidHelperVersion = 2
 const lidHelperLabel = "com.aoagents.mobile-wake"
 
+var errLidHelperUpgrade = errors.New("registered wake helper protocol is incompatible; open the lid, turn closed-lid wake off in every AO instance and wait for recovery to finish, then run in Terminal: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake; turn closed-lid wake on again")
+
 // LidAwake is a lease client for the independent, launchd-owned coordinator.
 // Default-data AO instances for this login share ~/.ao/data/wake. Custom data
 // roots cannot enable host control, which would break isolation.
@@ -111,7 +113,7 @@ func (l *LidAwake) Status() (supported, active bool, reason string) {
 	if !l.supported {
 		return false, false, l.reason
 	}
-	if l.id == "" {
+	if l.id == "" || l.reason == "helper_upgrade_required" {
 		return true, false, l.reason
 	}
 	st, err := l.readStatus()
@@ -182,6 +184,9 @@ func (l *LidAwake) Start(allowSetup bool) error {
 	}
 	if err := l.setup(); err != nil {
 		l.reason = "setup_failed"
+		if errors.Is(err, errLidHelperUpgrade) {
+			l.reason = "helper_upgrade_required"
+		}
 		return err
 	}
 	l.id = uuid.NewString()
@@ -426,7 +431,7 @@ func (l *LidAwake) checkRegisteredHelper(ctx context.Context) error {
 		return err
 	}
 	if probe.Version != lidHelperVersion {
-		return errors.New("registered wake helper protocol is incompatible; stop mobile wake sessions before removing its registration")
+		return errLidHelperUpgrade
 	}
 	return nil
 }
@@ -442,6 +447,9 @@ func (l *LidAwake) Setup() error {
 	}
 	if err := l.setup(); err != nil {
 		l.reason = "setup_failed"
+		if errors.Is(err, errLidHelperUpgrade) {
+			l.reason = "helper_upgrade_required"
+		}
 		return err
 	}
 	l.reason = ""

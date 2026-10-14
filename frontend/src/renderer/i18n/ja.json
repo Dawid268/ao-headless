@@ -788,6 +788,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "現在利用できません。この設定をオフにしてからオンにすると再試行できます。",
 	"mobile.keepAwake.lidReason.display_failed": "現在利用できません。この設定をオフにしてからオンにすると再試行できます。",
 	"mobile.keepAwake.lidReason.helper_unavailable": "現在利用できません。この設定をオフにしてからオンにすると再試行できます。",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "復旧ヘルパーの更新が必要です。蓋を開き、すべての AO インスタンスで蓋を閉じた状態のスリープ防止をオフにして、復旧が完了するまで待ってください。ターミナルで次を実行してください: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake。その後、このオプションを再びオンにしてください。",
 	"mobile.keepAwake.lidReason.setup_failed": "現在利用できません。この設定をオフにしてからオンにすると再試行できます。",
 	"mobile.keepAwake.lidReason.lease_failed": "現在利用できません。この設定をオフにしてからオンにすると再試行できます。",
 	"mobile.devices.empty": "まだペアリングされたデバイスはありません。",

@@ -788,6 +788,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "현재 사용할 수 없습니다. 다시 시도하려면 이 옵션을 껐다가 다시 켜세요.",
 	"mobile.keepAwake.lidReason.display_failed": "현재 사용할 수 없습니다. 다시 시도하려면 이 옵션을 껐다가 다시 켜세요.",
 	"mobile.keepAwake.lidReason.helper_unavailable": "현재 사용할 수 없습니다. 다시 시도하려면 이 옵션을 껐다가 다시 켜세요.",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "복구 도우미를 업데이트해야 합니다. 덮개를 열고 모든 AO 인스턴스에서 덮개를 닫은 상태의 절전 방지를 끈 다음 복구가 완료될 때까지 기다리세요. 터미널에서 실행하세요: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake. 그런 다음 이 옵션을 다시 켜세요.",
 	"mobile.keepAwake.lidReason.setup_failed": "현재 사용할 수 없습니다. 다시 시도하려면 이 옵션을 껐다가 다시 켜세요.",
 	"mobile.keepAwake.lidReason.lease_failed": "현재 사용할 수 없습니다. 다시 시도하려면 이 옵션을 껐다가 다시 켜세요.",
 	"mobile.devices.empty": "아직 페어링된 기기가 없습니다.",

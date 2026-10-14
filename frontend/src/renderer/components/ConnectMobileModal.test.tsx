@@ -810,3 +810,23 @@ test("keeps lid controls hidden for older daemons", async () => {
 	await screen.findByRole("switch", { name: "Keep this Mac awake" });
 	expect(screen.queryByRole("switch", { name: "Keep awake with lid closed" })).not.toBeInTheDocument();
 });
+
+test.each([false, true])("shows helper upgrade recovery with lid preference %s", async (lidClosed) => {
+	mobileStatus.keepAwake = {
+		supported: true,
+		enabled: true,
+		active: true,
+		hasBattery: true,
+		lidSupported: true,
+		lidClosed,
+		lidActive: false,
+		lidReason: "helper_upgrade_required",
+	};
+	renderMobileSettings();
+	const toggle = await screen.findByRole("switch", { name: "Keep awake with lid closed" });
+	expect(toggle).toHaveAttribute("aria-checked", String(lidClosed));
+	expect(screen.getByText(/launchctl bootout gui\/\$\(id -u\)\/com\.aoagents\.mobile-wake/)).toHaveTextContent(
+		"turn closed-lid wake off in every AO instance and wait for recovery to finish",
+	);
+	expect(screen.queryByText("Closed-lid keep awake is armed.")).not.toBeInTheDocument();
+});

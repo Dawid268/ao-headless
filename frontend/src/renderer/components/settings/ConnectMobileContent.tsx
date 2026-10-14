@@ -772,7 +772,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 										"Works while Keep awake and mobile access are on, even when your phone disconnects. Uses more battery; keep the Mac on a ventilated surface. Stops below 10% battery or at critical heat.",
 									)}
 								</p>
-								{(status.keepAwake.lidClosed || status.keepAwake.lidReason === "recovery_failed" || status.keepAwake.lidReason === "lease_failed") && (
+								{(status.keepAwake.lidClosed || status.keepAwake.lidReason === "recovery_failed" || status.keepAwake.lidReason === "lease_failed" || status.keepAwake.lidReason === "helper_upgrade_required") && (
 									<p className="mt-1 text-xs leading-4 text-settings-muted" role="status">
 										{status.keepAwake.lidActive
 											? t("mobile.keepAwake.lidActive", "Closed-lid keep awake is armed.")

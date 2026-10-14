@@ -788,6 +788,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "Diese Funktion ist nicht verfügbar. Zum Wiederholen diese Option aus- und wieder einschalten.",
 	"mobile.keepAwake.lidReason.display_failed": "Diese Funktion ist nicht verfügbar. Zum Wiederholen diese Option aus- und wieder einschalten.",
 	"mobile.keepAwake.lidReason.helper_unavailable": "Diese Funktion ist nicht verfügbar. Zum Wiederholen diese Option aus- und wieder einschalten.",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "Der Wiederherstellungshelfer muss aktualisiert werden. Öffne den Deckel, deaktiviere das Wachhalten bei geschlossenem Deckel in jeder AO-Instanz und warte, bis die Wiederherstellung abgeschlossen ist. Führe im Terminal aus: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake. Aktiviere diese Option anschließend erneut.",
 	"mobile.keepAwake.lidReason.setup_failed": "Diese Funktion ist nicht verfügbar. Zum Wiederholen diese Option aus- und wieder einschalten.",
 	"mobile.keepAwake.lidReason.lease_failed": "Diese Funktion ist nicht verfügbar. Zum Wiederholen diese Option aus- und wieder einschalten.",
 	"mobile.devices.empty": "Noch keine Geräte gekoppelt.",

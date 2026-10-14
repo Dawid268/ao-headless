@@ -138,15 +138,30 @@ func TestWakeSetupAcceptsDaemonParentAndReusesRegisteredBuild(t *testing.T) {
 		if err := os.WriteFile(source, []byte(build), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		l := &LidAwake{directory: directory, binary: source, execute: execute}
+		l := &LidAwake{directory: directory, binary: source, execute: execute, supported: true}
 		if err := l.setup(); err != nil {
 			t.Fatal(err)
 		}
 		if i == 1 {
 			for _, incompatible := range []int{1, lidHelperVersion + 1} {
 				protocol = incompatible
-				if err := l.setup(); err == nil {
-					t.Fatal("incompatible registration silently accepted")
+				// A leftover client lease must not hide upgrade guidance behind
+				// an unavailable or old-protocol status file.
+				l.id = "previous-lease"
+				for _, attempt := range []struct {
+					name string
+					run  func() error
+				}{
+					{"explicit setup", l.Setup},
+					{"restored preference", func() error { return l.Start(false) }},
+				} {
+					err := attempt.run()
+					if !errors.Is(err, errLidHelperUpgrade) || !strings.Contains(err.Error(), "launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake") {
+						t.Fatalf("%s lacks upgrade recovery command: %v", attempt.name, err)
+					}
+					if supported, active, reason := l.Status(); !supported || active || reason != "helper_upgrade_required" {
+						t.Fatalf("%s upgrade status: supported=%v active=%v reason=%q", attempt.name, supported, active, reason)
+					}
 				}
 			}
 		}

@@ -795,6 +795,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "La función no está disponible. Desactiva y vuelve a activar esta opción para reintentar.",
 	"mobile.keepAwake.lidReason.display_failed": "La función no está disponible. Desactiva y vuelve a activar esta opción para reintentar.",
 	"mobile.keepAwake.lidReason.helper_unavailable": "La función no está disponible. Desactiva y vuelve a activar esta opción para reintentar.",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "El asistente de recuperación necesita actualizarse. Abre la tapa, desactiva la función de mantener el equipo despierto con la tapa cerrada en todas las instancias de AO y espera a que termine la recuperación. En Terminal, ejecuta: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake. Después, activa esta opción de nuevo.",
 	"mobile.keepAwake.lidReason.setup_failed": "La función no está disponible. Desactiva y vuelve a activar esta opción para reintentar.",
 	"mobile.keepAwake.lidReason.lease_failed": "La función no está disponible. Desactiva y vuelve a activar esta opción para reintentar.",
 	"mobile.devices.empty": "Aún no hay dispositivos emparejados.",

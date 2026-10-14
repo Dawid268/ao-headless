@@ -788,6 +788,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "合盖保持唤醒暂不可用。请关闭并重新开启此选项重试。",
 	"mobile.keepAwake.lidReason.display_failed": "合盖保持唤醒暂不可用。请关闭并重新开启此选项重试。",
 	"mobile.keepAwake.lidReason.helper_unavailable": "合盖保持唤醒暂不可用。请关闭并重新开启此选项重试。",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "恢复助手需要更新。打开顶盖，在所有 AO 实例中关闭合盖保持唤醒，并等待恢复完成。在终端中运行：launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake。然后重新开启此选项。",
 	"mobile.keepAwake.lidReason.setup_failed": "合盖保持唤醒暂不可用。请关闭并重新开启此选项重试。",
 	"mobile.keepAwake.lidReason.lease_failed": "合盖保持唤醒暂不可用。请关闭并重新开启此选项重试。",
 	"mobile.devices.empty": "尚未配对任何设备。",

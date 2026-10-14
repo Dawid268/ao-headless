@@ -795,6 +795,7 @@
 	"mobile.keepAwake.lidReason.native_failed": "Esta função não está disponível. Desligue e ligue esta opção novamente para tentar de novo.",
 	"mobile.keepAwake.lidReason.display_failed": "Esta função não está disponível. Desligue e ligue esta opção novamente para tentar de novo.",
 	"mobile.keepAwake.lidReason.helper_unavailable": "Esta função não está disponível. Desligue e ligue esta opção novamente para tentar de novo.",
+	"mobile.keepAwake.lidReason.helper_upgrade_required": "O auxiliar de recuperação precisa ser atualizado. Abra a tampa, desative a opção de manter o Mac ativo com a tampa fechada em todas as instâncias do AO e aguarde a conclusão da recuperação. No Terminal, execute: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake. Depois, ative esta opção novamente.",
 	"mobile.keepAwake.lidReason.setup_failed": "Esta função não está disponível. Desligue e ligue esta opção novamente para tentar de novo.",
 	"mobile.keepAwake.lidReason.lease_failed": "Esta função não está disponível. Desligue e ligue esta opção novamente para tentar de novo.",
 	"mobile.devices.empty": "Nenhum dispositivo emparelhado ainda.",
