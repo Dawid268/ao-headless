@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,21 +39,18 @@ type Service struct {
 	recorders       map[string]*screencast // by run/leg, separate from action locks
 	seqs            map[string]int         // receipts handed out, by run
 	engExec         execFn
-	media           Media           // ffmpeg, behind an interface so tests never run it
-	spawn           Spawner         // launches testing workers; nil until the daemon wires it
-	report          Reporter        // posts the session's `done` report after a submit; nil until the daemon wires it
-	kill            Killer          // stops the tester's session after a submit; nil until the daemon wires it
-	activity        SessionActivity // reads a tester's activity for the sweep; nil until the daemon wires it
-	binary          string          // the agent-browser binary; empty when it was not found (reported on first use)
-	login           string          // the gh token's login, read by the first comment post
-	evidenceMu      sync.Mutex      // one publish at a time: runs of a repo share its evidence clone
-	prepareBudget   time.Duration   // longest a `prepare` verb may run; tests shorten it
-	keepRuns        int             // retention after every run: finished run dirs kept
-	keepCheckouts   int             // retention after every run: finished runs whose checkouts are kept
-	spawnMarkerWait time.Duration   // longest intake waits for Start to finish saving a spawned session's modes
-	transcripts     string          // where Claude keeps session transcripts, for a run's token count; empty reads none
-	tokenCache      map[tokenKey]int64
-	tokenOrder      []tokenKey                                         // the cache's keys, oldest first
+	media           Media                                              // ffmpeg, behind an interface so tests never run it
+	spawn           Spawner                                            // launches testing workers; nil until the daemon wires it
+	report          Reporter                                           // posts the session's `done` report after a submit; nil until the daemon wires it
+	kill            Killer                                             // stops the tester's session after a submit; nil until the daemon wires it
+	activity        SessionActivity                                    // reads a tester's activity for the sweep; nil until the daemon wires it
+	binary          string                                             // the agent-browser binary; empty when it was not found (reported on first use)
+	login           string                                             // the gh token's login, read by the first comment post
+	evidenceMu      sync.Mutex                                         // one publish at a time: runs of a repo share its evidence clone
+	prepareBudget   time.Duration                                      // longest a `prepare` verb may run; tests shorten it
+	keepRuns        int                                                // retention after every run: finished run dirs kept
+	keepCheckouts   int                                                // retention after every run: finished runs whose checkouts are kept
+	spawnMarkerWait time.Duration                                      // longest intake waits for Start to finish saving a spawned session's modes
 	projectRepo     func(ctx context.Context, projectID string) string // the project's own owner/repo; nil reads none
 	projectHarness  func(ctx context.Context, projectID string) string // the project's worker harness; nil reads none
 
@@ -71,10 +67,6 @@ func New(store *Store, clock func() time.Time) *Service {
 		engines: map[string]*Engine{}, seqs: map[string]int{}, engExec: realExec, spawnMarkerWait: 10 * time.Second,
 		media: execMedia{}, prepareBudget: PrepareBudget, keepRuns: DefaultKeepRuns, keepCheckouts: DefaultKeepCheckouts, mirrorMu: map[string]*sync.Mutex{}, retryPause: 2 * time.Second}
 	s.closeEngine = s.closeEngines
-	s.tokenCache = map[tokenKey]int64{}
-	if home, err := os.UserHomeDir(); err == nil {
-		s.transcripts = filepath.Join(home, ".claude", "projects")
-	}
 	if exe, err := os.Executable(); err == nil {
 		s.binary, _ = resolveBinary(os.Getenv("AO_AGENT_BROWSER_PATH"), exe)
 	}

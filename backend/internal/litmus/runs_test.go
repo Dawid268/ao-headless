@@ -3,10 +3,8 @@ package litmus
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -217,17 +215,6 @@ func TestRerunStartsTheSamePRInTheSameProject(t *testing.T) {
 
 func TestRunsListAndDetail(t *testing.T) {
 	svc, runDir, _ := askSvc(t, false)
-	transcripts := t.TempDir()
-	svc.WithTranscripts(transcripts)
-	dir := filepath.Join(transcripts, regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(runDir, "-"))
-	lines := []string{ // a message is written once per content block: counted once
-		`{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":9000}}}`,
-		`{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":9000}}}`,
-		`{"type":"user","message":{"role":"user","content":"hi"}}`,
-		`{"type":"assistant","message":{"id":"m2","usage":{"input_tokens":1,"output_tokens":4}}}`,
-	}
-	is(t, "")(nil, os.MkdirAll(dir, 0o750))
-	is(t, "")(nil, os.WriteFile(filepath.Join(dir, "a.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 
 	_, err := svc.Submit(ctx, "s1", "", "")
 	is(t, "")(nil, err)
@@ -247,7 +234,7 @@ func TestRunsListAndDetail(t *testing.T) {
 		t.Fatalf("p1 list = %+v err %v", list, err)
 	}
 	row := list.Runs[0]
-	if row.ID != "run_s1" || row.State != RunSubmitted || row.Verdict != "pass" || row.DurationSeconds != 420 || row.Tokens != 120 ||
+	if row.ID != "run_s1" || row.State != RunSubmitted || row.Verdict != "pass" || row.DurationSeconds != 420 ||
 		row.PR.Number != 6394 || row.PR.URL != "https://github.com/"+row.Repo+"/pull/6394" || row.PR.Title == "" ||
 		row.ProjectID != "p1" || row.CommentState != "posted" || row.CommentURL == "" {
 		t.Fatalf("row = %+v", row)
@@ -259,9 +246,6 @@ func TestRunsListAndDetail(t *testing.T) {
 	if exp := all.Runs[2]; exp.ID != "run_s0" || exp.Verdict != "expired" || exp.Error != ReasonNoIntake || exp.DurationSeconds != 90 {
 		t.Fatalf("expired row = %+v", exp)
 	}
-	if other := all.Runs[0]; other.Tokens != 0 || !other.TokensPending {
-		t.Fatalf("a live run reports no tokens yet: %+v", other)
-	}
 	if one, _ := svc.Runs(ctx, "", 1); len(one.Runs) != 1 || one.Runs[0].ID != "run_s2" {
 		t.Fatalf("limit 1 = %+v", one.Runs)
 	}
@@ -270,7 +254,7 @@ func TestRunsListAndDetail(t *testing.T) {
 	}
 
 	d, err := svc.RunDetail(ctx, "run_s1")
-	if err != nil || d.ID != "run_s1" || d.Run.PRNumber != 6394 || len(d.Checks) != 3 || !strings.HasPrefix(d.VerdictMD, "# Verdict: pass") || !strings.HasPrefix(d.CommentMD, "Litmus tried") || d.Tokens != 120 {
+	if err != nil || d.ID != "run_s1" || d.Run.PRNumber != 6394 || len(d.Checks) != 3 || !strings.HasPrefix(d.VerdictMD, "# Verdict: pass") || !strings.HasPrefix(d.CommentMD, "Litmus tried") {
 		t.Fatalf("detail = %+v err %v", d, err)
 	}
 	raw, _ := json.Marshal(d)
@@ -366,7 +350,7 @@ func TestRunsListsOnlyTheProjectsOwnRuns(t *testing.T) {
 	}
 }
 
-func TestRunTitleComesFromRunJSONAndTokensOnlyForClosedRuns(t *testing.T) {
+func TestRunTitleComesFromRunJSON(t *testing.T) {
 	svc, runDir, _ := askSvc(t, false)
 	run, _ := svc.store.Get("run_s1")
 	if run.Title == "" {
@@ -389,41 +373,6 @@ func TestRunTitleComesFromRunJSONAndTokensOnlyForClosedRuns(t *testing.T) {
 		t.Fatalf("the backfilled title was lost: %q", row.PR.Title)
 	}
 
-	transcripts := t.TempDir()
-	svc.WithTranscripts(transcripts)
-	dir := filepath.Join(transcripts, regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(runDir, "-"))
-	is(t, "")(nil, os.MkdirAll(dir, 0o750))
-	is(t, "")(nil, os.WriteFile(filepath.Join(dir, "a.jsonl"), []byte(`{"message":{"id":"m1","usage":{"input_tokens":7,"output_tokens":3}}}`+"\n"), 0o600))
-	for _, c := range []struct {
-		state   RunState
-		tokens  int64
-		pending bool
-	}{{RunRunning, 0, true}, {RunIntake, 0, true}, {RunSubmitted, 10, false}, {RunAwaitingApproval, 10, false}, {RunExpired, 10, false}, {RunCleaned, 10, false}} {
-		got, _ := svc.update("run_s1", func(r *Run) { r.State = c.state })
-		if row := svc.summarize(got); row.Tokens != c.tokens || row.TokensPending != c.pending {
-			t.Errorf("%s: tokens %d pending %v, want %d %v", c.state, row.Tokens, row.TokensPending, c.tokens, c.pending)
-		}
-	}
-}
-
-func TestTokenCacheIsBounded(t *testing.T) {
-	svc, _ := newSvc(t)
-	for i := range tokenCacheMax + 10 {
-		svc.cacheTokens(tokenKey{path: fmt.Sprintf("f%d", i)}, int64(i))
-	}
-	if len(svc.tokenCache) != tokenCacheMax || len(svc.tokenOrder) != tokenCacheMax {
-		t.Fatalf("cache holds %d entries (order %d), want %d", len(svc.tokenCache), len(svc.tokenOrder), tokenCacheMax)
-	}
-	if _, ok := svc.tokenCache[tokenKey{path: "f0"}]; ok {
-		t.Fatal("the oldest entry was kept")
-	}
-	if _, ok := svc.tokenCache[tokenKey{path: fmt.Sprintf("f%d", tokenCacheMax+9)}]; !ok {
-		t.Fatal("the newest entry was dropped")
-	}
-	svc.cacheTokens(tokenKey{path: "f20"}, 99) // an update in place does not grow the cache
-	if len(svc.tokenOrder) != tokenCacheMax {
-		t.Fatalf("order grew to %d", len(svc.tokenOrder))
-	}
 }
 
 func TestDiscardThatCannotCleanUpDoesNotMarkTheCommentDiscarded(t *testing.T) {

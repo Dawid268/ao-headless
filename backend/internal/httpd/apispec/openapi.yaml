@@ -17592,11 +17592,6 @@ components:
           type: string
         state:
           type: string
-        tokens:
-          format: int64
-          type: integer
-        tokensPending:
-          type: boolean
         verdict:
           enum:
           - pass
@@ -17619,7 +17614,6 @@ components:
       - verdict
       - startedAt
       - durationSeconds
-      - tokens
       - run
       - verdictMd
       - commentMd
@@ -17692,11 +17686,6 @@ components:
           type: string
         state:
           type: string
-        tokens:
-          format: int64
-          type: integer
-        tokensPending:
-          type: boolean
         verdict:
           enum:
           - pass
@@ -17717,7 +17706,6 @@ components:
       - verdict
       - startedAt
       - durationSeconds
-      - tokens
       type: object
     TestingSeedStep:
       properties:

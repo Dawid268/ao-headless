@@ -2681,7 +2681,6 @@
 	"litmus.col.duration": "时长",
 	"litmus.col.started": "开始时间",
 	"litmus.col.comment": "评论",
-	"litmus.col.tokens": "令牌",
 	"litmus.col.actions": "操作",
 	"litmus.comment.view": "查看评论",
 	"litmus.comment.failed": "发布失败",

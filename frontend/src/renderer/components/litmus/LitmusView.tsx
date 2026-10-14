@@ -111,7 +111,6 @@ export function LitmusView({ projectId }: { projectId: string }) {
 												<TableHead>{t("litmus.col.duration")}</TableHead>
 												<TableHead>{t("litmus.col.started")}</TableHead>
 												<TableHead>{t("litmus.col.comment")}</TableHead>
-												<TableHead className="text-right">{t("litmus.col.tokens")}</TableHead>
 												<TableHead><span className="sr-only">{t("litmus.col.actions")}</span></TableHead>
 											</TableRow>
 										</TableHeader>
@@ -174,7 +173,6 @@ function RunRow({
 					<span className="text-muted-foreground">{commentState ?? "-"}</span>
 				)}
 			</TableCell>
-			<TableCell className="text-right tabular-nums">{run.tokens > 0 ? run.tokens.toLocaleString(i18n.language) : "-"}</TableCell>
 			<TableCell className="text-right">
 				<Button size="sm" variant="outline" disabled={rerunPending || isLitmusRunActive(run)} onClick={onRerun} aria-label={t("litmus.rerunLabel", { number: run.pr.number })}>
 					<RotateCw aria-hidden="true" />{t("litmus.rerun")}

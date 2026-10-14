@@ -284,7 +284,7 @@ func TestTestingAPIRunsAskBeforePostingAndRerun(t *testing.T) {
 		id := ids[0]
 		ids = ids[1:]
 		return id, nil
-	}).WithTranscripts(t.TempDir())
+	})
 	do := testingServer(t, httpd.APIDeps{Testing: svc})
 
 	do("GET", "/projects/p1/settings", "", http.StatusOK, `"askBeforePosting":false`)
@@ -317,7 +317,7 @@ func TestTestingAPIRunsAskBeforePostingAndRerun(t *testing.T) {
 		t.Fatalf("submit posted %q although the project asks first", posted)
 	}
 
-	do("GET", "/runs?projectId=p1", "", http.StatusOK, `"id":"run_ao-8"`, `"id":"run_ao-7"`, `"state":"awaiting-approval"`, `"verdict":"partial"`, `"number":6394`, `"tokens":0`, `"durationSeconds":`)
+	do("GET", "/runs?projectId=p1", "", http.StatusOK, `"id":"run_ao-8"`, `"id":"run_ao-7"`, `"state":"awaiting-approval"`, `"verdict":"partial"`, `"number":6394`, `"durationSeconds":`)
 	do("GET", "/runs?projectId=p2", "", http.StatusOK, `"runs":[]`)
 	do("GET", "/runs?limit=1", "", http.StatusOK, `"id":"run_ao-8"`)
 	do("GET", "/runs?limit=0", "", http.StatusBadRequest, "TESTING_LIMIT_INVALID")

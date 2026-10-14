@@ -81,11 +81,7 @@ type RunSummary struct {
 	CommentURL      string `json:"commentUrl,omitempty"`
 	CommentState    string `json:"commentState,omitempty"` // posted | updated | off | awaiting-approval | discarded | failed:<reason>
 	VideoState      string `json:"videoState,omitempty"`
-	// Tokens is the tester's input, output and cache-write tokens, read from its Claude transcript once the run is
-	// closed; 0 when unreadable. A run still in flight reports 0 and TokensPending.
-	Tokens        int64  `json:"tokens"`
-	TokensPending bool   `json:"tokensPending,omitempty"`
-	Error         string `json:"error,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // RunList is the answer of the runs list.
@@ -260,11 +256,6 @@ func (s *Service) summarize(run Run) RunSummary {
 	}
 	if row.Verdict == verdictNone && run.State == RunExpired {
 		row.Verdict = verdictExpired
-	}
-	if run.State.Closed() {
-		row.Tokens = s.tokens(dir)
-	} else {
-		row.TokensPending = true // a live run's transcript is still growing; reading it on every poll is not worth it
 	}
 	return row
 }
@@ -491,94 +482,4 @@ func (s *Service) discard(ctx context.Context, id, why string) (Run, error) {
 		s.commentLogf(run, "%s", why)
 	}
 	return out, err
-}
-
-// tokenKey caches a transcript's token count until the file changes.
-type tokenKey struct {
-	path string
-	size int64
-	mod  time.Time
-}
-
-var nonPath = regexp.MustCompile(`[^a-zA-Z0-9]`)
-
-// WithTranscripts sets the folder Claude keeps its session transcripts in (default ~/.claude/projects).
-func (s *Service) WithTranscripts(dir string) *Service {
-	s.transcripts = dir
-	return s
-}
-
-// tokens sums the tester's input, output and cache-write tokens from its Claude transcripts, which Claude keeps in
-// <transcripts>/<run dir with every non-alphanumeric turned into a dash>/*.jsonl. 0 when there are none or none is readable.
-func (s *Service) tokens(runDir string) (total int64) {
-	if s.transcripts == "" {
-		return 0
-	}
-	files, _ := filepath.Glob(filepath.Join(s.transcripts, nonPath.ReplaceAllString(runDir, "-"), "*.jsonl"))
-	for _, f := range files {
-		st, err := os.Stat(f)
-		if err != nil {
-			continue
-		}
-		key := tokenKey{f, st.Size(), st.ModTime()}
-		s.mu.Lock()
-		n, hit := s.tokenCache[key]
-		s.mu.Unlock()
-		if !hit {
-			n = transcriptTokens(f)
-			s.cacheTokens(key, n)
-		}
-		total += n
-	}
-	return total
-}
-
-// tokenCacheMax bounds the token cache; the oldest entry goes first.
-const tokenCacheMax = 256
-
-func (s *Service) cacheTokens(key tokenKey, n int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.tokenCache[key]; !ok {
-		if len(s.tokenOrder) >= tokenCacheMax {
-			delete(s.tokenCache, s.tokenOrder[0])
-			s.tokenOrder = s.tokenOrder[1:]
-		}
-		s.tokenOrder = append(s.tokenOrder, key)
-	}
-	s.tokenCache[key] = n
-}
-
-// transcriptTokens sums the usage of every assistant message in a transcript once (a message is written again for each
-// of its content blocks).
-func transcriptTokens(path string) int64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer func() { _ = f.Close() }()
-	byMessage := map[string]int64{}
-	for dec := json.NewDecoder(f); dec.More(); {
-		var line struct {
-			Message struct {
-				ID    string `json:"id"`
-				Usage struct {
-					Input         int64 `json:"input_tokens"`
-					Output        int64 `json:"output_tokens"`
-					CacheCreation int64 `json:"cache_creation_input_tokens"`
-				} `json:"usage"`
-			} `json:"message"`
-		}
-		if dec.Decode(&line) != nil {
-			break
-		}
-		if u := line.Message.Usage; line.Message.ID != "" {
-			byMessage[line.Message.ID] = u.Input + u.Output + u.CacheCreation
-		}
-	}
-	var total int64
-	for _, n := range byMessage {
-		total += n
-	}
-	return total
 }

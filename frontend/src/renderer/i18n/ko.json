@@ -2699,7 +2699,6 @@
 	"litmus.col.duration": "소요 시간",
 	"litmus.col.started": "시작",
 	"litmus.col.comment": "댓글",
-	"litmus.col.tokens": "토큰",
 	"litmus.col.actions": "작업",
 	"litmus.comment.view": "댓글 보기",
 	"litmus.comment.failed": "게시 실패",

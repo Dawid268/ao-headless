@@ -383,8 +383,8 @@ func TestTestingPanelVerbs(t *testing.T) {
 		body          M
 		want, wantNot string
 	}{
-		{args: "runs --project p1 --limit 5", reply: `{"runs":[{"id":"run_ao-25","verdict":"pass","state":"submitted","repo":"o/r","pr":{"number":7},"durationSeconds":420,"tokens":120,"commentState":"posted","commentUrl":"https://github.com/o/r/pull/7#issuecomment-9"}]}`,
-			method: "GET", path: "/testing/runs?limit=5&projectId=p1", want: "run_ao-25 pass submitted o/r#7 7m0s 120 tokens | comment posted: https://github.com/o/r/pull/7#issuecomment-9"},
+		{args: "runs --project p1 --limit 5", reply: `{"runs":[{"id":"run_ao-25","verdict":"pass","state":"submitted","repo":"o/r","pr":{"number":7},"durationSeconds":420,"commentState":"posted","commentUrl":"https://github.com/o/r/pull/7#issuecomment-9"}]}`,
+			method: "GET", path: "/testing/runs?limit=5&projectId=p1", want: "run_ao-25 pass submitted o/r#7 7m0s | comment posted: https://github.com/o/r/pull/7#issuecomment-9"},
 		{args: "runs", reply: `{"runs":[]}`, method: "GET", path: "/testing/runs", want: "no runs"},
 		{args: "rerun run_ao-25", reply: `{"sessionId":"ao-26","name":"litmus: PR #7","runId":"run_ao-26"}`,
 			method: "POST", path: "/testing/rerun", body: M{"runId": "run_ao-25"}, want: `spawned session ao-26 "litmus: PR #7", run run_ao-26`},

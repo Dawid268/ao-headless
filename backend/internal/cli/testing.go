@@ -507,12 +507,9 @@ func (t *testingCLI) runsCommand() *cobra.Command {
 	return cmd
 }
 
-// runRowLine is one run of the list: id, verdict, state, PR, duration, tokens and what became of the comment.
+// runRowLine is one run of the list: id, verdict, state, PR, duration and what became of the comment.
 func runRowLine(r litmus.RunSummary) string {
 	line := fmt.Sprintf("%s %s %s %s#%d %s", r.ID, r.Verdict, r.State, r.Repo, r.PR.Number, (time.Duration(r.DurationSeconds) * time.Second).String())
-	if r.Tokens > 0 {
-		line += fmt.Sprintf(" %d tokens", r.Tokens)
-	}
 	return strings.Join(append([]string{line}, commentLine(r.CommentState, r.CommentURL)...), " | ")
 }
 

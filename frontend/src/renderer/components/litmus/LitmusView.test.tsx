@@ -46,7 +46,6 @@ function run(overrides: Partial<LitmusRunSummary> & { id: string }): LitmusRunSu
 		verdict: "pass",
 		startedAt: "2026-10-12T10:00:00Z",
 		durationSeconds: 125,
-		tokens: 4200,
 		...overrides,
 	};
 }
@@ -133,7 +132,6 @@ describe("LitmusView", () => {
 		const row = screen.getByTestId("litmus-run-r-pass");
 		expect(within(row).getByRole("link", { name: "#1" })).toHaveAttribute("href", "https://github.com/acme/widgets/pull/1");
 		expect(within(row).getByText("2m 5s")).toBeInTheDocument();
-		expect(within(row).getByText("4,200")).toBeInTheDocument();
 	});
 
 	it("links the posted comment and reruns a finished run", async () => {

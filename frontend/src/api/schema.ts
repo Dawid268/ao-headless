@@ -6198,9 +6198,6 @@ export interface components {
             /** Format: date-time */
             startedAt: string;
             state: string;
-            /** Format: int64 */
-            tokens: number;
-            tokensPending?: boolean;
             /** @enum {string} */
             verdict: "pass" | "fail" | "partial" | "blocked" | "expired" | "none";
             verdictMd: string;
@@ -6235,9 +6232,6 @@ export interface components {
             /** Format: date-time */
             startedAt: string;
             state: string;
-            /** Format: int64 */
-            tokens: number;
-            tokensPending?: boolean;
             /** @enum {string} */
             verdict: "pass" | "fail" | "partial" | "blocked" | "expired" | "none";
             videoState?: string;

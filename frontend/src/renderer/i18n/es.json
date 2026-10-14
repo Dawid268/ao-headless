@@ -2739,7 +2739,6 @@
 	"litmus.col.duration": "Duración",
 	"litmus.col.started": "Inicio",
 	"litmus.col.comment": "Comentario",
-	"litmus.col.tokens": "Tokens",
 	"litmus.col.actions": "Acciones",
 	"litmus.comment.view": "Ver comentario",
 	"litmus.comment.failed": "Error al publicar",

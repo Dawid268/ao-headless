@@ -2699,7 +2699,6 @@
 	"litmus.col.duration": "所要時間",
 	"litmus.col.started": "開始",
 	"litmus.col.comment": "コメント",
-	"litmus.col.tokens": "トークン",
 	"litmus.col.actions": "操作",
 	"litmus.comment.view": "コメントを表示",
 	"litmus.comment.failed": "投稿に失敗",
