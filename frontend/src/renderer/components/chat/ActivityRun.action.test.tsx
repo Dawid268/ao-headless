@@ -44,9 +44,9 @@ describe("AO action batching", () => {
 				/>
 			</ChatLinkProvider>,
 		);
-		await user.click(screen.getByRole("button", { name: /Ran 2 tool calls/i }));
-		expect(screen.getByRole("button", { name: /Spawned 2 agents/i })).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: /Spawned 2 agents/i }));
+		await user.click(screen.getByRole("button", { name: /Ran 2 tool calls · Spawned 2 agents · Terminated an agent/i }));
+		expect(screen.getByRole("button", { name: "Spawned 2 agents" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Spawned 2 agents" }));
 		expect(screen.getByRole("button", { name: /Spawned an agent, Completed, Reviewer/i })).toHaveAttribute("aria-expanded", "false");
 		await user.click(screen.getByRole("button", { name: /Spawned an agent, Completed, Reviewer/i }));
 		expect(screen.getByRole("link", { name: "Open session" })).toHaveAttribute("href", "ao://sessions/mer/child");

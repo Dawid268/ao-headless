@@ -48,25 +48,26 @@ export function aoActionName(activity: ConversationActivity): string {
 }
 
 export function summarizeAOActions(activities: ConversationActivity[]): string {
-	const action = aoActionName(activities[0] ?? activityStub());
-	const count = activities.length;
-	if (isAOActionName(action) && activities.every((item) => aoActionName(item) === action)) {
-		return appI18n.t(COUNT_KEYS[action], { count });
+	const names = activities.map(aoActionName);
+	const action = names[0] ?? "";
+	if (isAOActionName(action) && names.every((name) => name === action)) {
+		return appI18n.t(COUNT_KEYS[action], { count: activities.length });
 	}
-	return appI18n.t("chat.action.performed", { count });
-}
-
-function activityStub(): ConversationActivity {
-	return {
-		kind: "activity",
-		id: "",
-		sequence: 0,
-		revision: 0,
-		activityKind: "ao_action",
-		status: "completed",
-		summary: "",
-		createdAt: "",
-	};
+	const counts = new Map<string, number>();
+	for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+	const parts: string[] = [];
+	const seen = new Set<string>();
+	for (const name of names) {
+		if (seen.has(name)) continue;
+		seen.add(name);
+		const count = counts.get(name) ?? 1;
+		if (isAOActionName(name)) {
+			parts.push(count === 1 ? appI18n.t(ACTION_LABELS[name]) : appI18n.t(COUNT_KEYS[name], { count }));
+			continue;
+		}
+		parts.push(count === 1 ? appI18n.t("chat.action.unknown") : appI18n.t("chat.action.performed", { count }));
+	}
+	return parts.join(" · ");
 }
 
 export function describeConversationActivity(activity: ConversationActivity): ActivityDisplayDescriptor | undefined {

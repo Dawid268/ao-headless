@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationActivity } from "../../types/conversation";
-import { describeConversationActivity, isOrdinaryActivity } from "./activity-action";
+import { describeConversationActivity, isOrdinaryActivity, summarizeAOActions } from "./activity-action";
 
 function activity(overrides: Partial<ConversationActivity>): ConversationActivity {
 	return {
@@ -78,6 +78,23 @@ describe("describeConversationActivity", () => {
 		}));
 		expect(replay?.operationId).toBe(first?.operationId);
 		expect(replay?.state).toBe("failed");
+	});
+
+	it("lists mixed actions instead of a generic performed count", () => {
+		const summary = summarizeAOActions([
+			activity({ detail: { action: "session.spawned" } }),
+			activity({ id: "activity-2", detail: { action: "session.agent_switched" } }),
+		]);
+		expect(summary).toBe("Spawned an agent · Switched the agent");
+	});
+
+	it("keeps a repeated action as one counted part inside a mixed group", () => {
+		const summary = summarizeAOActions([
+			activity({ detail: { action: "session.spawned" } }),
+			activity({ id: "activity-2", detail: { action: "session.spawned" } }),
+			activity({ id: "activity-3", detail: { action: "session.agent_switched" } }),
+		]);
+		expect(summary).toBe("Spawned 2 agents · Switched the agent");
 	});
 
 	it("batches AO actions with ordinary tool calls and keeps boundaries", () => {
