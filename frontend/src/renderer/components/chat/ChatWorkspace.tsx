@@ -232,6 +232,9 @@ function DraggableChatTab({ children, value }: { children: ReactNode; value: str
 				if ((event.target as HTMLElement).closest("[data-terminal-tab-action],input,a")) return;
 				dragControls.start(event);
 			}}
+			// Reorder needs layout measurement, but tabs should snap into place
+			// when a sibling opens or closes rather than slide.
+			transition={{ layout: { duration: 0 } }}
 			value={value}
 		>
 			{children}
@@ -2135,7 +2138,7 @@ function ChatHeader({
 							</button>
 						)}
 						<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
-							<div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto">
+							<motion.div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto" layoutScroll>
 								<div className="flex w-max items-stretch">
 								<Reorder.Group
 									as="div"
@@ -2184,7 +2187,7 @@ function ChatHeader({
 								</Reorder.Group>
 								{workspaceTabActions}
 								</div>
-							</div>
+							</motion.div>
 							{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
 							{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
 						</div>

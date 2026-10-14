@@ -16,7 +16,6 @@ import { ProjectScriptsSettings } from "./ProjectScriptsSettings";
 import { ProjectEnvironmentSettings } from "./ProjectEnvironmentSettings";
 import { useCloudProjectsQuery, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { CuesSettings } from "./CuesDialog";
-import { motion } from "motion/react";
 import { topbarHeaderClass } from "./TopbarButton";
 import { topbarDragStyle, useTopbarPaddingLeft } from "./ShellTopbar";
 import { useAppShortcut } from "../hooks/useAppShortcut";
@@ -386,7 +385,7 @@ export function SettingsPane() {
 	const layer = page.active;
 	return (
 		<div className="flex min-h-0 flex-1 flex-col" data-testid="settings-page">
-			<motion.header className={cn(topbarHeaderClass, "workspace-topbar-container")} style={{ ...topbarDragStyle, paddingLeft }}>
+			<header className={cn(topbarHeaderClass, "workspace-topbar-container")} style={{ ...topbarDragStyle, paddingLeft }}>
 				<h1 className="text-brand flex min-w-0 items-center gap-2 font-medium leading-none tracking-tight">
 					<span className="text-muted-foreground">{layer.rootLabel}</span>
 					<span aria-hidden="true" className="text-muted-foreground/50">/</span>
@@ -396,7 +395,7 @@ export function SettingsPane() {
 				<button aria-label={t("settings.close")} className="settings-close-button ml-auto shrink-0" disabled={layer.cueBusy} onClick={layer.close} style={{ WebkitAppRegion: "no-drag" } as CSSProperties} type="button">
 					<X aria-hidden="true" className="size-4" />
 				</button>
-			</motion.header>
+			</header>
 			{/* A covered project layer stays mounted so its draft survives recovery settings above it. */}
 			{page.layers.map((entry) => (
 				<div
