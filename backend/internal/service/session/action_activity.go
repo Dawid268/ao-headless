@@ -136,6 +136,7 @@ func actionErrorText(err error) string {
 	if err == nil {
 		return ""
 	}
+	err = toAPIError(err)
 	var api *apierr.Error
 	if errors.As(err, &api) && api.Message != "" {
 		return api.Message
@@ -201,6 +202,9 @@ func (s *Service) recordRenamed(ctx context.Context, id domain.SessionID, previo
 		return
 	}
 	rec := s.lookupActionSession(ctx, id)
+	// A successful rename is its own operation. The uuid keeps a later rename
+	// between the same names from settling the earlier row. Replay of one
+	// rename request is not deduped.
 	operationID := string(id) + ":" + previous + "->" + next + ":" + uuid.NewString()
 	if status != domain.ActivityStatusCompleted {
 		failed := failureOperationID(ctx, "rename")
@@ -343,9 +347,17 @@ func failureOperationID(ctx context.Context, kind string) string {
 	return "failed:" + kind + ":" + requestID
 }
 
+// standaloneSessionProject matches the desktop scratchpad workspace id.
+// ao://sessions/{project}/{session} needs two segments, and a standalone
+// session has no project. The app routes this id to /sessions/{session}.
+const standaloneSessionProject = "__standalone__"
+
 func sessionActionHref(project domain.ProjectID, id domain.SessionID) string {
-	if project == "" || id == "" {
+	if id == "" {
 		return ""
+	}
+	if project == "" {
+		project = standaloneSessionProject
 	}
 	return "ao://sessions/" + url.PathEscape(string(project)) + "/" + url.PathEscape(string(id))
 }

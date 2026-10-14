@@ -239,6 +239,25 @@ func TestRenameCycleKeepsEachMutation(t *testing.T) {
 	}
 }
 
+func TestActionErrorTextUsesAPIMessage(t *testing.T) {
+	if got := actionErrorText(ErrPRNotOpen); got != "PR is not open" {
+		t.Fatalf("error text = %q", got)
+	}
+	if got := actionErrorText(errors.New("plain failure")); got != "plain failure" {
+		t.Fatalf("error text = %q", got)
+	}
+}
+
+func TestStandaloneSessionHref(t *testing.T) {
+	got := sessionActionHref("", "standalone-1")
+	if got != "ao://sessions/__standalone__/standalone-1" {
+		t.Fatalf("href = %q", got)
+	}
+	if safeActionHref(got) != got {
+		t.Fatalf("href rejected: %q", got)
+	}
+}
+
 func TestRejectedSwitchWritesNothing(t *testing.T) {
 	svc, st, fc := actionFixture(t)
 	fc.switchErr = errors.New("unsupported switch harness")
