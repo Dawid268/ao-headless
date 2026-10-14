@@ -81,6 +81,28 @@ func TestStartOpensDevinNativeLogin(t *testing.T) {
 	}
 }
 
+// The Accounts page manages only this computer, so on a remote host Codex's own
+// login is the way to sign in. It runs the managed binary itself, not a launcher.
+func TestStartOpensCodexNativeLogin(t *testing.T) {
+	t.Parallel()
+
+	opener := &recordingTerminalOpener{}
+	resolver := managedExecutableResolver{agentID: "codex", path: "/managed/bin/codex"}
+	svc := NewWithAgentResolver(resolver, resolver, opener, "")
+
+	_, err := svc.Start(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("Start(codex): %v", err)
+	}
+	want := shellterm.OpenCommandTerminalInput{
+		Argv:  []string{"/managed/bin/codex", "login"},
+		Title: "Log in to Codex",
+	}
+	if !reflect.DeepEqual(opener.input, want) {
+		t.Fatalf("OpenCommandTerminal input = %#v, want %#v", opener.input, want)
+	}
+}
+
 func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 	t.Parallel()
 
