@@ -1899,6 +1899,7 @@
 	"workbench.terminal": "터미널",
 	"workbench.terminals": "터미널",
 	"appError.title": "앱에서 예기치 않은 오류가 발생했습니다.",
+	"appError.tryAgain": "다시 시도",
 	"appError.body": "문제가 계속되면 앱을 다시 시작하거나 데몬 로그를 확인하세요.",
 	"restoreUnavailable.title": "세션을 더 이상 복원할 수 없습니다",
 	"restoreUnavailable.orchestratorBody": "이 오케스트레이터에는 재개할 저장된 에이전트 세션이 없습니다. AO가 안전하게 정리할 수 없는 워크스페이스 데이터는 유지한 채 새 오케스트레이터를 만들 수 있습니다.",

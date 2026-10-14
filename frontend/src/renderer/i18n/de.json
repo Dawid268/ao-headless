@@ -1899,6 +1899,7 @@
 	"workbench.terminal": "Terminal",
 	"workbench.terminals": "Terminals",
 	"appError.title": "In der App ist ein unerwarteter Fehler aufgetreten.",
+	"appError.tryAgain": "Erneut versuchen",
 	"appError.body": "Starten Sie die App neu oder prüfen Sie die Daemon-Logs, falls das weiterhin auftritt.",
 	"restoreUnavailable.title": "Sitzung kann nicht mehr wiederhergestellt werden",
 	"restoreUnavailable.orchestratorBody": "Dieser Orchestrator hat keine gespeicherte Agent-Sitzung zum Fortsetzen. Sie können einen neuen Orchestrator erstellen; AO bewahrt Workspace-Daten, die nicht sicher bereinigt werden können.",

@@ -1931,6 +1931,7 @@
 	"workbench.terminal": "Terminal",
 	"workbench.terminals": "Terminales",
 	"appError.title": "La aplicación encontró un error inesperado.",
+	"appError.tryAgain": "Reintentar",
 	"appError.body": "Reinicia la aplicación o revisa los registros del daemon si el problema continúa.",
 	"restoreUnavailable.title": "La sesión ya no se puede restaurar",
 	"restoreUnavailable.orchestratorBody": "Este orquestador no tiene una sesión de agente guardada para reanudar. Puedes crear un nuevo orquestador mientras AO conserva los datos del espacio de trabajo que no pueda limpiar de forma segura.",

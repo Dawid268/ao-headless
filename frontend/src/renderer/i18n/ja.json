@@ -1899,6 +1899,7 @@
 	"workbench.terminal": "ターミナル",
 	"workbench.terminals": "ターミナル",
 	"appError.title": "アプリで予期しないエラーが発生しました。",
+	"appError.tryAgain": "再試行",
 	"appError.body": "この問題が続く場合は、アプリを再起動するかデーモンのログを確認してください。",
 	"restoreUnavailable.title": "セッションはこれ以上復元できません",
 	"restoreUnavailable.orchestratorBody": "このオーケストレーターには再開できる保存済みエージェントセッションがありません。AO が安全にクリーンアップできないワークスペースデータを保持したまま、新しいオーケストレーターを作成できます。",

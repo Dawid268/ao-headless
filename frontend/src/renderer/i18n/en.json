@@ -2133,6 +2133,7 @@
 	"workbench.terminal": "Terminal",
 	"workbench.terminals": "Terminals",
 	"appError.title": "The app hit an unexpected error.",
+	"appError.tryAgain": "Try again",
 	"appError.body": "Restart the app or check the daemon logs if this keeps happening.",
 	"restoreUnavailable.title": "Session can no longer be restored",
 	"restoreUnavailable.orchestratorBody": "This orchestrator has no saved agent session to resume. You can create a new orchestrator while AO preserves any workspace data it cannot safely clean.",

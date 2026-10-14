@@ -1954,6 +1954,7 @@
 	"workbench.terminal": "终端",
 	"workbench.terminals": "终端",
 	"appError.title": "应用遇到意外错误。",
+	"appError.tryAgain": "重试",
 	"appError.body": "如果问题持续发生，请重启应用或检查守护进程日志。",
 	"restoreUnavailable.title": "此会话已无法恢复",
 	"restoreUnavailable.orchestratorBody": "此编排器没有可供恢复的已保存代理会话。你可以创建新的编排器，AO 会保留所有无法安全清理的工作区数据。",
