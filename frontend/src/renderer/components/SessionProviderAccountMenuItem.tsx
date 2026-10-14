@@ -32,7 +32,7 @@ export function SessionProviderAccountMenuItem({ sessionId }: { sessionId: strin
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="min-w-64 text-xs">
 				<AccountMenuItems accounts={choices} selectedId={route.accountId} disabled={(account) => move.isPending || account.id === route.accountId} onSelect={(account) => move.mutate(account.id)} manage>
-					{route.accountId ? null : <DropdownMenuItem disabled>{t("providerAccounts.loginRequired")}</DropdownMenuItem>}
+					{current ? null : <DropdownMenuItem disabled>{t("providerAccounts.loginRequired")}</DropdownMenuItem>}
 				</AccountMenuItems>
 			</DropdownMenuSubContent>
 		</DropdownMenuSub>

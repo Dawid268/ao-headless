@@ -52,6 +52,12 @@ it.each([
 	await openAccounts();
 	await waitFor(() => expect(within(screen.getAllByRole("menu").at(-1)!).getAllByRole("menuitem").map(item => item.textContent)).toEqual([...names, "Manage accounts"]));
 });
+// A signed-out account keeps the sessions it could not hand on; they can still move to an account of their kind.
+it("asks for a sign-in when the session's account is signed out, and offers the accounts it can move to", async () => {
+	route = { managed: true, accountId: "erin" };
+	await openAccounts();
+	await waitFor(() => expect(within(screen.getAllByRole("menu").at(-1)!).getAllByRole("menuitem").map(item => item.textContent)).toEqual(["Harbor CodexDefault62% left", "Summit Codex14% left", "Please sign in again", "Manage accounts"]));
+});
 it("asks for a sign-in when the session waits for one, and is absent for an unmanaged session", async () => {
 	route = { managed: true, accountId: "" };
 	await openAccounts();
