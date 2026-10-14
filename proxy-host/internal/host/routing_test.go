@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -94,6 +95,110 @@ func TestProviderRefusalNeverFallsBackToAnotherAccount(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// A model the account's plan refuses is answered by the provider every time. Rested on the account instead, it made every later
+// request fail at once with a retryable 503, which Codex retried.
+func TestARefusedModelIsAnsweredByTheProviderEveryTime(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity} {
+		codex := &fakeProvider{failure: status, refusal: "The '" + testModel + "' model is not supported when using Codex with a ChatGPT account."}
+		f := twoProviders(t, codex, &fakeProvider{})
+		for attempt := 0; attempt < 3; attempt++ {
+			before := len(codex.ran())
+			response := f.model("/v1/responses", "codex-ticket-a", false)
+			if response.Code != status || !strings.Contains(response.Body.String(), "not supported when using Codex") || len(codex.ran()) == before {
+				t.Fatalf("%d, request %d: %d %s after %d calls", status, attempt, response.Code, response.Body.String(), len(codex.ran()))
+			}
+		}
+	}
+}
+
+// While the account rests, as after a used-up limit, its session hears the refusal that started the rest, as the provider worded it;
+// a session whose account is gone still hears that it is unavailable.
+func TestARestingAccountAnswersWithTheRefusalThatRestedIt(t *testing.T) {
+	codex := &fakeProvider{failure: http.StatusTooManyRequests, refusal: "You've hit your usage limit. Try again in 3 hours."}
+	f := twoProviders(t, codex, &fakeProvider{})
+	for attempt := 0; attempt < 3; attempt++ {
+		if response := f.model("/v1/responses", "codex-ticket-a", false); response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "hit your usage limit") {
+			t.Fatalf("request %d: %d %s", attempt, response.Code, response.Body.String())
+		}
+	}
+	if calls := codex.ran(); len(calls) != 1 {
+		t.Fatalf("the resting account was asked again: %v", calls)
+	}
+	if response := f.model("/v1/responses", "codex-ticket-gone", false); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a missing account: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestOnlyARefusalOfTheRequestIsKeptOffTheAccount(t *testing.T) {
+	refusal := func(status int, message string) coreauth.Result {
+		return coreauth.Result{AuthID: "a", Model: "m", Error: &coreauth.Error{Code: "upstream", Message: message, HTTPStatus: status}}
+	}
+	credentialWide := refusal(http.StatusBadRequest, "plan limit")
+	credentialWide.CredentialScope = true
+	for name, tc := range map[string]struct {
+		result coreauth.Result
+		scoped bool
+	}{
+		"a model the plan refuses":     {refusal(http.StatusBadRequest, "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."), true},
+		"an unknown model":             {refusal(http.StatusNotFound, "model not found"), true},
+		"a request the provider can't": {refusal(http.StatusUnprocessableEntity, "unprocessable"), true},
+		"a dead sign-in":               {refusal(http.StatusBadRequest, `{"error":"invalid_grant"}`), false},
+		"a limit across the account":   {credentialWide, false},
+		"a used-up limit":              {refusal(http.StatusTooManyRequests, "usage limit"), false},
+		"a refused sign-in":            {refusal(http.StatusUnauthorized, "unauthorized"), false},
+		"a provider failure":           {refusal(http.StatusInternalServerError, "oops"), false},
+		"a success":                    {coreauth.Result{AuthID: "a", Model: "m", Success: true}, false},
+	} {
+		before := fmt.Sprintf("%+v", tc.result.Error)
+		got := requestRefusal(context.Background(), tc.result)
+		if (got.Error != nil && got.Error.IsRequestScoped()) != tc.scoped || fmt.Sprintf("%+v", tc.result.Error) != before {
+			t.Fatalf("%s: %+v, scoped %v, original now %+v", name, got.Error, tc.scoped, tc.result.Error)
+		}
+		if tc.scoped && (got.Error.Message != tc.result.Error.Message || got.Error.HTTPStatus != tc.result.Error.HTTPStatus) {
+			t.Fatalf("%s: the provider's answer changed: %+v", name, got.Error)
+		}
+	}
+}
+
+func TestSelectorNamesTheRefusalBehindARestAndOtherwiseTheAccountUnavailable(t *testing.T) {
+	m := coreauth.NewManager(nil, nil, nil)
+	later, earlier := time.Now().Add(time.Hour), time.Now().Add(-time.Minute)
+	rest := func(model string, until time.Time, message string) map[string]*coreauth.ModelState {
+		return map[string]*coreauth.ModelState{model: {Unavailable: true, NextRetryAfter: until, LastError: &coreauth.Error{Code: "quota", Message: message, HTTPStatus: 429}}}
+	}
+	for _, a := range []*coreauth.Auth{
+		{ID: "resting", Provider: "codex", ModelStates: rest("model", later, `{"error":{"message":"usage limit reached"}}`)},
+		{ID: "account-wide", Provider: "codex", LastError: &coreauth.Error{Message: "five-hour limit", HTTPStatus: 429}, Quota: coreauth.QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: later}},
+		{ID: "rested-before", Provider: "codex", ModelStates: rest("model", earlier, "old limit")},
+		{ID: "other-model", Provider: "codex", ModelStates: rest("another", later, "limit of another model")},
+		{ID: "disabled", Provider: "codex", Disabled: true, ModelStates: rest("model", later, "limit")},
+		{ID: "other-provider", Provider: "claude", ModelStates: rest("model", later, "limit")},
+	} {
+		if _, err := m.Register(coreauth.WithSkipPersist(context.Background()), a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[string]string{"resting": `429 {"error":{"message":"usage limit reached"}}`, "account-wide": "429 five-hour limit",
+		"rested-before": "503", "other-model": "503", "disabled": "503", "other-provider": "503", "missing": "503"} {
+		options := executor.Options{Headers: http.Header{}}
+		options.Headers.Set(accountHeader, id)
+		options.Headers.Set(providerHeader, "codex")
+		_, err := (exactSelector{m}).Pick(context.Background(), "codex", "model", options, []*coreauth.Auth{{ID: "fallback", Provider: "codex"}})
+		var refusal *coreauth.Error
+		if !errors.As(err, &refusal) {
+			t.Fatalf("%s: %v", id, err)
+		}
+		got := fmt.Sprint(refusal.HTTPStatus)
+		if refusal.HTTPStatus != http.StatusServiceUnavailable {
+			// No code of its own, so that the session reads the provider's words alone.
+			got += " " + refusal.Code + refusal.Message
+		}
+		if got != want {
+			t.Fatalf("%s: %s, want %s", id, got, want)
 		}
 	}
 }

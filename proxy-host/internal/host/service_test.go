@@ -123,7 +123,8 @@ func TestBuildKeepsEverythingPrivateAndUnderItsDataDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 		routes := OpenRoutes(filepath.Join(root, "run", "routes.json"))
-		if service, err := Build(root, 12345, control, inference, "", routes, openTestActivity(t), nil); err != nil || service == nil {
+		service, err := Build(root, 12345, control, inference, "", routes, openTestActivity(t), nil)
+		if err != nil || service == nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		cfg, raw := savedConfig(t, root)
@@ -138,6 +139,10 @@ func TestBuildKeepsEverythingPrivateAndUnderItsDataDirectory(t *testing.T) {
 		}
 		if cfg.MaxRetryCredentials != 1 || cfg.Routing.Strategy != "fill-first" || cfg.Routing.SessionAffinity || !cfg.CommercialMode || !cfg.WebsocketAuth {
 			t.Fatalf("%s: the SDK may choose an account itself", name)
+		}
+		refused := coreauth.Result{AuthID: "a", Error: &coreauth.Error{Message: "The 'gpt-6.1-sol' model is not supported", HTTPStatus: http.StatusBadRequest}}
+		if policy := service.ResultPolicy(); policy == nil || !policy.ApplyResultPolicy(context.Background(), refused).Error.IsRequestScoped() {
+			t.Fatalf("%s: a model the plan refuses would rest the account", name)
 		}
 		for path, mode := range map[string]os.FileMode{"config.yaml": 0o600, "auth": 0o700} {
 			if info, err := os.Stat(filepath.Join(root, path)); err != nil || info.Mode().Perm() != mode {

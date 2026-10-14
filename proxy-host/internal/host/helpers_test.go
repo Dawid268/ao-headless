@@ -1,6 +1,7 @@
 package host
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ const testModel = "probe-model"
 type fakeProvider struct {
 	name    string
 	failure int           // every model request is refused with this status
+	refusal string        // and with these words, when set
 	started chan string   // when set, a model request announces its account and waits
 	release chan struct{} // closed to let waiting model requests finish
 	answer  func(r *http.Request, body string) (int, string)
@@ -53,7 +55,7 @@ func (e *fakeProvider) admit(ctx context.Context, a *coreauth.Auth, kind string)
 	e.calls = append(e.calls, a.ID+" "+kind)
 	e.mu.Unlock()
 	if e.failure != 0 {
-		return &coreauth.Error{Code: "refused", Message: "fake provider refusal", HTTPStatus: e.failure}
+		return &coreauth.Error{Code: "refused", Message: cmp.Or(e.refusal, "fake provider refusal"), HTTPStatus: e.failure}
 	}
 	if e.started != nil {
 		select {
@@ -168,6 +170,7 @@ func bareFixture(t *testing.T, providers ...*fakeProvider) (*fixture, *handlers.
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	manager := coreauth.NewManager(nil, exactSelector{}, nil)
+	manager.SetResultPolicy(coreauth.ResultPolicyFunc(requestRefusal)) // as Build sets it
 	manager.SetConfig(&config.Config{})
 	manager.SetRetryConfig(2, time.Millisecond, 2)
 	for _, provider := range providers {

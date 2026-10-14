@@ -131,7 +131,7 @@ func call(handle func(context.Context, request) (int, any)) gin.HandlerFunc {
 }
 func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg *config.Config) {
 	m := h.AuthManager
-	m.SetSelector(exactSelector{})
+	m.SetSelector(exactSelector{m})
 	b.Logins.auth = m
 	sdk := proxyapi.NewHandler(cfg, b.ConfigPath, m)
 	sdk.SetPostAuthHook(tagLogin)

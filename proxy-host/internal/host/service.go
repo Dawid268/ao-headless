@@ -54,7 +54,7 @@ func Build(root string, port int, controlKey, inferenceKey, build string, routes
 	b := Boundary{Routes: routes, ControlKey: controlKey, InferenceKey: inferenceKey, ConfigPath: path, BuildID: build, Stop: stop, Logins: newLogins(authDir), Activity: activity}
 	coreusage.RegisterNamedPlugin("ao-activity", activity)
 	// The SDK runs an added middleware after its logger, which gives a request the id that bind goes by.
-	return cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).
+	return cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(path).WithResultPolicy(coreauth.ResultPolicyFunc(requestRefusal)).
 		WithServerOptions(proxyapi.WithEngineConfigurator(func(e *gin.Engine) { e.Use(b.Middleware) }), proxyapi.WithMiddleware(activity.bind), proxyapi.WithRouterConfigurator(b.Configure)).Build()
 }
 
