@@ -112,12 +112,16 @@ A project's **Scripts** settings work for cloud projects as they do for local
 ones: open the project's settings, choose **Scripts**, and add commands under
 **Setup** and **Cleanup**. They belong to the project, so every session of the
 project, orchestrator and workers alike, runs the same commands, and a
-connection setting is not needed for them.
+connection setting is not needed for them. Only organization owners and admins
+can change them, since they run in every member's sessions; members see them
+read-only.
 
 - **Setup** commands run in order with `sh -c`, in the session's working
   directory, after the repository checkout and before the agent starts. They
-  run once per session; a worker restart or a workspace stop and start keeps
-  the prepared checkout and does not run them again. Each command may run for
+  run once per session, when its workspace is first prepared; a worker restart
+  or a workspace stop and start keeps the prepared checkout and does not run
+  them again, and a session that started before the project had Setup never
+  runs Setup added later. Each command may run for
   10 minutes. If one fails or times out, the agent does not start: the session
   shows "Setup step N failed" with the end of the command's output, and
   reopening the session runs Setup again with the project's current commands,
@@ -129,8 +133,10 @@ connection setting is not needed for them.
   10 minutes in total, a failed command stops the remaining ones, and the
   workspace is deleted either way. Like a local project, AO uses the project's
   Cleanup as it is when the workspace is deleted, so editing it after a session
-  started still applies to that session. Cleanup currently runs only on Coder;
-  other cloud sandboxes are deleted without it.
+  started still applies to that session, and removing the project runs its
+  last Cleanup in each of its workspaces. (A Cleanup longer than 12 KB in total
+  runs as it was when the session started.) Cleanup currently runs only on
+  Coder; other cloud sandboxes are deleted without it.
 - Up to 20 commands per list, each at most 4 KB.
 
 Environment available to both:
@@ -190,6 +196,9 @@ templates named `.env.example`, `.env.sample` and `.env.template` stay readable.
   `make db-host` or `docker compose up`. That is how a project uses its
   secrets without the agent seeing them.
 
+Codex Chat needs a Codex with session hooks (0.147 or newer); an older Codex
+runs Chat without the shell check, and AO logs a warning in the worker log.
+
 This keeps the agent from reading secrets by accident or out of habit. It is
 not a hard boundary: a program the agent writes could still open the file, and
 Cursor and OpenCode sessions are not covered. Secrets the agent must never be
@@ -208,5 +217,10 @@ workspace user.
   startup scripts or the ready check did not finish in time. Open the workspace
   from the session's top bar and check its build and agent logs in Coder.
 - **"Setup step N failed".** One of the project's Setup commands exited with an
-  error; the session's chat shows the end of its output. Fix the command in the
-  project's **Scripts** settings, then reopen the session.
+  error; the session's startup screen shows the end of its output. Fix the
+  command in the project's **Scripts** settings, then click **Retry** or reopen
+  the session.
+- **"The working directory can't be used".** Fix the directory in the
+  workspace (or the connection's **Working directory**), then reopen the
+  session. AO restarts the session's worker to check the directory again, which
+  takes about a minute.
