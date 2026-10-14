@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { accountAction, providerAccountsKey, sessionAccountQueryOptions, useProviderAccounts } from "../hooks/useProviderAccounts";
+import { accountAction, canMoveSessions, providerAccountsKey, sessionAccountQueryOptions, useProviderAccounts } from "../hooks/useProviderAccounts";
 import { AccountMenuItems } from "./AccountMenu";
 import { DropdownMenuItem, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "./ui/dropdown-menu";
 
@@ -20,8 +20,8 @@ export function SessionProviderAccountMenuItem({ sessionId }: { sessionId: strin
 		},
 	});
 	if (!route?.managed) return null;
-	const provider = accounts.find((account) => account.id === route.accountId)?.provider;
-	const choices = accounts.filter((account) => account.provider === provider && account.signedIn);
+	const from = accounts.find((account) => account.id === route.accountId);
+	const choices = accounts.filter((account) => account.provider === from?.provider && account.signedIn && canMoveSessions(from, account));
 	const current = choices.find((account) => account.id === route.accountId);
 	return (
 		<DropdownMenuSub>

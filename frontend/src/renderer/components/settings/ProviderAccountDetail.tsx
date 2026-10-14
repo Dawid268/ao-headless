@@ -1,7 +1,7 @@
 import { useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, ChevronDown, ChevronRight, CirclePause, Copy, ExternalLink, Laptop, Link2, LoaderCircle, X, type LucideIcon } from "lucide-react";
-import { PROVIDERS, percentLeft, type ProviderAccount, type ProviderLogin } from "../../hooks/useProviderAccounts";
+import { canMoveSessions, PROVIDERS, percentLeft, type ProviderAccount, type ProviderLogin } from "../../hooks/useProviderAccounts";
 import { useSessionUsageSummaries } from "../../hooks/useSessionUsageSummaries";
 import { useWorkspaceQuery } from "../../hooks/useWorkspaceQuery";
 import { aoBridge } from "../../lib/bridge";
@@ -244,12 +244,15 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 	const usage = account.usage?.status === "available" || apiKey ? account.usage : undefined;
 	const known = account.usage; // The plan is shown whenever it is known, even while the limits are not.
 	const plan = known?.plan ? [known.plan.charAt(0).toUpperCase() + known.plan.slice(1), known.planTier].filter(Boolean).join(" ") : "";
-	const others = page.accounts.filter((other) => other.provider === account.provider && other.signedIn && other.id !== account.id);
+	const peers = page.accounts.filter((other) => other.provider === account.provider && other.signedIn && other.id !== account.id);
+	// The accounts this one's sessions can move to.
+	const others = peers.filter((other) => canMoveSessions(account, other));
 	const currentDefault = page.accounts.find((other) => other.provider === account.provider && other.primary);
-	const offerFrom = page.moveOffer?.toId === account.id && account.primary ? page.accounts.find((other) => other.id === page.moveOffer?.fromId) : undefined;
+	const offerFrom = page.moveOffer?.toId === account.id && account.primary ? page.accounts.find((other) => other.id === page.moveOffer?.fromId && canMoveSessions(other, account)) : undefined;
 	const signingIn = page.signIn.waiting && page.signIn.login?.accountId === account.id ? page.signIn.login : null;
-	// Removing the default needs a new one; the next signed-in account is offered straight away.
-	const replacement = account.primary ? others.find((other) => other.id === picked) ?? others[0] : undefined;
+	// Removing the default needs a new one, offered straight away. It takes the sessions, so with none any signed-in account will do.
+	const heirs = count ? others : peers;
+	const replacement = account.primary ? heirs.find((other) => other.id === picked) ?? heirs[0] : undefined;
 	const fallback = others.find((other) => other.primary);
 	const removalFact = replacement ? t("providerAccounts.chooseNewDefault")
 		: !count ? undefined
@@ -485,7 +488,7 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 							<Row label={t("providerAccounts.confirmChange")} title={t(signedIn ? "providerAccounts.confirmSignOut" : "providerAccounts.confirmRemove", { email: name })} hint={removalFact}>
 								{replacement ? (
 									<Choice label={replacement.displayName} menuClassName="min-w-60" aria-label={t("providerAccounts.replacementPrimary")} disabled={page.pending}>
-										<AccountMenuItems accounts={others} selectedId={replacement.id} markDefault={false} onSelect={(other) => setPicked(other.id)} />
+										<AccountMenuItems accounts={heirs} selectedId={replacement.id} markDefault={false} onSelect={(other) => setPicked(other.id)} />
 									</Choice>
 								) : null}
 								<Button type="button" variant="ghost" className="text-muted-foreground" disabled={page.pending} onClick={() => setRemoving(false)}>{t("confirm.cancel")}</Button>

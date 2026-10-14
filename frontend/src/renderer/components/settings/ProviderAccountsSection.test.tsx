@@ -815,3 +815,39 @@ describe("what an account does on its own", () => {
 		expect(within(detail()).getByRole("switch", { name: "Use for new sessions" })).not.toBeChecked();
 	});
 });
+describe("where a Codex account's sessions can go", () => {
+	// Codex replays encrypted reasoning only the same kind of account can read: a sign-in's sessions stay on sign-ins, a key's on keys.
+	const key: ProviderAccount = { ...bob, id: "d", displayName: "Aspen Codex", kind: "api_key", sessions: ["session-d"] };
+	const claudeKey: ProviderAccount = { ...clara, id: "e", displayName: "Fir Claude", kind: "api_key", primary: false };
+	const options = async () => (await screen.findAllByRole("menuitem")).map(option => option.textContent);
+	beforeEach(() => void inventory.accounts.push(structuredClone(key), structuredClone(claudeKey)));
+	it("offers a sign-in's sessions only to sign-ins and a key's only to keys, and Claude's to any account", async () => {
+		const user = await start();
+		await user.click(within(detail()).getByRole("button", { name: "Move sessions" }));
+		expect(await options()).toEqual(["Maple Codex"]);
+		await user.keyboard("{Escape}");
+		await user.click(within(detail()).getByRole("button", { name: "Do nothing" }));
+		expect(await options()).toEqual(["Do nothing", "Maple Codex"]);
+		await user.keyboard("{Escape}");
+		// The default's replacement takes its sessions.
+		await user.click(within(await askRemoval(user, "Sign out")).getByRole("button", { name: "Replacement default account" }));
+		expect(await options()).toEqual(["Maple Codex"]);
+		await user.keyboard("{Escape}");
+		// The only key has nowhere to send its sessions, and as the new default it does not offer to take the sign-in's.
+		await open(user, key);
+		expect(within(detail()).queryByRole("button", { name: "Move sessions" })).toBeNull();
+		expect(detail()).not.toHaveTextContent("When a limit is reached");
+		await user.click(within(detail()).getByRole("button", { name: "Make default" }));
+		await waitFor(() => expect(listItem(key)).toHaveTextContent("Default"));
+		expect(screen.queryByRole("group", { name: "Move sessions" })).toBeNull();
+		await open(user, clara);
+		await user.click(within(detail()).getByRole("button", { name: "Do nothing" }));
+		expect(await options()).toEqual(["Do nothing", "Fir Claude"]);
+	});
+	it("lets any signed-in account replace a default that has no sessions to hand on", async () => {
+		inventory.accounts[0].sessions = [];
+		const user = await start();
+		await user.click(within(await askRemoval(user, "Sign out")).getByRole("button", { name: "Replacement default account" }));
+		expect(await options()).toEqual(["Maple Codex", "Aspen Codex"]);
+	});
+});

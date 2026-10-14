@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
@@ -39,6 +39,18 @@ it("lists the provider's signed-in accounts beside the other session actions and
 	expect(screen.getByRole("menuitem", { name: /Harbor Codex.*62% left/ })).toHaveAttribute("aria-disabled", "true");
 	fireEvent.click(screen.getByRole("menuitem", { name: /Summit Codex/ }));
 	await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/v1/provider-accounts/{accountId}/actions", { params: { path: { accountId: "bob" } }, body: { action: "assign-session", sessionId: "session-1" } }));
+});
+// Codex replays encrypted reasoning only the same kind of account can read, so its sessions stay on sign-ins or on keys.
+it.each([
+	["alice", ["Harbor CodexDefault62% left", "Summit Codex14% left"]],
+	["dana", ["Cove Codex", "Fern Codex"]],
+	["clara", ["Willow Claude100% left", "Birch Claude"]],
+])("offers a session on %s only the accounts it can move to", async (accountId, names) => {
+	const keys = [account("dana", "Cove Codex", undefined, { kind: "api_key" }), account("fay", "Fern Codex", undefined, { kind: "api_key" }), account("gus", "Birch Claude", undefined, { provider: "claude", kind: "api_key" })];
+	route = { managed: true, accountId };
+	api.get.mockImplementation(async (path: string) => path === SESSION ? { data: route } : { data: { accounts: [...accounts, ...keys] } });
+	await openAccounts();
+	await waitFor(() => expect(within(screen.getAllByRole("menu").at(-1)!).getAllByRole("menuitem").map(item => item.textContent)).toEqual([...names, "Manage accounts"]));
 });
 it("asks for a sign-in when the session waits for one, and is absent for an unmanaged session", async () => {
 	route = { managed: true, accountId: "" };

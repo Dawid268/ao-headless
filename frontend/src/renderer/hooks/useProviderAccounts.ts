@@ -22,6 +22,8 @@ export function accountHeadroom(account: ProviderAccount): number | null {
 	const general = account.usage?.status === "available" ? (account.usage.windows ?? []).filter((window) => !window.scope) : [];
 	return general.length ? percentLeft(Math.min(...general.map((window) => window.remainingFraction))) : null;
 }
+// Codex replays a session's encrypted reasoning, which only the same kind of account can read: a sign-in or an API key.
+export const canMoveSessions = (from: ProviderAccount, to: ProviderAccount) => from.provider !== "codex" || (from.kind === "api_key") === (to.kind === "api_key");
 function unwrap<T>({ data, error }: { data?: T; error?: unknown }): T {
 	if (error) throw Object.assign(new Error(apiErrorMessage(error)), { code: (error as { code?: string }).code });
 	return data as T;
