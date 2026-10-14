@@ -1,5 +1,6 @@
 # The agent's browser for a remote host: headless Chromium, the same
-# agent-browser build AO ships (0.38.1, sha256-pinned), and the browser service.
+# agent-browser build AO ships (up.sh fetches it and checks AO's sha256 pin),
+# and the browser service.
 # The fonts render CJK, Arabic and Devanagari pages instead of boxes.
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
