@@ -88,7 +88,7 @@ import { resumeOrchestrator, spawnOrchestrator } from "../lib/spawn-orchestrator
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
-import { useLatestCallback } from "../hooks/useStable";
+import { useLatestCallback, useStableArray } from "../hooks/useStable";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
 import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
@@ -209,16 +209,19 @@ if (EMPTY_DRAG_IMAGE) EMPTY_DRAG_IMAGE.src = "data:image/gif;base64,R0lGODlhAQAB
 /** Stable drag-context id per project's session list. */
 export const sessionDndId = (projectId: string) => `sidebar-sessions-${projectId}`;
 
+// Module constants: useSensor memoizes on the options object, and new sensors
+// change dnd-kit's context, which re-renders every sortable row in the list.
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: REORDER_ACTIVATION_DISTANCE } };
+// Space-only start so Enter keeps opening the row.
+const KEYBOARD_SENSOR_OPTIONS = {
+	coordinateGetter: sortableKeyboardCoordinates,
+	keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
+};
+
 function useReorderSensors() {
 	return useSensors(
-		useSensor(PointerSensor, {
-			activationConstraint: { distance: REORDER_ACTIVATION_DISTANCE },
-		}),
-		// Space-only start so Enter keeps opening the row.
-		useSensor(KeyboardSensor, {
-			coordinateGetter: sortableKeyboardCoordinates,
-			keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
-		}),
+		useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+		useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
 	);
 }
 
@@ -1493,7 +1496,8 @@ const ProjectItem = memo(function ProjectItem({
 		showAll: showAllSessions,
 		toggleShowAll: toggleShowAllSessions,
 	} = useShowMoreCap(sessions, SIDEBAR_PROJECT_SESSION_LIMIT, selection.activeSessionId);
-	const listedSessionIds = useMemo(() => listedSessions.map((session) => session.id), [listedSessions]);
+	// Stable while the ids are: a rebuilt array would invalidate every sortable row.
+	const listedSessionIds = useStableArray(useMemo(() => listedSessions.map((session) => session.id), [listedSessions]));
 	const commitSessionOrder = useCallback(
 		(next: string[] | null) => {
 			if (!next) return;
@@ -2020,7 +2024,8 @@ function ScratchpadSection({
 		showAll,
 		toggleShowAll,
 	} = useShowMoreCap(sessions, SIDEBAR_INITIAL_SECTION_LIMIT, selection.activeSessionId, isCollapsed);
-	const listedSessionIds = useMemo(() => listedSessions.map((session) => session.id), [listedSessions]);
+	// Stable while the ids are: a rebuilt array would invalidate every sortable row.
+	const listedSessionIds = useStableArray(useMemo(() => listedSessions.map((session) => session.id), [listedSessions]));
 	const commitSessionOrder = useCallback(
 		(next: string[] | null) => {
 			if (!next) return;
@@ -2179,26 +2184,25 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: session.id,
 	});
+	// dnd-kit's context changes on unrelated list renders and re-renders this
+	// wrapper. Keep the row's props stable so the heavy SessionRow skips it.
+	const open = useCallback(() => {
+		if (!consumeDragClick(session.id)) onOpen(session.id);
+	}, [consumeDragClick, onOpen, session.id]);
+	const reorder = useMemo(
+		() => ({ isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition, dropTransitionDisabled }),
+		[isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition, dropTransitionDisabled],
+	);
 	return (
 		<SessionRow
 			session={session}
 			active={active}
 			indented={indented}
 			onKilled={onKilled}
-			onOpen={() => {
-				if (!consumeDragClick(session.id)) onOpen(session.id);
-			}}
+			onOpen={open}
 			layoutDependency={layoutDependency}
 			listIsDragging={listIsDragging}
-			reorder={{
-				isDragging,
-				listeners,
-				setActivatorNodeRef,
-				setNodeRef,
-				transform,
-				transition,
-				dropTransitionDisabled,
-			}}
+			reorder={reorder}
 		/>
 	);
 });
@@ -2331,7 +2335,7 @@ type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivat
 // One worker-session row. Reads as a link by default; double-click/double-tap
 // on the name or F2 flips the label into an inline input (Enter/blur saves,
 // Escape cancels) that persists through the daemon rename endpoint.
-function SessionRow({
+const SessionRow = memo(function SessionRow({
 	session,
 	active,
 	hostLabel,
@@ -2558,7 +2562,7 @@ function SessionRow({
 			</ContextMenuContent>
 		</ContextMenu>
 	);
-}
+});
 
 const SessionMessageAge = memo(function SessionMessageAge({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();

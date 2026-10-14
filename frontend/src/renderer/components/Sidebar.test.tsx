@@ -3565,7 +3565,7 @@ describe("Sidebar session switch rendering", () => {
 				{ ...session, id: "p2-b", workspaceId: "proj-2", workspaceName: "Project Two", title: "two b" },
 			],
 		};
-		const workspaces = [p1, p2];
+		let workspaces = [p1, p2];
 		window.localStorage.setItem("ao.sidebar.expanded-projects", JSON.stringify([p1.id, p2.id]));
 		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const handlers = {
@@ -3596,6 +3596,15 @@ describe("Sidebar session switch rendering", () => {
 		view.rerender(tree());
 
 		expect([...sessionRowRenders.keys()].sort()).toEqual(["p1-a", "p2-a"]);
+
+		// Opening a session refreshes its project (its viewed state changes). Only
+		// the changed row may re-render, not every sortable row in that project.
+		const refreshed = { ...p2, sessions: [{ ...p2.sessions[0]!, updatedAt: "2026-07-01T00:00:00Z" }, p2.sessions[1]!] };
+		workspaces = [p1, refreshed];
+		sessionRowRenders.clear();
+		view.rerender(tree());
+
+		expect([...sessionRowRenders.keys()]).toEqual(["p2-a"]);
 	});
 });
 
