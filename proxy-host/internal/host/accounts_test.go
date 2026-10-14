@@ -95,7 +95,8 @@ func TestProviderCallSendsTheRequestAsGivenWithTheProvidersHeaders(t *testing.T)
 	if got.method != "POST" || got.url != claim || got.body != `{"grant_id":"g2","n":1240000000000}` {
 		t.Fatalf("the provider received %s %s %s", got.method, got.url, got.body)
 	}
-	if got.header.Get("Accept") != "application/json" || got.header.Get("anthropic-beta") != "oauth-2025-04-20" || got.header.Get("Content-Type") != "application/json" {
+	if got.header.Get("Accept") != "application/json" || got.header.Get("anthropic-beta") != "oauth-2025-04-20" || got.header.Get("Content-Type") != "application/json" ||
+		got.header.Get("Originator") != "" || got.header.Get("Chatgpt-Account-Id") != "" {
 		t.Fatalf("headers=%v", got.header)
 	}
 	// A read has no body and no content type; an answer that is not JSON comes back as text.
@@ -106,10 +107,14 @@ func TestProviderCallSendsTheRequestAsGivenWithTheProvidersHeaders(t *testing.T)
 			t.Fatalf("body=%s sent %q with %v", response.Body.String(), got.body, got.header)
 		}
 	}
-	codex := &fakeProvider{name: "codex", answer: func(r *http.Request, _ string) (int, string) { got.header = r.Header; return 200, "" }}
-	response = accountFixture(t, codex, &coreauth.Auth{}).send(http.MethodPost, "/ao/provider-call", control, providerCallBody("codex", "GET", "https://chatgpt.com/backend-api/wham/usage", ""))
-	if strings.TrimSpace(response.Body.String()) != `{"body":"","status":200}` || got.header.Get("anthropic-beta") != "" {
-		t.Fatalf("body=%s headers=%v", response.Body.String(), got.header)
+	// chatgpt.com is asked as the Codex CLI asks it: with its originator, and the account the sign-in acts for when it is known.
+	for account, metadata := range map[string]map[string]any{"acct-7": {"account_id": "acct-7"}, "": nil} {
+		codex := &fakeProvider{name: "codex", answer: func(r *http.Request, _ string) (int, string) { got.header = r.Header; return 200, "" }}
+		response = accountFixture(t, codex, &coreauth.Auth{Metadata: metadata}).send(http.MethodPost, "/ao/provider-call", control, providerCallBody("codex", "GET", "https://chatgpt.com/backend-api/codex/models?client_version=0.159.0", ""))
+		if strings.TrimSpace(response.Body.String()) != `{"body":"","status":200}` || got.header.Get("anthropic-beta") != "" ||
+			got.header.Get("Originator") != "codex_cli_rs" || got.header.Get("Chatgpt-Account-Id") != account || len(got.header.Values("Chatgpt-Account-Id")) != len(metadata) {
+			t.Fatalf("account %q: body=%s headers=%v", account, response.Body.String(), got.header)
+		}
 	}
 }
 
@@ -136,7 +141,7 @@ func TestProviderCallGoesOnlyToTheAccountsOwnProvider(t *testing.T) {
 	} // Every call the daemon makes today is on its provider's origin.
 	for name, urls := range map[string][]string{
 		"codex": {"https://chatgpt.com/backend-api/wham/usage", "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", "https://chatgpt.com/backend-api/wham/profiles/me",
-			"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"},
+			"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume", "https://chatgpt.com/backend-api/codex/models?client_version=0.159.0"},
 		"claude": {"https://api.anthropic.com/api/oauth/usage", "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", "https://api.anthropic.com/api/oauth/profile",
 			"https://api.anthropic.com/api/organizations/0b9d2c5e-3f4a-4b6c-8d7e-9f0a1b2c3d4e/reset_rate_limits"},
 	} {

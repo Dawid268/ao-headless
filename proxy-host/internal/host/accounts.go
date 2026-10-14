@@ -21,9 +21,16 @@ func providerCall(ctx context.Context, m *coreauth.Manager, auth *coreauth.Auth,
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	headers := http.Header{"Accept": {"application/json"}}
-	if auth.Provider == "claude" {
+	switch auth.Provider {
+	case "claude":
 		// Anthropic rejects subscription tokens without this header.
 		headers.Set("anthropic-beta", "oauth-2025-04-20")
+	case "codex":
+		// chatgpt.com is asked as the Codex CLI asks it: with its originator, and the account the sign-in acts for when it is known.
+		headers.Set("Originator", "codex_cli_rs")
+		if id := text(auth.Metadata["account_id"]); id != "" {
+			headers.Set("Chatgpt-Account-Id", id)
+		}
 	}
 	var payload []byte
 	if body != nil {
