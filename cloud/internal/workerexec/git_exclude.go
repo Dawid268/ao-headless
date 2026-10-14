@@ -26,16 +26,28 @@ func excludeFromGit(workspace string, paths ...string) {
 	defer cancel()
 	// --git-path resolves info/exclude for linked worktrees and separate git
 	// dirs too; it prints a path relative to the workspace or an absolute one.
-	output, err := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "--git-path", "info/exclude").Output()
+	// --show-prefix is the workspace's folder inside the checkout (empty at
+	// its root): exclude patterns are relative to the checkout root, so a
+	// working directory below it, or a workspace inside some enclosing repo,
+	// only ever excludes its own files.
+	output, err := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "--git-path", "info/exclude", "--show-prefix").Output()
 	if err != nil {
 		return
 	}
-	excludePath := strings.TrimSpace(string(output))
+	lines := strings.Split(strings.TrimRight(string(output), "\n"), "\n")
+	excludePath := strings.TrimSpace(lines[0])
 	if excludePath == "" {
 		return
 	}
 	if !filepath.IsAbs(excludePath) {
 		excludePath = filepath.Join(workspace, excludePath)
+	}
+	prefix := ""
+	if len(lines) > 1 {
+		prefix = strings.TrimSpace(lines[1])
+	}
+	for index, path := range paths {
+		paths[index] = prefix + strings.TrimPrefix(path, "/")
 	}
 	_ = appendExcludePatterns(excludePath, paths)
 }

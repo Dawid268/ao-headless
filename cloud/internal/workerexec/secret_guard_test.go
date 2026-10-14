@@ -71,10 +71,23 @@ func TestRunSecretFileGuard(t *testing.T) {
 	if code, _ := run(`{"tool_name":"Bash","tool_input":{"command":["bash","-lc","cat .env"]}}`); code != 2 {
 		t.Fatalf("Codex argv read: %d", code)
 	}
-	if code, _ := run(`{"tool_name":"shell","tool_input":{"cmd":"source .env"}}`); code != 2 {
+	if code, _ := run(`{"tool_name":"Bash","tool_input":{"cmd":"source .env"}}`); code != 2 {
 		t.Fatalf("cmd field read: %d", code)
 	}
-	for _, payload := range []string{"", "not json", `{"tool_name":"Read","tool_input":{"file_path":".env"}}`} {
+	// Codex's apply_patch: only the files the patch touches count.
+	if code, _ := run(`{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: .gitignore\n+.env\n*** Add File: app.py\n+load_dotenv(\".env\")\n*** End Patch\n"}}`); code != 0 {
+		t.Fatalf("a patch mentioning .env was blocked: %d", code)
+	}
+	for _, header := range []string{"*** Add File: .env", "*** Update File: config/.env.local", "*** Delete File: .env", `*** Update File: a.txt\n*** Move to: .env`} {
+		if code, _ := run(`{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n` + header + `\n+X=1\n*** End Patch\n"}}`); code != 2 {
+			t.Fatalf("patch %q was allowed", header)
+		}
+	}
+	for _, payload := range []string{
+		"", "not json",
+		`{"tool_name":"Read","tool_input":{"file_path":".env"}}`,
+		`{"tool_name":"mcp__deploy__run","tool_input":{"command":"deploy with .env"}}`,
+	} {
 		if code, _ := run(payload); code != 0 {
 			t.Fatalf("%q: %d", payload, code)
 		}
@@ -112,11 +125,12 @@ func TestApplySecretFileGuardHook(t *testing.T) {
 // Claude's terminal and Chat, and Codex's terminal, all run the guard on their
 // shell tool when secret files are protected.
 func TestSecretFileGuardReachesClaudeAndCodex(t *testing.T) {
-	guard := "/opt/ao/ao-worker " + SecretFileGuardArg
+	guardBinary := "/opt/ao/ao-worker " + SecretFileGuardArg
+	guard := "env -u AO_CLOUD_PUBLIC_URL " + guardBinary
 	claudeLaunch := worker.LaunchContext{SessionID: "session-1", Kind: "worker", Harness: "claude-code", Mode: "trusted"}
 	claudeCredential := worker.CredentialResponse{Provider: "claude-code", CredentialType: "api_key", Secret: "secret"}
 
-	terminal, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, ProtectSecretFiles: true, SecretFileGuard: guard}.
+	terminal, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, ProtectSecretFiles: true, SecretFileGuard: guardBinary}.
 		BuildInteractive(claudeLaunch, claudeCredential, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +138,7 @@ func TestSecretFileGuardReachesClaudeAndCodex(t *testing.T) {
 	if got := readClaudeGuard(t, terminal.Env["CLAUDE_CONFIG_DIR"]); got != guard {
 		t.Fatalf("terminal guard = %q", got)
 	}
-	chat, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, ProtectSecretFiles: true, SecretFileGuard: guard}.
+	chat, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, ProtectSecretFiles: true, SecretFileGuard: guardBinary}.
 		Build(context.Background(), worker.Turn{Harness: "claude-code", Mode: "trusted", Prompt: "hi"}, claudeCredential, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +146,7 @@ func TestSecretFileGuardReachesClaudeAndCodex(t *testing.T) {
 	if got := readClaudeGuard(t, chat.Env["CLAUDE_CONFIG_DIR"]); got != guard {
 		t.Fatalf("chat guard = %q", got)
 	}
-	off, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, SecretFileGuard: guard}.
+	off, err := HarnessBuilder{DataDir: t.TempDir(), Launch: claudeLaunch, SecretFileGuard: guardBinary}.
 		BuildInteractive(claudeLaunch, claudeCredential, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +157,7 @@ func TestSecretFileGuardReachesClaudeAndCodex(t *testing.T) {
 
 	codexLaunch := worker.LaunchContext{SessionID: "session-1", Kind: "worker", Harness: "codex", Mode: "trusted"}
 	codexCredential := worker.CredentialResponse{Provider: "codex", CredentialType: "auth_json", Secret: "{}"}
-	codex, err := HarnessBuilder{DataDir: t.TempDir(), Launch: codexLaunch, ProtectSecretFiles: true, SecretFileGuard: guard}.
+	codex, err := HarnessBuilder{DataDir: t.TempDir(), Launch: codexLaunch, ProtectSecretFiles: true, SecretFileGuard: guardBinary}.
 		BuildInteractive(codexLaunch, codexCredential, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +166,7 @@ func TestSecretFileGuardReachesClaudeAndCodex(t *testing.T) {
 	if !slices.Contains(codex.Args, want) || !slices.Contains(codex.Args, "--dangerously-bypass-hook-trust") {
 		t.Fatalf("codex args = %v", codex.Args)
 	}
-	plainCodex, err := HarnessBuilder{DataDir: t.TempDir(), Launch: codexLaunch, SecretFileGuard: guard}.
+	plainCodex, err := HarnessBuilder{DataDir: t.TempDir(), Launch: codexLaunch, SecretFileGuard: guardBinary}.
 		BuildInteractive(codexLaunch, codexCredential, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +246,17 @@ func TestAgentHookFilesStayOutOfGitStatus(t *testing.T) {
 	}
 	if count := strings.Count(string(exclude), "/.claude/settings.local.json\n"); count != 1 {
 		t.Fatalf("exclude lists the Claude settings %d times:\n%s", count, exclude)
+	}
+	// A working directory below the checkout root excludes its own files.
+	sub := filepath.Join(repo, "services", "api")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCursorActivityHooks("/usr/local/bin/ao", sub); err != nil {
+		t.Fatal(err)
+	}
+	if status := gitIn(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Fatalf("subdirectory hooks show in git status:\n%s", status)
 	}
 	// A user file in .claude still shows.
 	if err := os.WriteFile(filepath.Join(repo, ".claude", "notes.md"), []byte("x"), 0o600); err != nil {

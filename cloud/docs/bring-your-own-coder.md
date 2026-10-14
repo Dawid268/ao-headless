@@ -183,6 +183,9 @@ templates named `.env.example`, `.env.sample` and `.env.template` stay readable.
   in the terminal and in Chat. A command that names one of those files is
   blocked, for example `python3 -c "open('.env')"` or `source .env`, and the
   agent is told to use the project's own `make` targets or scripts instead.
+  That includes harmless commands such as `echo .env >> .gitignore`; the agent
+  can make that change with its file-editing tools instead. Codex edits that
+  create, change or delete one of those files are blocked too.
 - **Commands that load `.env` without naming it still run**, such as
   `make db-host` or `docker compose up`. That is how a project uses its
   secrets without the agent seeing them.

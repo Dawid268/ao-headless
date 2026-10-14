@@ -43,6 +43,7 @@ func RunSecretFileGuard(in io.Reader, stderr io.Writer) int {
 		return 0
 	}
 	var hook struct {
+		ToolName  string         `json:"tool_name"`
 		ToolInput map[string]any `json:"tool_input"`
 	}
 	if json.Unmarshal(payload, &hook) != nil {
@@ -52,7 +53,18 @@ func RunSecretFileGuard(in io.Reader, stderr io.Writer) int {
 	if command == "" {
 		command = hookCommandText(hook.ToolInput["cmd"])
 	}
-	if name, found := secretFileReference(command); found {
+	var name string
+	var found bool
+	switch hook.ToolName {
+	case "Bash":
+		name, found = secretFileReference(command)
+	case "apply_patch":
+		// Codex edits files with apply_patch, whose command is the patch.
+		// Only the files it touches count; the patch body may mention .env
+		// (a .gitignore entry, a compose env_file line) without opening it.
+		name, found = patchSecretFileReference(command)
+	}
+	if found {
 		_, _ = fmt.Fprintf(stderr, "%s (found %q)\n", secretFileGuardMessage, name)
 		return 2
 	}
@@ -107,6 +119,21 @@ func secretFileReference(command string) (string, bool) {
 		}
 		return name, true
 	}
+}
+
+// patchSecretFileReference reports the first .env file an apply_patch patch
+// adds, updates, deletes or moves to.
+func patchSecretFileReference(patch string) (string, bool) {
+	for _, line := range strings.Split(patch, "\n") {
+		for _, header := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+			if path, ok := strings.CutPrefix(line, header); ok {
+				if name, found := secretFileReference(strings.TrimSpace(path)); found {
+					return name, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func allowedSecretFileSuffix(suffix string) bool {
@@ -188,11 +215,19 @@ func codexSecretFileGuardArgs(guard string) []string {
 
 // secretFileGuard is the hook command for this launch, or "" when secret
 // files are not protected or the worker did not say how to run the guard.
+// The guard ignores the environment, but an older ao-worker (after a
+// rollback, with the hook still in Claude's settings) would start a second
+// worker from the agent's inherited environment; without
+// AO_CLOUD_PUBLIC_URL it exits at once instead.
 func (b HarnessBuilder) secretFileGuard() string {
 	if !b.ProtectSecretFiles {
 		return ""
 	}
-	return strings.TrimSpace(b.SecretFileGuard)
+	guard := strings.TrimSpace(b.SecretFileGuard)
+	if guard == "" {
+		return ""
+	}
+	return "env -u AO_CLOUD_PUBLIC_URL " + guard
 }
 
 // trustCodexSecretFileGuard marks the guard hook trusted in a Codex
