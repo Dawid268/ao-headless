@@ -210,7 +210,7 @@ func (f *fixture) route(triples ...string) {
 	}
 }
 
-// send makes one request; headers are "Name: value" pairs.
+// send makes one request; headers are "Name: value" pairs, a repeated name sent twice.
 func (f *fixture) send(method, path, token, body string, headers ...string) *httptest.ResponseRecorder {
 	return send(f.engine, method, path, token, body, headers...)
 }
@@ -225,7 +225,7 @@ func sendContext(ctx context.Context, engine http.Handler, method, path, token, 
 	}
 	for _, header := range headers {
 		name, value, _ := strings.Cut(header, ": ")
-		request.Header.Set(name, value)
+		request.Header.Add(name, value)
 	}
 	response := httptest.NewRecorder()
 	engine.ServeHTTP(response, request)

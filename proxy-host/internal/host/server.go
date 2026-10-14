@@ -50,6 +50,11 @@ var sessionPaths = map[string]string{"/v1/responses": "codex", "/v1/responses/co
 
 func (b Boundary) Middleware(c *gin.Context) {
 	r, path := c.Request, c.Request.URL.Path
+	// Nothing here is upgraded, and the SDK reads the header as a list of tokens: any Upgrade at all is refused.
+	if len(r.Header.Values("Upgrade")) > 0 {
+		c.AbortWithStatus(http.StatusNotImplemented)
+		return
+	}
 	r.Header.Del(accountHeader)
 	r.Header.Del(providerHeader)
 	own := strings.HasPrefix(path, "/ao/")
@@ -67,10 +72,6 @@ func (b Boundary) Middleware(c *gin.Context) {
 		query.Del("is_webui")
 		r.URL.RawQuery = query.Encode()
 		c.Next()
-		return
-	}
-	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
-		c.AbortWithStatus(http.StatusNotImplemented)
 		return
 	}
 	provider, known := sessionPaths[path]

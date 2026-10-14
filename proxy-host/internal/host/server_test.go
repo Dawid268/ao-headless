@@ -127,8 +127,14 @@ func TestSessionsReachOnlyTheirOwnProvidersInferencePaths(t *testing.T) {
 			t.Fatalf("%s with %s: %d", tc.path, tc.ticket, response.Code)
 		}
 	}
-	if response := f.send(http.MethodGet, "/v1/responses", "codex-ticket", "", "Upgrade: websocket"); response.Code != http.StatusNotImplemented {
-		t.Fatalf("websocket: %d", response.Code)
+	// The SDK reads Upgrade as a list of tokens, and an open socket keeps its account in flight: no upgrade of any kind gets through.
+	for _, upgrade := range [][]string{{"Upgrade: websocket"}, {"Upgrade: websocket, x"}, {"Upgrade: h2c, websocket"}, {"Upgrade: h2c", "Upgrade: websocket"}, {"Upgrade: h2c"}} {
+		if response := f.send(http.MethodGet, "/v1/responses", "codex-ticket", "", upgrade...); response.Code != http.StatusNotImplemented {
+			t.Fatalf("%v: %d", upgrade, response.Code)
+		}
+	}
+	if response := f.send(http.MethodGet, "/ao/status", control, "", "Upgrade: websocket"); response.Code != http.StatusNotImplemented {
+		t.Fatalf("an upgrade with the control key: %d", response.Code)
 	}
 	for _, path := range []string{"/", "/management.html", "/oauth/callback", "/v1/chat/completions", "/v1/images/generations", "/v1/models/gpt", "/redis", "/v1/../ao/status"} {
 		if response := f.send(http.MethodGet, path, "codex-ticket", ""); response.Code != http.StatusNotFound {
