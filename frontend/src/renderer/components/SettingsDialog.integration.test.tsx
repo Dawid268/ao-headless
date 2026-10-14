@@ -142,7 +142,8 @@ describe("Settings recovery modal integration", () => {
 		});
 
 		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
-		const login = await within(row).findByRole("button", { name: "Open sign-in" });
+		// No account in AO, so Codex keeps its own sign-in.
+		const login = await within(row).findByRole("button", { name: "Login" });
 		await waitFor(() => expect(document.activeElement).toBe(login));
 	});
 
