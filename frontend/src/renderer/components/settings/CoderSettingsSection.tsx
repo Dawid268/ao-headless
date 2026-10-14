@@ -88,6 +88,9 @@ function CoderSettingsSectionInner({ titleHidden }: { titleHidden?: boolean }) {
 	// Without one, Save is clickable only when the workspace setup changed; the
 	// stored setup is carried through every save so a token rotation never resets
 	// it. Re-fetching templates is the refresh button on the Templates section.
+	// A control plane that reports protectSecretFiles knows every Workspace
+	// setup field; an older one knows only the ones it had before.
+	const currentControlPlane = loaded?.protectSecretFiles !== undefined;
 	const devEnvFieldErrors = devEnvErrors(devEnv);
 	const devEnvInvalid = Object.keys(devEnvFieldErrors).length > 0;
 	const devEnvDirty = loaded != null && !sameDevEnv(devEnv, devEnvDraftOf(loaded));
@@ -105,7 +108,9 @@ function CoderSettingsSectionInner({ titleHidden }: { titleHidden?: boolean }) {
 				...carriedCoderConfig(loaded),
 				baseUrl: baseUrl.trim(),
 				token: token.trim() === "" ? undefined : token.trim(),
-				...devEnvRequestFields(devEnv, loaded?.protectSecretFiles !== undefined),
+				// A first connection has no Workspace setup yet (the form shows once
+				// a connection is saved), so it sends none of those fields.
+				...(loaded ? devEnvRequestFields(devEnv, currentControlPlane) : {}),
 			});
 			setToken("");
 			// The connection now points at a (possibly new) Coder, so its template list
@@ -186,6 +191,7 @@ function CoderSettingsSectionInner({ titleHidden }: { titleHidden?: boolean }) {
 						errors={devEnvFieldErrors}
 						disabled={busy || readOnly}
 						readOnly={readOnly}
+						currentControlPlane={currentControlPlane}
 						onChange={(patch) => setDevEnv((current) => ({ ...current, ...patch }))}
 					/>
 				) : null}
@@ -284,11 +290,13 @@ const WORKING_DIRECTORY_EXAMPLE = "~/work/{repo}";
  * started after a save. Per-session setup and cleanup commands are project
  * settings (Project settings > Scripts), as for a local project.
  */
-function WorkspaceSetupFields({ draft, errors, disabled, readOnly, onChange }: {
+function WorkspaceSetupFields({ draft, errors, disabled, readOnly, currentControlPlane, onChange }: {
 	draft: DevEnvDraft;
 	errors: Partial<Record<keyof DevEnvDraft, DevEnvErrorKey>>;
 	disabled: boolean;
 	readOnly: boolean;
+	/** False on an older control plane, which rejects the newer fields. */
+	currentControlPlane: boolean;
 	onChange: (patch: Partial<DevEnvDraft>) => void;
 }) {
 	const { t } = useTranslation();
@@ -354,7 +362,7 @@ function WorkspaceSetupFields({ draft, errors, disabled, readOnly, onChange }: {
 				/>
 			</div>
 
-			<div className="flex items-start justify-between gap-4">
+			{currentControlPlane ? <div className="flex items-start justify-between gap-4">
 				<div className="flex min-w-0 flex-col gap-1">
 					<Label htmlFor="coder-protect-secret-files" className={onboardingFormLabelClass}>{t("settings.coder.protectSecretFilesLabel")}</Label>
 					<p id="coder-protect-secret-files-hint" className={onboardingFieldHintClass}>{t("settings.coder.protectSecretFilesHint")}</p>
@@ -367,9 +375,9 @@ function WorkspaceSetupFields({ draft, errors, disabled, readOnly, onChange }: {
 					checked={draft.protectSecretFiles}
 					onCheckedChange={(checked) => onChange({ protectSecretFiles: checked })}
 				/>
-			</div>
+			</div> : null}
 
-			<div className="flex flex-col gap-1.5">
+			{currentControlPlane ? <div className="flex flex-col gap-1.5">
 				<Label htmlFor="coder-workingDirectory" className={onboardingFormLabelClass}>{t("settings.coder.workingDirectoryLabel")}</Label>
 				<p id="coder-workingDirectory-hint" className={onboardingFieldHintClass}>{t("settings.coder.workingDirectoryHint")}</p>
 				<Input
@@ -386,7 +394,7 @@ function WorkspaceSetupFields({ draft, errors, disabled, readOnly, onChange }: {
 					onChange={(event) => onChange({ workingDirectory: event.target.value })}
 				/>
 				{fieldError("workingDirectory")}
-			</div>
+			</div> : null}
 
 			<div className="flex flex-col gap-1.5">
 				<Label htmlFor="coder-readyProbe" className={onboardingFormLabelClass}>{t("settings.coder.readyProbeLabel")}</Label>
@@ -515,36 +523,24 @@ function devEnvErrors(draft: DevEnvDraft): Partial<Record<keyof DevEnvDraft, Dev
 
 /**
  * The dev-environment fields for the PUT body. The control plane keeps the
- * stored value of any field the request leaves out, so a control plane that
- * knows every field (it reports protectSecretFiles) gets all of them, defaults
- * included: that is how clearing the ready check or the working directory, or
- * turning the workspace user off, takes effect. An older control plane rejects
- * fields it does not know, so it gets only the non-default ones.
+ * stored value of any field the request leaves out, so every field it knows is
+ * sent, defaults included: that is how clearing the ready check or the
+ * working directory, or turning the workspace user off, takes effect. An older
+ * control plane (it does not report protectSecretFiles) rejects the newer
+ * fields, so it gets only the ones it already had; the form hides the others.
  */
-function devEnvRequestFields(draft: DevEnvDraft, explicit: boolean): Partial<CloudCpPutOrgCoderConfigRequest> {
-	const workingDirectory = draft.workingDirectory.trim();
+function devEnvRequestFields(draft: DevEnvDraft, currentControlPlane: boolean): Partial<CloudCpPutOrgCoderConfigRequest> {
 	const probe = draft.readyProbe.trim();
 	const timeout = draft.readyProbeTimeout.trim();
-	if (explicit) {
-		return {
-			workerUser: draft.workspaceUser ? "workspace" : "ao-worker",
-			reuseExistingCheckout: draft.workspaceUser && draft.reuseCheckout,
-			workingDirectory: draft.workspaceUser ? workingDirectory : "",
-			protectSecretFiles: draft.protectSecretFiles,
-			readyProbe: probe,
-			readyProbeTimeoutSeconds: probe !== "" && timeout !== "" ? Number(timeout) : 0,
-		};
-	}
-	const fields: Partial<CloudCpPutOrgCoderConfigRequest> = {};
-	if (draft.workspaceUser) {
-		fields.workerUser = "workspace";
-		fields.reuseExistingCheckout = draft.reuseCheckout;
-		if (workingDirectory !== "") fields.workingDirectory = workingDirectory;
-	}
-	if (!draft.protectSecretFiles) fields.protectSecretFiles = false;
-	if (probe !== "") {
-		fields.readyProbe = probe;
-		if (timeout !== "") fields.readyProbeTimeoutSeconds = Number(timeout);
+	const fields: Partial<CloudCpPutOrgCoderConfigRequest> = {
+		workerUser: draft.workspaceUser ? "workspace" : "ao-worker",
+		reuseExistingCheckout: draft.workspaceUser && draft.reuseCheckout,
+		readyProbe: probe,
+		readyProbeTimeoutSeconds: probe !== "" && timeout !== "" ? Number(timeout) : 0,
+	};
+	if (currentControlPlane) {
+		fields.workingDirectory = draft.workspaceUser ? draft.workingDirectory.trim() : "";
+		fields.protectSecretFiles = draft.protectSecretFiles;
 	}
 	return fields;
 }

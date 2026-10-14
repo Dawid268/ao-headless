@@ -8,11 +8,13 @@ const mocks = vi.hoisted(() => ({
 	get: vi.fn(),
 	patch: vi.fn(),
 	defaultProvider: "coder",
+	org: { id: "org-1", role: "admin" } as { id: string; role?: string },
 }));
 vi.mock("../hooks/useCloudCp", () => ({
 	useCloudCp: () => ({ client: { getProject: mocks.get, updateProjectSettings: mocks.patch }, ready: true, baseUrl: "https://cloud.test" }),
 }));
 vi.mock("../hooks/useCloudOffering", () => ({ useCloudOffering: () => ({ defaultProvider: mocks.defaultProvider }) }));
+vi.mock("../hooks/useCloudOrg", () => ({ useCloudOrg: () => ({ org: mocks.org }) }));
 
 const project = (config: Record<string, unknown>) => ({
 	id: "p", orgId: "org-1", displayName: "alice", repositoryUrl: "https://github.com/acme/alice", defaultBranch: "main",
@@ -27,6 +29,7 @@ const stored = {
 
 beforeEach(() => {
 	mocks.defaultProvider = "coder";
+	mocks.org = { id: "org-1", role: "admin" };
 	mocks.get.mockReset().mockResolvedValue({ project: project(stored) });
 	mocks.patch.mockReset().mockImplementation((_org: string, _id: string, body: { config: Record<string, unknown> }) =>
 		Promise.resolve({ project: project({ ...stored, ...body.config }) }));
@@ -87,4 +90,16 @@ it("reports unsaved edits as dirty without the autosave Saving state, and lists 
 	expect(screen.getByText("$AO_SESSION_ID")).toBeInTheDocument();
 	expect(screen.getByText(/a unique ID for the session/)).toBeInTheDocument();
 	expect(screen.queryByText(/AO_SOURCE_TREE_PATH/)).toBeNull();
+});
+
+// Setup and Cleanup run in every member's later sessions, so a member sees
+// them but only an owner or admin can change them.
+it("shows a member the scripts read-only", async () => {
+	mocks.org = { id: "org-1", role: "member" };
+	renderScripts();
+	expect(await screen.findByLabelText("Step 1")).toHaveValue("npm ci");
+	expect(screen.getByLabelText("Step 1")).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Add step" })).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+	expect(screen.getByText("Only organization owners and admins can change these scripts.")).toBeInTheDocument();
 });

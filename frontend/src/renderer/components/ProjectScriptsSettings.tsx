@@ -7,9 +7,10 @@ import { cloudProjectsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQ
 import { clearTerminateSessionState } from "../hooks/useTerminateSession";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudOffering } from "../hooks/useCloudOffering";
+import { useCloudOrg } from "../hooks/useCloudOrg";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import type { CloudCpProject } from "../lib/cloud-cp";
-import { CODER_PROVIDER, projectSandboxProvider } from "../lib/cloud-offering";
+import { CODER_PROVIDER, canManageBilling, projectSandboxProvider } from "../lib/cloud-offering";
 import { cloudProjectSettingsQueryKey } from "./CloudProjectSettingsForm";
 import type { ProjectSettingsSaveState } from "./ProjectSettingsForm";
 import { Button } from "./ui/button";
@@ -64,6 +65,11 @@ export function CloudProjectScriptsSettings({ projectId, cloudOrgId, onSaveState
 	const queryClient = useQueryClient();
 	const { client, ready, baseUrl } = useCloudCp();
 	const offering = useCloudOffering();
+	const { org } = useCloudOrg();
+	// Setup and Cleanup run in every member's later sessions, so only owners and
+	// admins change them (the control plane enforces it too). A role the
+	// renderer does not know yet leaves the decision to the server.
+	const readOnly = org?.id === cloudOrgId && org.role !== undefined && !canManageBilling(org);
 	const queryKey = cloudProjectSettingsQueryKey(baseUrl, cloudOrgId, projectId);
 	const query = useQuery({
 		queryKey, enabled: ready, retry: false,
@@ -83,7 +89,7 @@ export function CloudProjectScriptsSettings({ projectId, cloudOrgId, onSaveState
 		queryClient.setQueryData(queryKey, response.project);
 	};
 	return <ScriptsEditor key={`${cloudOrgId}/${projectId}`} scratch={false} postCreate={commandsOf(project.config?.postCreate)} preRemove={commandsOf(project.config?.preRemove)}
-		cloud={{ cleanupRuns: projectSandboxProvider(project.config, offering) === CODER_PROVIDER }}
+		cloud={{ cleanupRuns: projectSandboxProvider(project.config, offering) === CODER_PROVIDER, readOnly }}
 		save={save} onSaveState={onSaveState} onSaved={() => { void queryClient.invalidateQueries({ queryKey: cloudProjectsQueryKey }); }} />;
 }
 
@@ -106,7 +112,7 @@ function ScriptsEditor({ projectId, scratch, postCreate, preRemove, cloud, save,
 	postCreate?: string[];
 	preRemove?: string[];
 	/** Set for a Cloud project: the hints describe its session workspace, and cleanupRuns says whether Cleanup runs on its provider. */
-	cloud?: { cleanupRuns: boolean };
+	cloud?: { cleanupRuns: boolean; readOnly?: boolean };
 	save: (scripts: ScriptCommands) => Promise<void>;
 	onSaveState?: (state: ProjectSettingsSaveState) => void;
 	onSaved: () => void;
@@ -154,6 +160,7 @@ function ScriptsEditor({ projectId, scratch, postCreate, preRemove, cloud, save,
 			error: mutation.error instanceof Error ? mutation.error.message : undefined,
 		});
 	}, [dirty, mutation.error, mutation.isError, mutation.isPending, onSaveState, savedAt]);
+	const locked = mutation.isPending || retry.isPending || cloud?.readOnly === true;
 	const updateSteps = (kind: ScriptKind, steps: string[]) => {
 		setDrafts((current) => ({ ...current, [kind]: steps }));
 		setSavedAt(false);
@@ -167,6 +174,7 @@ function ScriptsEditor({ projectId, scratch, postCreate, preRemove, cloud, save,
 			{(["setup", "cleanup"] as const).map((kind) => <TabsContent className="space-y-4" key={kind} value={kind}>
 				{kind === "cleanup" && scratch ? <p className="text-sm text-settings-muted">{t("settings.project.cleanupScratchUnavailable")}</p> : <>
 					{cloud ? <div className="space-y-1 text-pretty text-xs leading-4 text-settings-muted">
+						{cloud.readOnly && <p role="note" className="text-settings-label">{t("settings.project.cloudScriptsAdminOnly")}</p>}
 						<p>{t(kind === "setup" ? "settings.project.cloudSetupHint" : "settings.project.cloudCleanupHint")}</p>
 						<p>{t(kind === "setup" ? "settings.project.cloudSetupShellHint" : "settings.project.cloudCleanupShellHint")}</p>
 						{kind === "cleanup" && !cloud.cleanupRuns && <p role="note" className="text-settings-label">{t("settings.project.cloudCleanupCoderOnly")}</p>}
@@ -188,11 +196,11 @@ function ScriptsEditor({ projectId, scratch, postCreate, preRemove, cloud, save,
 						{drafts[kind].map((step, index) => <div key={index}>
 							<div className="mb-1 flex items-center justify-between">
 								<label className="text-sm font-medium text-settings-label" htmlFor={`${kind}-step-${index}`}>{t(`settings.project.${kind}Step`, { number: index + 1 })}</label>
-								<button aria-label={t(kind === "setup" ? "settings.project.removeSetupStep" : "settings.project.removeCleanupStep", { number: index + 1 })} className="rounded p-1 text-settings-muted hover:text-error focus-visible:ring-2 focus-visible:ring-ring" disabled={mutation.isPending || retry.isPending} onClick={() => updateSteps(kind, drafts[kind].length === 1 ? [""] : drafts[kind].filter((_, i) => i !== index))} type="button"><Trash2 aria-hidden="true" size={16} /></button>
+								<button aria-label={t(kind === "setup" ? "settings.project.removeSetupStep" : "settings.project.removeCleanupStep", { number: index + 1 })} className="rounded p-1 text-settings-muted hover:text-error focus-visible:ring-2 focus-visible:ring-ring" disabled={locked} onClick={() => updateSteps(kind, drafts[kind].length === 1 ? [""] : drafts[kind].filter((_, i) => i !== index))} type="button"><Trash2 aria-hidden="true" size={16} /></button>
 							</div>
-							<textarea className="settings-field-control min-h-24 w-full px-4 py-3 font-mono text-xs" disabled={mutation.isPending || retry.isPending} id={`${kind}-step-${index}`} spellCheck={false} value={step} onChange={(event) => updateSteps(kind, drafts[kind].map((item, i) => i === index ? event.target.value : item))} />
+							<textarea className="settings-field-control min-h-24 w-full px-4 py-3 font-mono text-xs" disabled={locked} id={`${kind}-step-${index}`} spellCheck={false} value={step} onChange={(event) => updateSteps(kind, drafts[kind].map((item, i) => i === index ? event.target.value : item))} />
 						</div>)}
-						<Button className="gap-1.5" disabled={mutation.isPending || retry.isPending} onClick={() => updateSteps(kind, [...drafts[kind], ""])} size="sm" type="button" variant="outline"><Plus aria-hidden="true" size={16} />{t(kind === "setup" ? "settings.project.addSetupStep" : "settings.project.addCleanupStep")}</Button>
+						<Button className="gap-1.5" disabled={locked} onClick={() => updateSteps(kind, [...drafts[kind], ""])} size="sm" type="button" variant="outline"><Plus aria-hidden="true" size={16} />{t(kind === "setup" ? "settings.project.addSetupStep" : "settings.project.addCleanupStep")}</Button>
 					</div>
 					{kind === "cleanup" && !cloud && <div className="space-y-2 border-t border-border pt-4">
 						<p className="text-xs text-settings-muted">{t("settings.project.cleanupRetryHint")}</p>
@@ -209,7 +217,7 @@ function ScriptsEditor({ projectId, scratch, postCreate, preRemove, cloud, save,
 		{mutation.isError && <p role="alert" className="text-sm text-error">{mutation.error instanceof Error ? mutation.error.message : t("settings.project.saveFailed")}</p>}
 		<div className="flex items-center justify-end gap-3 border-t border-border pt-4">
 			<span aria-live="polite" className="min-w-0 truncate text-xs text-settings-muted">{savedAt && !dirty ? t("settings.project.saved") : ""}</span>
-			<Button disabled={!dirty || mutation.isPending || retry.isPending} type="submit">{t("settings.project.saveChanges")}</Button>
+			<Button disabled={!dirty || locked} type="submit">{t("settings.project.saveChanges")}</Button>
 		</div>
 	</form>;
 }

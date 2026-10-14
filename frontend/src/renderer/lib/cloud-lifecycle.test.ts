@@ -75,6 +75,7 @@ describe("cloudStartupProblem", () => {
 			message: setupError.message,
 			code: "project_setup_failed",
 			detail: "missing secret",
+			at: "2026-10-13T18:31:39Z",
 		});
 		// A control-plane startup error still disappears once the worker connects.
 		expect(cloudStartupProblem(withRuntime("running", { startupError }, true))).toBeUndefined();

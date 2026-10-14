@@ -34,6 +34,9 @@ const EMPTY_OPTION_VALUE = "\u0000empty";
  * parameters route (404). The caller decides it is a Coder project with a
  * template; this component only fetches once both ids are present.
  */
+/** The control plane refuses a template option value over 4 KB. */
+const TEMPLATE_PARAMETER_MAX_LENGTH = 4096;
+
 export function CoderTemplateOptions({
 	orgId,
 	templateId,
@@ -67,13 +70,14 @@ export function CoderTemplateOptions({
 	}, [all, onChange, overrides, settled]);
 	const collapsible = parameters.length > COLLAPSE_AFTER;
 	const [open, setOpen] = useState(false);
-	if (isError) {
+	if (isError && parameters.length === 0) {
 		return <p className={onboardingFieldErrorClass} role="alert">{t("coder.templateOptions.loadFailed")}</p>;
 	}
 	if (parameters.length === 0) return null;
 	const expanded = !collapsible || open;
 	return (
 		<section className="flex flex-col gap-3 text-sm" aria-label={t("coder.templateOptions.title")} data-testid="coder-template-options">
+			{isError ? <p className={onboardingFieldErrorClass} role="alert">{t("coder.templateOptions.checkFailed")}</p> : null}
 			{collapsible ? (
 				<button
 					type="button"
@@ -229,6 +233,7 @@ function TemplateParameterField({
 				id={id}
 				type={parameter.type === "number" ? "number" : "text"}
 				inputMode={parameter.type === "number" ? "decimal" : undefined}
+				maxLength={TEMPLATE_PARAMETER_MAX_LENGTH}
 				value={value}
 				disabled={disabled}
 				spellCheck={false}
@@ -273,6 +278,7 @@ function ListTextInput({
 		<Input
 			id={id}
 			value={text}
+			maxLength={TEMPLATE_PARAMETER_MAX_LENGTH}
 			disabled={disabled}
 			spellCheck={false}
 			autoComplete="off"

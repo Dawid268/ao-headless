@@ -31,6 +31,8 @@ vi.mock("../../hooks/useCoderTemplates", () => ({ useCoderTemplates: () => mocks
 const INVALID_WORKING_DIRECTORY = "Enter a path that starts with /, ~/ or $HOME/ and names a folder below it, without . or .. segments. {repo} is the only placeholder.";
 
 const savedConfig = { baseUrl: "https://coder.test", owner: "me", defaultTemplateId: "t-1", tokenSet: true };
+// A control plane that knows every Workspace setup field reports protectSecretFiles.
+const currentConfig = { ...savedConfig, protectSecretFiles: true };
 
 function renderSection() {
 	render(
@@ -107,7 +109,7 @@ describe("CoderSettingsSection dev environment", () => {
 
 	it("shows the workspace setup for a saved connection", () => {
 		mocks.config.data = {
-			...savedConfig, workerUser: "workspace", reuseExistingCheckout: true, workingDirectory: "~/work/{repo}",
+			...currentConfig, workerUser: "workspace", reuseExistingCheckout: true, workingDirectory: "~/work/{repo}",
 			readyProbe: "grep -q '^Ready' ~/.bootstrap-status", readyProbeTimeoutSeconds: 600,
 		};
 		renderSection();
@@ -126,14 +128,14 @@ describe("CoderSettingsSection dev environment", () => {
 	});
 
 	it("hides the workspace setup until a connection is saved", () => {
-		mocks.config.data = { ...savedConfig, tokenSet: false };
+		mocks.config.data = { ...currentConfig, tokenSet: false };
 		renderSection();
 		expect(screen.queryByText("Workspace setup")).toBeNull();
 		expect(screen.queryByRole("switch", { name: "Run the agent as the workspace user" })).toBeNull();
 	});
 
 	it("enables checkout reuse and the working directory with the workspace user", async () => {
-		mocks.config.data = savedConfig;
+		mocks.config.data = currentConfig;
 		const user = userEvent.setup();
 		renderSection();
 		const reuse = screen.getByRole("switch", { name: "Use the template's existing checkout" });
@@ -157,11 +159,14 @@ describe("CoderSettingsSection dev environment", () => {
 			workerUser: "workspace",
 			reuseExistingCheckout: true,
 			workingDirectory: "~/work/{repo}",
+			protectSecretFiles: true,
+			readyProbe: "",
+			readyProbeTimeoutSeconds: 0,
 		});
 	});
 
 	it("validates the working directory and the ready check timeout", async () => {
-		mocks.config.data = { ...savedConfig, workerUser: "workspace" };
+		mocks.config.data = { ...currentConfig, workerUser: "workspace" };
 		const user = userEvent.setup();
 		renderSection();
 		const save = screen.getByRole("button", { name: "Save and fetch templates" });
@@ -190,7 +195,7 @@ describe("CoderSettingsSection dev environment", () => {
 
 	it("saves new workspace setup fields and keeps the stored ones", async () => {
 		mocks.config.data = {
-			...savedConfig, templateId: "t-1", startupTimeoutSeconds: 1800,
+			...currentConfig, templateId: "t-1", startupTimeoutSeconds: 1800,
 			workerUser: "workspace", reuseExistingCheckout: false, workingDirectory: "~/work/{repo}",
 			readyProbe: "test -f ~/.ready",
 		};
@@ -216,7 +221,7 @@ describe("CoderSettingsSection dev environment", () => {
 
 	it("keeps the controls read-only for an org member", () => {
 		mocks.org.value = { id: "org-1", role: "member" };
-		mocks.config.data = savedConfig;
+		mocks.config.data = currentConfig;
 		renderSection();
 		expect(screen.getByText("Only organization owners and admins can change these settings.")).toBeInTheDocument();
 		expect(screen.getByRole("switch", { name: "Run the agent as the workspace user" })).toBeDisabled();
@@ -225,7 +230,7 @@ describe("CoderSettingsSection dev environment", () => {
 
 	it("keeps the stored dev-environment settings when a new token is saved", async () => {
 		mocks.config.data = {
-			...savedConfig, templateId: "t-1", parameters: { region: "eu" }, startupTimeoutSeconds: 1800,
+			...currentConfig, templateId: "t-1", parameters: { region: "eu" }, startupTimeoutSeconds: 1800,
 			workerUser: "workspace", reuseExistingCheckout: false,
 			readyProbe: "grep -q '^Ready' ~/.bootstrap-status", readyProbeTimeoutSeconds: 600,
 		};
@@ -243,6 +248,8 @@ describe("CoderSettingsSection dev environment", () => {
 			// Carried through unchanged: a token rotation must not reset the workspace setup.
 			workerUser: "workspace",
 			reuseExistingCheckout: false,
+			workingDirectory: "",
+			protectSecretFiles: true,
 			readyProbe: "grep -q '^Ready' ~/.bootstrap-status",
 			readyProbeTimeoutSeconds: 600,
 		});
@@ -252,7 +259,7 @@ describe("CoderSettingsSection dev environment", () => {
 		// A control plane that reports protectSecretFiles knows every field and keeps
 		// the stored value of any field left out, so the save sends them all.
 		mocks.config.data = {
-			...savedConfig, templateId: "t-1", protectSecretFiles: true,
+			...currentConfig, templateId: "t-1",
 			workerUser: "workspace", reuseExistingCheckout: false, workingDirectory: "~/work/{repo}",
 			readyProbe: "grep -q '^Ready' ~/.bootstrap-status", readyProbeTimeoutSeconds: 600,
 		};
@@ -283,6 +290,31 @@ describe("CoderSettingsSection dev environment", () => {
 			workingDirectory: "",
 			readyProbe: "",
 		}));
+	});
+
+	it("hides the newer fields and still clears the older ones on an older control plane", async () => {
+		// An older control plane does not report protectSecretFiles and rejects
+		// workingDirectory and protectSecretFiles; it knows the other fields.
+		mocks.config.data = {
+			...savedConfig, workerUser: "workspace", reuseExistingCheckout: false,
+			readyProbe: "grep -q '^Ready' ~/.bootstrap-status", readyProbeTimeoutSeconds: 600,
+		};
+		const user = userEvent.setup();
+		renderSection();
+		expect(screen.queryByRole("textbox", { name: "Working directory" })).toBeNull();
+		expect(screen.queryByRole("switch", { name: "Keep the agent out of secret files (.env)" })).toBeNull();
+		await user.clear(screen.getByRole("textbox", { name: "Workspace ready check" }));
+		await user.click(screen.getByRole("button", { name: "Save and fetch templates" }));
+		await waitFor(() => expect(mocks.putOrgCoderConfig).toHaveBeenCalledTimes(1));
+		expect(mocks.putOrgCoderConfig).toHaveBeenCalledWith("org-1", {
+			baseUrl: "https://coder.test",
+			token: undefined,
+			templateId: "t-1",
+			workerUser: "workspace",
+			reuseExistingCheckout: false,
+			readyProbe: "",
+			readyProbeTimeoutSeconds: 0,
+		});
 	});
 
 	it("sends no dev-environment fields while they are at their defaults", async () => {

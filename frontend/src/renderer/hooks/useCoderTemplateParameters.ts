@@ -15,7 +15,7 @@
  */
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloudCpError } from "../lib/cloud-cp";
 import type { CloudCpCoderTemplateParameter } from "../lib/cloud-cp/types";
 import { useCloudCp } from "./useCloudCp";
@@ -85,8 +85,14 @@ export function useCoderTemplateParameters(
 			}
 		},
 	});
+	// The last list that loaded for this template, so an evaluation that fails
+	// (a value the control plane refuses) keeps the form editable instead of
+	// replacing every field with an error.
+	const lastLoaded = useRef<{ id: string; parameters: CloudCpCoderTemplateParameter[] } | null>(null);
+	if (query.data && !query.isPlaceholderData) lastLoaded.current = { id, parameters: query.data };
+	const fallback = lastLoaded.current?.id === id ? lastLoaded.current.parameters : undefined;
 	return {
-		parameters: query.data ?? [],
+		parameters: query.data ?? fallback ?? [],
 		isLoading: query.isLoading,
 		isError: query.isError,
 		settled: query.isSuccess && !query.isPlaceholderData && !query.isFetching && (!evaluate || debounced.key === currentKey),

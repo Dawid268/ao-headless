@@ -16,14 +16,15 @@ vi.mock("../hooks/useCloudCp", () => ({
 function mount(problem: Parameters<typeof CloudSessionStartupError>[0]["problem"], coderWorkspaceUrl?: string) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	const invalidate = vi.spyOn(client, "invalidateQueries");
-	render(
+	const view = (next: typeof problem) => (
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-				<CloudSessionStartupError coderWorkspaceUrl={coderWorkspaceUrl} orgId="org-1" sessionId="sess-1" problem={problem} />
+				<CloudSessionStartupError coderWorkspaceUrl={coderWorkspaceUrl} orgId="org-1" sessionId="sess-1" problem={next} />
 			</TooltipProvider>
-		</QueryClientProvider>,
+		</QueryClientProvider>
 	);
-	return { invalidate };
+	const { rerender } = render(view(problem));
+	return { invalidate, rerender: (next: typeof problem) => rerender(view(next)) };
 }
 
 describe("CloudSessionStartupError", () => {
@@ -45,6 +46,22 @@ describe("CloudSessionStartupError", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 		expect(requestWorkspaceCheckout).toHaveBeenCalledWith("org-1", "sess-1");
 		expect(retrySessionStartup).not.toHaveBeenCalled();
+	});
+
+	it("shows the workspace being prepared again after Retry until a newer failure arrives", async () => {
+		requestWorkspaceCheckout.mockResolvedValue({ requested: true });
+		const failure = { phase: "failed" as const, code: "project_setup_failed", message: "Setup step 1 failed: exit status 3.", detail: "missing secret", at: "2026-10-14T10:00:00Z" };
+		const { rerender } = mount(failure);
+		await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(await screen.findByText(/Preparing the workspace again/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+		expect(screen.queryByTestId("cloud-session-startup-detail")).not.toBeInTheDocument();
+
+		// The same step failed again: the new failure and its output show, and Retry is back.
+		rerender({ ...failure, detail: "still missing", at: "2026-10-14T10:05:00Z" });
+		expect(screen.getByText("Setup step 1 failed: exit status 3.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+		expect(screen.getByTestId("cloud-session-startup-detail")).toHaveTextContent("still missing");
 	});
 
 	it("names a repository checkout failure", () => {

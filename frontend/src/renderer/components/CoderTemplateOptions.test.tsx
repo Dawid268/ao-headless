@@ -245,4 +245,21 @@ describe("CoderTemplateOptions with dynamic parameters", () => {
 		renderOptions({ region: "mars" });
 		expect(await screen.findByRole("alert")).toHaveTextContent("Value must be a valid option");
 	});
+
+	it("keeps the fields editable when the control plane refuses a value", async () => {
+		const evaluate = mocks.evaluateCoderTemplateParameters.getMockImplementation()!;
+		mocks.evaluateCoderTemplateParameters.mockImplementation(async (org: string, tpl: string, values: Record<string, string>) => {
+			if ((values.region ?? "").length > 10) throw new CloudCpError("template parameter value too long", { status: 422 });
+			return evaluate(org, tpl, values);
+		});
+		renderOptions();
+		const field = await screen.findByRole("textbox", { name: "Region" });
+		expect(field).toHaveAttribute("maxLength", "4096");
+		await userEvent.type(field, "much-too-long");
+		expect(await screen.findByRole("alert", {}, { timeout: 4000 })).toHaveTextContent("Change the last value you edited");
+		// The value can still be fixed.
+		await userEvent.clear(screen.getByRole("textbox", { name: "Region" }));
+		await userEvent.type(screen.getByRole("textbox", { name: "Region" }), "us");
+		await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 4000 });
+	});
 });
