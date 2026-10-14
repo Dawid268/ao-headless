@@ -64,10 +64,10 @@ func TestTestVerbAllowList(t *testing.T) {
 		}
 	}
 	svc, _ := testLeg(t, passingTest)
-	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "head", "", []string{"sh", "-c", "echo hi"}, ""))
-	is(t, "TESTING_LEG_INVALID")(svc.Test(ctx, "s1", "main", "", []string{"go", "test"}, ""))
-	is(t, "TESTING_TEST_DIR_INVALID")(svc.Test(ctx, "s1", "head", "../escape", []string{"go", "test"}, ""))
-	is(t, "TESTING_TEST_DIR_INVALID")(svc.Test(ctx, "s1", "head", "nope", []string{"go", "test"}, ""))
+	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "head", "", []string{"sh", "-c", "echo hi"}, "", 0))
+	is(t, "TESTING_LEG_INVALID")(svc.Test(ctx, "s1", "main", "", []string{"go", "test"}, "", 0))
+	is(t, "TESTING_TEST_DIR_INVALID")(svc.Test(ctx, "s1", "head", "../escape", []string{"go", "test"}, "", 0))
+	is(t, "TESTING_TEST_DIR_INVALID")(svc.Test(ctx, "s1", "head", "nope", []string{"go", "test"}, "", 0))
 }
 
 func TestTestVerbRefusesAnUnpreparedLeg(t *testing.T) {
@@ -75,7 +75,7 @@ func TestTestVerbRefusesAnUnpreparedLeg(t *testing.T) {
 	if _, err := svc.Intake(ctx, "s1", prURL); err != nil {
 		t.Fatal(err)
 	}
-	is(t, "TESTING_LEG_NOT_PREPARED")(svc.Test(ctx, "s1", "head", "", []string{"go", "test"}, ""))
+	is(t, "TESTING_LEG_NOT_PREPARED")(svc.Test(ctx, "s1", "head", "", []string{"go", "test"}, "", 0))
 }
 
 func TestTestVerbRunsInTheCheckoutAndRecordsAReceipt(t *testing.T) {
@@ -89,7 +89,7 @@ func TestTestVerbRunsInTheCheckoutAndRecordsAReceipt(t *testing.T) {
 		if _, err := svc.CheckStart(ctx, "s1", c.ID); err != nil {
 			t.Fatal(err)
 		}
-		res, err := svc.Test(ctx, "s1", leg, "", []string{"go", "test", "./pkg/", "-count=1"}, "")
+		res, err := svc.Test(ctx, "s1", leg, "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0)
 		if err != nil || res.Exit != 0 || res.TimedOut || res.Summary != "1 ok, 0 FAIL, 0 --- FAIL" || res.Ran == nil || *res.Ran != 1 || res.NotBuilt || !strings.Contains(res.Output, "ok  \tfixture/pkg") {
 			t.Fatalf("%s: %+v err %v", leg, res, err)
 		}
@@ -98,7 +98,7 @@ func TestTestVerbRunsInTheCheckoutAndRecordsAReceipt(t *testing.T) {
 			t.Fatalf("receipt %s: %q err %v", res.Receipt, full, err)
 		}
 		// A .txt receipt satisfies the check verb.
-		if got, err := svc.CheckEnd(ctx, "s1", c.ID, CheckPass, "all green"); err != nil || got.Receipts[0].OutputPath != res.Receipt || got.Receipts[0].AfterPath != "" {
+		if got, err := svc.CheckEnd(ctx, "s1", c.ID, CheckPass, "all green", false); err != nil || got.Receipts[0].OutputPath != res.Receipt || got.Receipts[0].AfterPath != "" {
 			t.Fatalf("check end: %+v err %v", got, err)
 		} else if r := got.Receipts[0]; r.Exit == nil || *r.Exit != 0 || r.Ran == nil || *r.Ran != 1 || r.NotBuilt {
 			t.Fatalf("the receipt does not say the run exited 0 and counted one test: %+v", r)
@@ -166,7 +166,7 @@ func TestEnv(t *testing.T) {
 	}
 }
 `)
-	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "")
+	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0)
 	if err != nil || res.Exit != 0 {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -221,7 +221,7 @@ import "testing"
 
 func TestBad(t *testing.T) { t.Fatal("boom") }
 `)
-	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "")
+	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0)
 	if err != nil || res.Exit != 1 || res.Summary != "0 ok, 1 FAIL, 1 --- FAIL" || res.Ran == nil || *res.Ran != 1 || res.NotBuilt || !strings.Contains(res.Output, "boom") {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -266,6 +266,15 @@ func TestTestVerbTimedOutOnlyWhenKilled(t *testing.T) {
 	if err != nil || !res.TimedOut || res.Exit != -1 {
 		t.Fatalf("killed command: %+v err %v", res, err)
 	}
+	r := Receipt{Seq: 1, Action: "test", OutputPath: file, Exit: &res.Exit, Ran: ranN(1), Failing: true}
+	if r.failedTest() {
+		t.Fatal("a timed-out test counts as a failed test")
+	}
+	_, _, err = checkEvidence(Check{Receipts: []Receipt{r}}, CheckFail, "timed out")
+	is(t, "TESTING_CHECK_EVIDENCE")(nil, err)
+	if !strings.Contains(err.Error(), "the test timed out or the command was missing; raise --minutes or end it skipped") {
+		t.Fatalf("timeout refusal: %v", err)
+	}
 }
 
 func TestTestVerbTimeCapKillsTheProcessGroup(t *testing.T) {
@@ -288,7 +297,7 @@ func TestSleep(t *testing.T) {
 `)
 	svc.testCap = 2 * time.Second
 	t0 := time.Now()
-	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "")
+	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0)
 	if err != nil || !res.TimedOut || res.Exit == 0 || time.Since(t0) > 30*time.Second {
 		t.Fatalf("%+v err %v after %s", res, err, time.Since(t0))
 	}
@@ -321,15 +330,15 @@ func TestTestVerbIsLimitedPerLeg(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runDir, "actions.jsonl"), []byte(lines), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	is(t, "TESTING_TEST_LIMIT")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, ""))
-	if res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, ""); err != nil || res.Seq != maxTests+1 {
+	is(t, "TESTING_TEST_LIMIT")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0))
+	if res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0); err != nil || res.Seq != maxTests+1 {
 		t.Fatalf("base leg is counted on its own: %+v err %v", res, err)
 	}
 }
 
 func TestTestVerbDoesNotCountRunsThatRanNothing(t *testing.T) {
 	svc, runDir := testLeg(t, "package pkg\n") // a test file with no tests: go test exits 0 with "[no tests to run]"
-	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "")
+	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0)
 	if err != nil || res.Exit != 0 || res.Ran == nil || *res.Ran != 0 || res.Summary != "1 ok, 0 FAIL, 0 --- FAIL" {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -347,9 +356,9 @@ func TestTestVerbDoesNotCountRunsThatRanNothing(t *testing.T) {
 		}
 	}
 	seed(maxTests-1, 4)
-	is(t, "")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, ""))
+	is(t, "")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0))
 	seed(maxTests, 4)
-	is(t, "TESTING_TEST_LIMIT")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, ""))
+	is(t, "TESTING_TEST_LIMIT")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 0))
 }
 
 func TestTestsRan(t *testing.T) {
@@ -419,7 +428,7 @@ func TestTestVerbSmoke(t *testing.T) {
 	svc, now := newSvc(t)
 	run := Run{ID: "run_smoke", SessionID: "smoke", State: RunPrepared, Deadline: now.Add(RunBudget), Legs: []Leg{{Name: "head", Worktree: checkout, State: "prepared"}}}
 	is(t, "")(nil, svc.store.Save(run))
-	res, err := svc.Test(ctx, "smoke", "head", "backend", []string{"go", "test", "./internal/cli/", "-run", "Paste", "-count=1"}, "")
+	res, err := svc.Test(ctx, "smoke", "head", "backend", []string{"go", "test", "./internal/cli/", "-run", "Paste", "-count=1"}, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +559,7 @@ func TestTestVerbWithTestsFromRunsThePRsTestsOnBase(t *testing.T) {
 	if _, err := svc.CheckStart(ctx, "s1", c.ID); err != nil {
 		t.Fatal(err)
 	}
-	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1", "-v"}, "head")
+	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1", "-v"}, "head", 0)
 	if err != nil || res.Exit == 0 || res.Summary != "0 ok, 1 FAIL, 1 --- FAIL" || !strings.Contains(res.Output, "Add(1, 1) = 0") {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -585,7 +594,7 @@ func TestTestVerbWithTestsFromRunsThePRsTestsOnBase(t *testing.T) {
 
 func TestTestVerbWithTestsFromPassesWhenMainAlreadyHasTheFix(t *testing.T) {
 	svc, runDir, base := headTestsRun(t, "package pkg\n\nimport \"testing\"\n\nfunc TestFix(t *testing.T) {}\n", "pkg/fix_test.go")
-	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head")
+	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head", 0)
 	if err != nil || res.Exit != 0 || res.Summary != "1 ok, 0 FAIL, 0 --- FAIL" {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -594,7 +603,7 @@ func TestTestVerbWithTestsFromPassesWhenMainAlreadyHasTheFix(t *testing.T) {
 
 func TestTestVerbWithTestsFromReportsTestFilesThatDoNotCompile(t *testing.T) {
 	svc, runDir, base := headTestsRun(t, "package pkg\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) { NewThing() }\n", "pkg/fix_test.go")
-	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head")
+	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head", 0)
 	if err != nil || res.Exit == 0 || res.Summary != "1 test file from the PR does not compile against main" || !res.NotBuilt || res.Ran == nil || *res.Ran != 0 {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -613,7 +622,7 @@ func TestTestVerbWithTestsFromReportsTestFilesThatDoNotCompile(t *testing.T) {
 
 func TestTestVerbWithTestsFromRemovesTheWorktreeWhenSetupFails(t *testing.T) {
 	svc, runDir, base := headTestsRun(t, fixTest, "pkg/fix_test.go", "pkg/gone_test.go") // gone_test.go is not in the head checkout
-	is(t, "TESTING_TEST_FAILED")(svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head"))
+	is(t, "TESTING_TEST_FAILED")(svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head", 0))
 	assertScratchGone(t, runDir, base)
 
 	svc, runDir, base = headTestsRun(t, fixTest, "pkg/fix_test.go") // a bad --dir in the base commit
@@ -626,7 +635,7 @@ func TestTestVerbWithTestsFromRemovesTheWorktreeWhenSetupFails(t *testing.T) {
 func TestTestVerbWithTestsFromReplacesALeftoverWorktree(t *testing.T) {
 	svc, runDir, base := headTestsRun(t, fixTest, "pkg/fix_test.go")
 	gitIn(t, base, "worktree", "add", "--detach", filepath.Join(runDir, "base-tests"), "HEAD") // a daemon died mid-run
-	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head")
+	res, err := svc.Test(ctx, "s1", "base", "", []string{"go", "test", "./pkg/", "-count=1"}, "head", 0)
 	if err != nil || res.Exit == 0 {
 		t.Fatalf("%+v err %v", res, err)
 	}
@@ -671,13 +680,13 @@ func TestTestVerbWithTestsFromLinksNodeModulesAndLeavesThemAlone(t *testing.T) {
 func TestTestVerbWithTestsFromRefusals(t *testing.T) {
 	svc, runDir, base := headTestsRun(t, fixTest, "pkg/fix_test.go")
 	argv := []string{"go", "test", "./pkg/", "-count=1"}
-	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "head", "", argv, "head"))
-	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "base", "", argv, "base"))
-	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "base", "", []string{"sh", "-c", "echo hi"}, "head"))
+	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "head", "", argv, "head", 0))
+	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "base", "", argv, "base", 0))
+	is(t, "TESTING_TEST_NOT_ALLOWED")(svc.Test(ctx, "s1", "base", "", []string{"sh", "-c", "echo hi"}, "head", 0))
 	if err := os.WriteFile(filepath.Join(runDir, "files.txt"), []byte("M\t1\t1\tpkg/pkg.go\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.Test(ctx, "s1", "base", "", argv, "head")
+	_, err := svc.Test(ctx, "s1", "base", "", argv, "head", 0)
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Code != "TESTING_TEST_NOT_ALLOWED" || !strings.Contains(e.Message, "the PR adds no test files") {
 		t.Fatalf("err = %v", err)
@@ -685,7 +694,7 @@ func TestTestVerbWithTestsFromRefusals(t *testing.T) {
 	if err := os.Remove(filepath.Join(runDir, "files.txt")); err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Test(ctx, "s1", "base", "", argv, "head")
+	_, err = svc.Test(ctx, "s1", "base", "", argv, "head", 0)
 	if !errors.As(err, &e) || e.Code != "TESTING_TEST_NOT_ALLOWED" || !strings.Contains(e.Message, "no files.txt") {
 		t.Fatalf("err = %v", err)
 	}
@@ -718,7 +727,7 @@ func TestTestVerbWithPRTestsSmoke(t *testing.T) {
 	if err := svc.store.WriteFile("run_smoke", "diff.patch", data); err != nil {
 		t.Fatal(err)
 	}
-	res, err := svc.Test(ctx, "smoke", "base", "backend", []string{"go", "test", "./internal/cli/", "-run", "Paste|Report", "-count=1"}, "head")
+	res, err := svc.Test(ctx, "smoke", "base", "backend", []string{"go", "test", "./internal/cli/", "-run", "Paste|Report", "-count=1"}, "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,5 +739,25 @@ func TestTestVerbWithPRTestsSmoke(t *testing.T) {
 	}
 	if res.Exit == 0 {
 		t.Errorf("the PR's tests passed on main (exit 0); expected a failure")
+	}
+}
+
+func TestTestVerbMinutesReplacesTheDefaultCap(t *testing.T) {
+	svc, _ := testLeg(t, `package pkg
+
+import (
+	"testing"
+	"time"
+)
+
+func TestSlowButFine(t *testing.T) { time.Sleep(3 * time.Second) }
+`)
+	for _, minutes := range []int{-1, MaxTestMin + 1} {
+		is(t, "TESTING_TEST_MINUTES_INVALID")(svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/"}, "", minutes))
+	}
+	svc.testCap = time.Second
+	res, err := svc.Test(ctx, "s1", "head", "", []string{"go", "test", "./pkg/", "-count=1"}, "", 1)
+	if err != nil || res.TimedOut || res.Exit != 0 {
+		t.Fatalf("--minutes 1 should outlast a 1s default cap: %+v err %v", res, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -19,6 +20,53 @@ import (
 	"unicode"
 	"unicode/utf8"
 )
+
+// commentDoc is one GitHub comment and its local draft. The first document is
+// the only one that carries the run marker; the other documents are addressed
+// by the ids recorded alongside the run's drafts.
+type commentDoc struct {
+	Name      string
+	Body      string
+	Marker    bool
+	ImageFile string
+	ClipFile  string
+	Number    int
+	Fixed     bool
+	CommentID int64
+}
+
+type commentManifestEntry struct {
+	Name   string
+	File   string
+	Number int
+	Fixed  bool
+	ID     int64
+}
+
+// PostedComment is the durable mapping from a check name to its PR comment.
+// Number is the bug number used in the rendered body; Fixed keeps reruns from
+// treating a resolved comment as a new bug.
+type PostedComment struct {
+	Name   string `json:"name"`
+	ID     int64  `json:"id,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Number int    `json:"number,omitempty"`
+	Fixed  bool   `json:"fixed,omitempty"`
+}
+
+// bugComment is a head-side failure for which main either passed, has no
+// feature, or has no result. A base failure is deliberately excluded: it is
+// not evidence that this PR introduced the failure.
+type bugComment struct {
+	Check     Check
+	Base      *Check
+	Number    int
+	Total     int
+	ImageFile string
+	ImageURL  string
+	ClipFile  string
+	ClipURL   string
+}
 
 // Comment modes, set on the run by intake.
 const (
@@ -40,6 +88,228 @@ var commentFits = []commentFit{{80, 300, 12, 600}, {80, 150, 6, 300}, {80, 80, 3
 
 func commentMarker(repo string, n int) string {
 	return fmt.Sprintf("<!-- litmus:comment %s#%d -->", repo, n)
+}
+
+// litmusCommentMarker is the marker used by the per-bug comment set. The
+// repository-qualified form above is retained for comments made by older
+// Litmus runs and is accepted when reading them.
+func litmusCommentMarker() string { return "<!-- litmus:comment -->" }
+
+// failingBugComments returns only head checks that can be attributed to this
+// PR. A matching base failure or partial result is a pre-existing problem and
+// therefore stays in the ordinary run summary.
+func failingBugComments(checks []Check) []bugComment {
+	var out []bugComment
+	for _, c := range checks {
+		if c.onLeg() != "head" || (c.State != CheckFail && c.State != CheckAbsent) {
+			continue
+		}
+		base := baseTwinCheck(checks, c)
+		if base == nil || (base.State != CheckPass && base.State != CheckAbsent) {
+			continue
+		}
+		out = append(out, bugComment{Check: c, Base: base})
+	}
+	for i := range out {
+		out[i].Number, out[i].Total = i+1, len(out)
+	}
+	return out
+}
+
+func postedCommentFor(comments []PostedComment, name string) (PostedComment, bool) {
+	for _, c := range comments {
+		if strings.EqualFold(strings.TrimSpace(c.Name), strings.TrimSpace(name)) {
+			return c, true
+		}
+	}
+	return PostedComment{}, false
+}
+
+func (s *Service) previousComments(run Run) []PostedComment {
+	current := slices.Clone(run.Comments)
+	runs, err := s.store.List()
+	if err != nil {
+		return current
+	}
+	for i := len(runs) - 1; i >= 0; i-- {
+		other := runs[i]
+		if other.ID == run.ID || other.Repo != run.Repo || other.PRNumber != run.PRNumber || len(other.Comments) == 0 {
+			continue
+		}
+		return mergeCommentMappings(current, other.Comments)
+	}
+	return current
+}
+
+func (s *Service) numberBugComments(run Run, bugs []bugComment) []PostedComment {
+	previous := s.previousComments(run)
+	used := map[int]bool{}
+	next := 1
+	for _, old := range previous {
+		if strings.EqualFold(strings.TrimSpace(old.Name), "summary") {
+			continue
+		}
+		if old.Number > 0 {
+			used[old.Number] = true
+			next = max(next, old.Number+1)
+		}
+	}
+	for i := range bugs {
+		if old, ok := postedCommentFor(previous, bugs[i].Check.Name); ok && old.Number > 0 {
+			bugs[i].Number = old.Number
+			continue
+		}
+		bugs[i].Number = next
+		used[next] = true
+		next++
+	}
+	total := len(bugs)
+	for _, bug := range bugs {
+		total = max(total, bug.Number)
+	}
+	for i := range bugs {
+		bugs[i].Total = total
+	}
+	return previous
+}
+
+// baseTwinCheck is the check-name form of baseTwin. It returns nil when main
+// was not repeated, which is still useful evidence for a head-only failure.
+func baseTwinCheck(checks []Check, c Check) *Check {
+	var fallback *Check
+	for i := range checks {
+		b := &checks[i]
+		if b.onLeg() != "base" || !strings.EqualFold(b.Name, c.Name) || !slices.Contains(outcomes, b.State) {
+			continue
+		}
+		if b.State == CheckPass || b.State == CheckAbsent {
+			return b
+		}
+		fallback = b
+	}
+	return fallback
+}
+
+// noteSentences keeps at most four tester sentences. It is intentionally
+// conservative: a short fragment is still useful evidence, but the public
+// comment must never expose engine refs or markdown supplied by the tester.
+func noteSentences(run Run, v Verdict, c Check) string {
+	note := builds(plainTester(c.Note, run, v.Checks), run)
+	note = strings.TrimSpace(note)
+	if note == "" {
+		note = outcomeWords[c.State]
+	}
+	if note == "" {
+		note = plainTester(c.Expect, run, v.Checks)
+	}
+	var parts []string
+	start := 0
+	for _, loc := range sentenceStop.FindAllStringIndex(note, -1) {
+		if p := strings.TrimSpace(note[start:loc[1]]); p != "" {
+			parts = append(parts, p)
+		}
+		start = loc[1]
+		if len(parts) == 4 {
+			break
+		}
+	}
+	if len(parts) < 4 && strings.TrimSpace(note[start:]) != "" {
+		parts = append(parts, strings.TrimSpace(note[start:]))
+	}
+	for i := range parts {
+		parts[i] = plainSentence(parts[i], 280)
+	}
+	return mdText(strings.Join(parts, " "), 1100)
+}
+
+// bugCommentBody is deliberately small enough to leave room for one image
+// and one check recording. Image and clip are repository URLs after evidence
+// publishing, or run-relative files while a draft waits for approval.
+func bugCommentBody(run Run, v Verdict, b bugComment, image, clip string, marker bool) string {
+	parts := []string{fmt.Sprintf("Bug %d of %d:", b.Number, b.Total), noteSentences(run, v, b.Check)}
+	if image != "" {
+		parts = append(parts, "![The base build on the left and the PR build on the right]("+image+")")
+	} else {
+		parts = append(parts, "A comparison image was not available because "+run.baseName()+" had no matching shot.")
+	}
+	if clip != "" {
+		parts = append(parts, "<details><summary>Recording for "+mdText(strings.ReplaceAll(b.Check.Name, "-", " "), 120)+"</summary>\n\n[Watch the check]("+clip+")\n\n</details>")
+	} else {
+		parts = append(parts, "<details><summary>Recording for "+mdText(strings.ReplaceAll(b.Check.Name, "-", " "), 120)+"</summary>\n\nThe check recording was not available.\n\n</details>")
+	}
+	if marker {
+		parts = append(parts, litmusCommentMarker())
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// summaryCommentBody is the compact two-sentence form for a passing run. A
+// partial or skipped check gets its own sentence so a reader can see what was
+// left unfinished without scanning the larger legacy summary.
+func summaryCommentBody(run Run, v Verdict, now time.Time, marker bool) string {
+	var paragraphs []string
+	main := run.baseName()
+	both := slices.ContainsFunc(v.Checks, func(c Check) bool {
+		return c.onLeg() == "base" || slices.ContainsFunc(c.Receipts, func(r Receipt) bool { return r.onLeg() == "base" })
+	})
+	started := len(run.Legs) > 0 || v.Overall != CheckBlocked || slices.ContainsFunc(v.Checks, func(c Check) bool { return len(c.Receipts) > 0 })
+	if started {
+		where := "on the PR build"
+		if both {
+			where += " and on " + main
+		}
+		took := lasted(now.Sub(run.CreatedAt))
+		if run.prepared() {
+			builds, testing := run.buildsAndTesting(now)
+			took = "builds " + lasted(builds) + ", testing " + lasted(testing)
+		}
+		paragraphs = append(paragraphs, fmt.Sprintf("Litmus tried #%d %s (%s).", run.PRNumber, where, took))
+	} else {
+		paragraphs = append(paragraphs, fmt.Sprintf("Litmus could not start on #%d.", run.PRNumber))
+	}
+	tally := count(v.Checks)
+	result := verdictLine(v.Overall, tally, main)
+	if v.Overall == CheckPass && tally.passed > 0 {
+		word := "checks"
+		if tally.passed == 1 {
+			word = "check"
+		}
+		result = fmt.Sprintf("the PR does what it says in the %d %s I finished", tally.passed, word)
+		if tally.testsOnly {
+			result += "; tests only, the app was not opened"
+		}
+	}
+	paragraphs = append(paragraphs, lowerFirst(result)+".")
+	for _, gap := range run.Gaps {
+		if text := plainSentence(gap, 400); text != "" {
+			paragraphs = append(paragraphs, text)
+		}
+	}
+	for _, c := range v.Checks {
+		if c.onLeg() != "head" || (c.State != CheckPartial && c.State != CheckSkipped) {
+			continue
+		}
+		label := lowerLead(mdText(clause(cmp.Or(c.Expect, strings.ReplaceAll(c.Name, "-", " ")), 180), 220))
+		if c.State == CheckSkipped {
+			paragraphs = append(paragraphs, "I could not check that "+label+skipWhy(c.Note)+".")
+		} else {
+			paragraphs = append(paragraphs, "I could only partly check that "+label+skipWhy(c.Note)+".")
+		}
+	}
+	if marker {
+		paragraphs = append(paragraphs, litmusCommentMarker())
+	}
+	return strings.Join(paragraphs, "\n\n")
+}
+
+// fixedCommentBody keeps the marker on the first comment so a later rerun can
+// still find the run, while the visible text is exactly the requested result.
+func fixedCommentBody(run Run, sha string, marker bool) string {
+	body := "Fixed at " + clip(strings.TrimSpace(sha), 80)
+	if marker {
+		body += "\n\n" + litmusCommentMarker()
+	}
+	return body
 }
 
 // mdText makes tester-written text safe for a public comment: one line, clipped, no raw HTML or entities, no
@@ -164,8 +434,8 @@ func subjectLed(note string, run Run) bool {
 
 var compared = regexp.MustCompile(`(?i)\bcompared\b`)
 
-// withoutComparison drops the sentences of a tester's note that say what was or was not compared with the base branch:
-// the comment states that itself. The other sentences stay. Sentences end at . ! ? or ; before a space.
+// withoutComparison drops the sentences of a tester's note that say what was or was not compared with the base branch.
+// plainVerdict applies it only to a check with no result on the base branch, where such a claim would be false. The other sentences stay. Sentences end at . ! ? or ; before a space.
 func withoutComparison(note string, run Run) string {
 	main := regexp.MustCompile(`(?i)\b(?:main|` + regexp.QuoteMeta(run.baseName()) + `)\b`)
 	var kept []string
@@ -194,7 +464,11 @@ var sentenceStop = regexp.MustCompile(`[.!?;](?:\s+|$)`)
 func plainVerdict(run Run, v Verdict) Verdict {
 	checks := slices.Clone(v.Checks)
 	for i := range checks {
-		checks[i].Expect, checks[i].Note = plainTester(checks[i].Expect, run, v.Checks), builds(withoutComparison(plainTester(checks[i].Note, run, v.Checks), run), run)
+		note := plainTester(checks[i].Note, run, v.Checks)
+		if c := checks[i]; c.onLeg() == "head" && slices.Contains([]string{"", string(CheckSkipped)}, baseResult(v.Checks, c)) { // nothing was compared, so a claim that it was is false
+			note = withoutComparison(note, run)
+		}
+		checks[i].Expect, checks[i].Note = plainTester(checks[i].Expect, run, v.Checks), builds(note, run)
 	}
 	if v.Overall == CheckBlocked { // another verdict's reasons begin with a check id and name, which the comment matches on
 		v.Reasons = slices.Clone(v.Reasons)
@@ -312,7 +586,7 @@ func count(checks []Check) (t tally) {
 				t.shown++
 			}
 		}
-		if c.State == CheckFail {
+		if c.State == CheckFail || c.State == CheckAbsent {
 			t.failed++
 		}
 	}
@@ -322,23 +596,32 @@ func count(checks []Check) (t tally) {
 // verdictLine is the sentence after "Result:", from the overall verdict and what the checks showed.
 func verdictLine(overall CheckState, t tally, main string) string {
 	left := t.notCompared + t.partial + t.unreached
-	fine := "fine to merge from my side"
-	if t.testsOnly {
-		fine = "tests only, the app was not opened; fine to merge from my side as far as the tests go"
-	}
 	switch {
 	case overall == CheckBlocked:
 		return "could not test this one"
-	case overall == CheckFail || t.failed > 0:
+	case overall == CheckFail:
 		return "something broke; do not merge yet"
+	case overall == CheckPartial && t.failed > 0:
+		return "the PR build and " + main + " both fail; I could not tell whether it is the same fault; read the finding before merging"
 	case t.unreached > 0 && t.passed+t.pre+t.notCompared+t.failed+t.partial == 0:
 		return "could not test this from the app"
 	case t.passed == 0: // nothing failed, nothing was confirmed
 		return "nothing failed, but I could not confirm the change from the app; read the diff before merging"
 	case overall == CheckPartial && left == 0:
 		return "the PR build works, but nothing differed from " + main + "; read the diff before merging"
-	case left == 0:
-		return "the PR does what it says; " + fine
+	case overall == CheckPass:
+		word := "checks"
+		if t.passed == 1 {
+			word = "check"
+		}
+		line := fmt.Sprintf("the PR does what it says in the %d %s I finished", t.passed, word)
+		if t.testsOnly {
+			line += "; tests only, the app was not opened"
+		}
+		if left > 0 {
+			line += ". " + leftover(t.notCompared+t.partial, t.unreached)
+		}
+		return line
 	case overall == CheckPartial && t.compared > 0:
 		few := func(n int, one, many string) string { return map[bool]string{true: one, false: many}[n == 1] }
 		line := "the PR build works as far as I could check; " + fmt.Sprint(t.compared) + few(t.compared, " check was", " checks were") + " compared on " + main + " and showed no difference"
@@ -349,7 +632,7 @@ func verdictLine(overall CheckState, t tally, main string) string {
 	case overall == CheckPartial:
 		return "the PR build works as far as I could check; nothing was compared against " + main + ", so read the diff before merging"
 	}
-	return "the fix works; " + fine + ". " + leftover(t.notCompared+t.partial, t.unreached)
+	return "the PR build works as far as I could check. " + leftover(t.notCompared+t.partial, t.unreached)
 }
 
 // leftover says what the checks that did not finish as a comparison came to: some only ran on the PR build, some could
@@ -406,6 +689,9 @@ func checkPara(run Run, v Verdict, c Check, n, i int) string {
 	}
 	out := []string{[]string{"I checked that ", "Next I checked that ", "I also checked that "}[i%3] + label + "."}
 	if c.onLeg() == "head" {
+		if c.State == CheckAbsent {
+			out = append(out, "The PR build does not have this.")
+		}
 		out = append(out, say("the PR build", c))
 	}
 	switch twin := baseTwin(v.Checks, c); {
@@ -414,7 +700,13 @@ func checkPara(run Run, v Verdict, c Check, n, i int) string {
 	case twin >= 0 && v.Checks[twin].State == CheckSkipped:
 		out = append(out, "I did not repeat this on "+main+skipWhy(v.Checks[twin].Note)+".")
 	case twin >= 0 && v.Checks[twin].State == CheckAbsent: // main has no such feature: it is new, not something that failed there
-		out = append(out, "This is new in the PR; "+main+" does not have this"+skipWhy(v.Checks[twin].Note)+".")
+		line := main + " does not have this" + skipWhy(v.Checks[twin].Note) + "."
+		if c.State != CheckAbsent {
+			line = "This is new in the PR; " + line
+		} else {
+			line = recase(line, true)
+		}
+		out = append(out, line)
 	case twin >= 0:
 		out = append(out, say(main, v.Checks[twin]))
 	case baseResult(v.Checks, c) != "":
@@ -428,6 +720,10 @@ func checkPara(run Run, v Verdict, c Check, n, i int) string {
 	case preExisting(v.Checks, c) && c.State == CheckPartial && baseResult(v.Checks, c) == string(CheckPartial): // the main sentence already says what was seen
 	case preExisting(v.Checks, c):
 		out = append(out, "The same thing happens on "+main+", so the PR did not cause it.")
+	case c.State == CheckPartial && baseResult(v.Checks, c) == string(CheckPartial):
+		out = append(out, "It is also partial on "+main+"; I could not tell whether it is the same fault.")
+	case c.State == CheckFail && baseResult(v.Checks, c) == string(CheckFail):
+		out = append(out, "It also fails on "+main+"; I could not tell whether it is the same fault.")
 	case (c.State == CheckFail || c.State == CheckPartial) && baseResult(v.Checks, c) == string(CheckAbsent):
 		out = append(out, "Since "+main+" has no such feature, this is the PR's own problem.")
 	}
@@ -497,6 +793,19 @@ func commentBody(run Run, v Verdict, ev evidence, now time.Time, f commentFit) s
 	var blocks []string // paragraphs, joined by a blank line
 	add := func(format string, a ...any) { blocks = append(blocks, fmt.Sprintf(format, a...)) }
 	main, n := run.baseName(), max(f.notes, f.note)
+	var worth, themes []string
+	v.Checks = slices.Clone(v.Checks)
+	for i, c := range v.Checks {
+		if at := strings.Index(strings.ToLower(c.Note), "worth a look:"); at >= 0 {
+			worth = append(worth, checkLabel(c)+": "+plainSentence(c.Note[at+len("worth a look:"):], n))
+			v.Checks[i].Note = strings.TrimSpace(c.Note[:at])
+		}
+		for _, r := range c.Receipts {
+			if r.ThemeNote != "" {
+				themes = append(themes, checkLabel(c)+", "+run.sideName(r.onLeg())+": "+mdText(r.ThemeNote, n))
+			}
+		}
+	}
 	var rows []Check
 	for _, c := range v.Checks {
 		if _, _, beside := compareCells(v.Checks, c); !beside {
@@ -550,6 +859,12 @@ func commentBody(run Run, v Verdict, ev evidence, now time.Time, f commentFit) s
 	}
 	for i, c := range rows {
 		add("%s", checkPara(run, v, c, n, i))
+	}
+	if len(worth) > 0 {
+		add("Worth a look: %s", strings.Join(worth, " "))
+	}
+	if len(themes) > 0 {
+		add("%s", strings.Join(themes, "\n"))
 	}
 	for _, it := range ev.items {
 		if it.kind == kindHero {
@@ -715,11 +1030,446 @@ func (s *Service) writeComment(run Run, v Verdict, ev evidence) (string, error) 
 	return body, s.store.WriteFile(run.ID, "comment.md", []byte(body))
 }
 
+// draftComments creates the reviewable files used by both ordinary posts and
+// ask-before-posting runs. A later post reads these files back, so edits made
+// while approval is pending survive evidence publication.
+func (s *Service) draftComments(run Run, v Verdict) ([]commentDoc, error) {
+	dir := filepath.Join(s.store.root, run.ID, "comments")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, err
+	}
+	plain := plainVerdict(run, v)
+	bugs := failingBugComments(plain.Checks)
+	s.numberBugComments(run, bugs)
+	history := s.previousComments(run)
+	markerName := ""
+	for _, old := range history {
+		if !strings.EqualFold(strings.TrimSpace(old.Name), "summary") && old.Number == 1 {
+			markerName = old.Name
+			break
+		}
+	}
+	if markerName == "" {
+		for _, old := range history {
+			if strings.EqualFold(strings.TrimSpace(old.Name), "summary") {
+				markerName = old.Name
+				break
+			}
+		}
+	}
+	isMarker := func(name string, index int) bool {
+		return (markerName != "" && strings.EqualFold(strings.TrimSpace(markerName), strings.TrimSpace(name))) || (markerName == "" && len(history) == 0 && index == 0)
+	}
+	docs := make([]commentDoc, 0, max(len(bugs), 1))
+	if len(bugs) == 0 {
+		marker := isMarker("summary", 0)
+		body := summaryCommentBody(run, plain, s.clock(), marker)
+		if plain.Overall == CheckBlocked {
+			body = renderComment(run, plain, evidence{}, s.clock())
+			body = strings.ReplaceAll(body, commentMarker(run.Repo, run.PRNumber), litmusCommentMarker())
+			if !marker {
+				body = strings.ReplaceAll(body, litmusCommentMarker(), "")
+			}
+		}
+		docs = append(docs, commentDoc{Name: "summary", Marker: marker, Body: body})
+	} else {
+		for i := range bugs {
+			bugs[i].ImageFile = fmt.Sprintf("bug-%d.png", bugs[i].Number)
+			imagePath := filepath.Join(dir, bugs[i].ImageFile)
+			image := ""
+			if err := makeBugImage(bugs[i], imagePath); err != nil {
+				s.commentLogf(run, "comment image %s: %v", bugs[i].Check.Name, err)
+			} else {
+				image = bugs[i].ImageFile
+			}
+			marker := isMarker(bugs[i].Check.Name, i)
+			clip := ""
+			if p := checkClipPath(filepath.Join(s.store.root, run.ID), bugs[i].Check.ID); fileExists(p) {
+				clip = filepath.ToSlash(filepath.Join("..", "clips", filepath.Base(p)))
+			}
+			docs = append(docs, commentDoc{Name: bugs[i].Check.Name, Number: bugs[i].Number, Marker: marker, ImageFile: image, ClipFile: clip, Body: bugCommentBody(run, plain, bugs[i], image, clip, marker)})
+		}
+	}
+	current := make(map[string]bool, len(bugs))
+	for _, bug := range bugs {
+		current[strings.ToLower(strings.TrimSpace(bug.Check.Name))] = true
+	}
+	for _, old := range history {
+		name := strings.TrimSpace(old.Name)
+		key := strings.ToLower(name)
+		if name == "" || key == "summary" || old.Fixed || current[key] {
+			continue
+		}
+		state, found := headCheckState(plain.Checks, name)
+		if !found || state != CheckPass {
+			continue
+		}
+		marker := isMarker(name, len(docs))
+		docs = append(docs, commentDoc{Name: name, Number: old.Number, Fixed: true, CommentID: old.ID, Marker: marker, Body: fixedCommentBody(run, run.HeadSHA, marker)})
+	}
+	for i := range docs {
+		if docs[i].Number == 0 {
+			docs[i].Number = i + 1
+		}
+		if err := writeAtomic(filepath.Join(dir, strconv.Itoa(i+1)+".md"), []byte(docs[i].Body)); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.writeCommentManifest(run, docs); err != nil {
+		return nil, err
+	}
+	if len(docs) > 0 {
+		if err := s.store.WriteFile(run.ID, "comment.md", []byte(docs[0].Body)); err != nil {
+			return nil, err
+		}
+	}
+	return docs, nil
+}
+
+func (s *Service) readDraftComments(run Run) ([]commentDoc, error) {
+	dir := filepath.Join(s.store.root, run.ID, "comments")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var docs []commentDoc
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(e.Name(), ".md"))
+		if err != nil || n <= 0 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, commentDoc{Number: n, Body: string(data), Marker: strings.Contains(string(data), litmusCommentMarker())})
+	}
+	slices.SortFunc(docs, func(a, b commentDoc) int { return cmp.Compare(a.Number, b.Number) })
+	return docs, nil
+}
+
+func (s *Service) readCommentManifest(run Run) ([]commentDoc, error) {
+	dir := filepath.Join(s.store.root, run.ID, "comments")
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []commentManifestEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	docs := make([]commentDoc, 0, len(entries))
+	for _, entry := range entries {
+		body, err := os.ReadFile(filepath.Join(dir, entry.File))
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, commentDoc{Name: entry.Name, Number: entry.Number, Fixed: entry.Fixed, CommentID: entry.ID, Body: string(body), Marker: strings.Contains(string(body), litmusCommentMarker())})
+	}
+	return docs, nil
+}
+
+func (s *Service) writeCommentManifest(run Run, docs []commentDoc) error {
+	dir := filepath.Join(s.store.root, run.ID, "comments")
+	entries := make([]commentManifestEntry, 0, len(docs))
+	for i, doc := range docs {
+		entries = append(entries, commentManifestEntry{Name: doc.Name, File: strconv.Itoa(i+1) + ".md", Number: doc.Number, Fixed: doc.Fixed, ID: doc.CommentID})
+	}
+	data, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(dir, "manifest.json"), data)
+}
+
+func (s *Service) commentDrafts(run Run, v Verdict, ev evidence, fallback string) ([]commentDoc, error) {
+	docs, err := s.readCommentManifest(run)
+	if err != nil {
+		return nil, err
+	}
+	if len(docs) == 0 {
+		docs, err = s.readDraftComments(run)
+		if err != nil {
+			return nil, err
+		}
+	}
+	plain := plainVerdict(run, v)
+	bugs := failingBugComments(plain.Checks)
+	s.numberBugComments(run, bugs)
+	history := s.previousComments(run)
+	markerName := ""
+	for _, old := range history {
+		if !strings.EqualFold(strings.TrimSpace(old.Name), "summary") && old.Number == 1 {
+			markerName = old.Name
+			break
+		}
+	}
+	if markerName == "" {
+		for _, old := range history {
+			if strings.EqualFold(strings.TrimSpace(old.Name), "summary") {
+				markerName = old.Name
+				break
+			}
+		}
+	}
+	if len(docs) == 0 {
+		if len(bugs) == 0 {
+			docs = []commentDoc{{Name: "summary", Number: 1, Body: fallback}}
+		} else {
+			for i, bug := range bugs {
+				marker := len(history) == 0 && i == 0
+				image := ""
+				imageFile := fmt.Sprintf("bug-%d.png", bug.Number)
+				if fileExists(filepath.Join(s.store.root, run.ID, "comments", imageFile)) {
+					image = imageFile
+				}
+				clip := ""
+				clipPath := checkClipPath(filepath.Join(s.store.root, run.ID), bug.Check.ID)
+				if fileExists(clipPath) {
+					clip = filepath.ToSlash(filepath.Join("..", "clips", filepath.Base(clipPath)))
+				}
+				docs = append(docs, commentDoc{Name: bug.Check.Name, Number: bug.Number, Body: bugCommentBody(run, plain, bug, image, clip, marker)})
+			}
+		}
+	}
+	for i := range docs {
+		if !docs[i].Fixed && i < len(bugs) {
+			docs[i].Name = bugs[i].Check.Name
+			imageFile := fmt.Sprintf("bug-%d.png", bugs[i].Number)
+			// Keep the generated target even when the local file was removed, so a
+			// failed evidence publish cannot leak a broken path into GitHub.
+			docs[i].ImageFile = imageFile
+			clipPath := checkClipPath(filepath.Join(s.store.root, run.ID), bugs[i].Check.ID)
+			docs[i].ClipFile = filepath.ToSlash(filepath.Join("..", "clips", filepath.Base(clipPath)))
+			docs[i].Number = bugs[i].Number
+		}
+		if docs[i].Name == "" {
+			docs[i].Name = "summary"
+		}
+		isMarker := (markerName != "" && strings.EqualFold(strings.TrimSpace(markerName), strings.TrimSpace(docs[i].Name))) || (markerName == "" && len(history) == 0 && i == 0)
+		if isMarker {
+			docs[i].Body = strings.ReplaceAll(docs[i].Body, commentMarker(run.Repo, run.PRNumber), "")
+			if !strings.Contains(docs[i].Body, litmusCommentMarker()) {
+				docs[i].Body = strings.TrimSpace(docs[i].Body) + "\n\n" + litmusCommentMarker()
+			}
+			docs[i].Marker = true
+		} else {
+			docs[i].Body = strings.ReplaceAll(docs[i].Body, litmusCommentMarker(), "")
+			docs[i].Body = strings.ReplaceAll(docs[i].Body, commentMarker(run.Repo, run.PRNumber), "")
+			docs[i].Marker = false
+		}
+		if docs[i].ImageFile != "" {
+			if url := ev.bugImages[docs[i].Name]; url != "" {
+				docs[i].Body = strings.ReplaceAll(docs[i].Body, "("+docs[i].ImageFile+")", "("+url+")")
+			} else {
+				if strings.Contains(docs[i].Body, "![The base build on the left and the PR build on the right]("+docs[i].ImageFile+")") {
+					docs[i].Body = strings.ReplaceAll(docs[i].Body, "![The base build on the left and the PR build on the right]("+docs[i].ImageFile+")\n\n", "")
+					docs[i].Body = strings.TrimSpace(docs[i].Body) + "\n\nThe comparison image was not available in the published evidence."
+				}
+			}
+		}
+		if docs[i].ClipFile != "" {
+			if url := ev.checkClips[docs[i].Name]; url != "" {
+				docs[i].Body = strings.ReplaceAll(docs[i].Body, "("+docs[i].ClipFile+")", "("+url+")")
+			} else {
+				docs[i].Body = strings.ReplaceAll(docs[i].Body, "[Watch the check]("+docs[i].ClipFile+")", "The check recording was not available.")
+			}
+		}
+	}
+	return docs, nil
+}
+
+func commentIDFromURL(url string) int64 {
+	const marker = "#issuecomment-"
+	i := strings.LastIndex(url, marker)
+	if i < 0 {
+		return 0
+	}
+	id, _ := strconv.ParseInt(strings.TrimSpace(url[i+len(marker):]), 10, 64)
+	return id
+}
+
+func (s *Service) sendComment(ctx context.Context, run Run, body string, id int64) (sent map[string]any, state string, err error) {
+	method, path, state := "POST", "repos/"+run.Repo+"/issues/"+strconv.Itoa(run.PRNumber)+"/comments", "posted"
+	if id != 0 {
+		method, path, state = "PATCH", "repos/"+run.Repo+"/issues/comments/"+strconv.FormatInt(id, 10), "updated"
+	}
+	out, err := s.ghSend(ctx, run, method, path, map[string]string{"body": body})
+	if err != nil {
+		return nil, "", err
+	}
+	sent = make(map[string]any)
+	if err := json.Unmarshal(out, &sent); err != nil {
+		return nil, "", err
+	}
+	if _, ok := sent["id"]; !ok {
+		sent["id"] = id
+	}
+	return sent, state, nil
+}
+
+func sentCommentID(sent map[string]any, fallback int64) int64 {
+	if id, ok := sent["id"].(float64); ok {
+		return int64(id)
+	}
+	if url, ok := sent["html_url"].(string); ok {
+		return commentIDFromURL(url)
+	}
+	return fallback
+}
+
+func sentCommentURL(sent map[string]any) string {
+	url, _ := sent["html_url"].(string)
+	return url
+}
+
+func headCheckState(checks []Check, name string) (CheckState, bool) {
+	for _, check := range checks {
+		if check.onLeg() == "head" && strings.EqualFold(strings.TrimSpace(check.Name), strings.TrimSpace(name)) {
+			return check.State, true
+		}
+	}
+	return "", false
+}
+
+func mergeCommentMappings(current, history []PostedComment) []PostedComment {
+	out := slices.Clone(current)
+	for _, old := range history {
+		found := false
+		for _, existing := range out {
+			if strings.EqualFold(strings.TrimSpace(existing.Name), strings.TrimSpace(old.Name)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, old)
+		}
+	}
+	return out
+}
+
+func (s *Service) publishCommentSet(ctx context.Context, run Run, v Verdict, ev evidence, fallback string) (string, string, error) {
+	docs, err := s.commentDrafts(run, v, ev, fallback)
+	if err != nil {
+		return "", "", err
+	}
+	if len(docs) == 0 {
+		return "", "", errors.New("no comment drafts found")
+	}
+	if err := s.store.WriteFile(run.ID, "comment.md", []byte(docs[0].Body)); err != nil {
+		return "", "", err
+	}
+	login, err := s.ghLogin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	api := "repos/" + run.Repo
+	raw, err := s.gh.Run(ctx, "api", api+"/issues/"+strconv.Itoa(run.PRNumber)+"/comments", "--paginate")
+	if err != nil {
+		return "", "", err
+	}
+	markerID, err := findComment(raw, litmusCommentMarker(), login)
+	if err != nil {
+		return "", "", fmt.Errorf("unreadable comment list: %w", err)
+	}
+	if markerID == 0 {
+		markerID, err = findComment(raw, commentMarker(run.Repo, run.PRNumber), login)
+		if err != nil {
+			return "", "", fmt.Errorf("unreadable comment list: %w", err)
+		}
+	}
+	history := s.previousComments(run)
+	if len(history) > 0 {
+		if _, err := s.update(run.ID, func(cur *Run) { cur.Comments = mergeCommentMappings(cur.Comments, history) }); err != nil {
+			return "", "", err
+		}
+	}
+	previous := make(map[string]PostedComment, len(history))
+	for _, c := range history {
+		previous[strings.ToLower(strings.TrimSpace(c.Name))] = c
+	}
+	var firstURL, lastState string
+	for i, doc := range docs {
+		old := previous[strings.ToLower(strings.TrimSpace(doc.Name))]
+		id := old.ID
+		if id == 0 {
+			id = doc.CommentID
+		}
+		if id == 0 {
+			id = commentIDFromURL(old.URL)
+		}
+		if i == 0 && id == 0 && markerID != 0 && len(history) == 0 {
+			id = markerID
+		}
+		if markerID != 0 {
+			if id != markerID {
+				doc.Body = strings.ReplaceAll(doc.Body, litmusCommentMarker(), "")
+			} else if !strings.Contains(doc.Body, litmusCommentMarker()) {
+				doc.Body = strings.TrimSpace(doc.Body) + "\n\n" + litmusCommentMarker()
+			}
+		}
+		if markerID == 0 && i != 0 {
+			doc.Body = strings.ReplaceAll(doc.Body, litmusCommentMarker(), "")
+		}
+		if doc.Fixed && id == 0 {
+			continue
+		}
+		sent, state, err := s.sendComment(ctx, run, doc.Body, id)
+		if err != nil {
+			return "", "", err
+		}
+		url := sentCommentURL(sent)
+		if firstURL == "" {
+			firstURL = url
+		}
+		lastState = state
+		mapping := PostedComment{Name: doc.Name, ID: sentCommentID(sent, id), URL: url, Number: doc.Number, Fixed: doc.Fixed}
+		if _, err := s.update(run.ID, func(cur *Run) { cur.Comments = appendCommentMapping(cur.Comments, mapping) }); err != nil {
+			return "", "", err
+		}
+	}
+	if v.Overall == CheckFail && s.reviewOn(run) {
+		if err := s.requestChanges(ctx, run, login, firstURL); err != nil {
+			s.commentLog(run, fmt.Errorf("review not submitted: %w", err))
+		}
+	}
+	return firstURL, lastState, nil
+}
+
+func appendCommentMapping(current []PostedComment, next PostedComment) []PostedComment {
+	for i := range current {
+		if strings.EqualFold(strings.TrimSpace(current[i].Name), strings.TrimSpace(next.Name)) {
+			current[i] = next
+			return current
+		}
+	}
+	return append(current, next)
+}
+
 // composeComment is the first step of posting: it writes comment.md with no evidence in it, and touches no network.
 func (s *Service) composeComment(run Run, v Verdict) (string, evidence, error) {
 	ev := evidence{state: EvidenceOff, videoState: "off"}
-	body, err := s.writeComment(run, v, ev)
-	return body, ev, err
+	if _, err := s.writeComment(run, v, ev); err != nil {
+		return "", ev, err
+	}
+	docs, err := s.draftComments(run, v)
+	if err != nil {
+		return "", ev, err
+	}
+	if len(docs) == 0 {
+		return "", ev, errors.New("no comment draft was written")
+	}
+	return docs[0].Body, ev, nil
 }
 
 // publishComment is the second step: it publishes the evidence images and videos and posts or updates the comment.
@@ -732,19 +1482,11 @@ func (s *Service) publishComment(ctx context.Context, run Run, v Verdict, videos
 	if err != nil {
 		return "", s.commentFailed(run, err), ev
 	}
-	if testsOnly(v.Checks) { // no window was driven: a recording of an idle app shows nothing
-		videos = nil
-	}
 	ev = s.publishEvidence(ctx, run, v)
-	ev.videos, ev.videoState = s.publishVideos(ctx, run, videos) // after the images, and without them when they failed
-	if len(ev.items) > 0 || len(ev.limits) > 0 || len(ev.videos) > 0 {
-		if body, err = s.writeComment(run, v, ev); err != nil {
-			return "", s.commentFailed(run, err), ev
-		}
-	}
+	ev.checkClips, ev.videoState = s.publishCheckClips(ctx, run, v)
 	pctx, cancel := context.WithTimeout(ctx, commentTimeout)
 	defer cancel()
-	url, state, err = s.upsertComment(pctx, run, v.Overall, body)
+	url, state, err = s.publishCommentSet(pctx, run, v, ev, body)
 	if err != nil {
 		return "", s.commentFailed(run, err), ev
 	}
@@ -771,7 +1513,7 @@ func (s *Service) commentLogf(run Run, format string, a ...any) {
 }
 
 // upsertComment edits this PR's Litmus comment written by the token's login, or posts one. A failing verdict also
-// asks for changes in a review, once per call: a review body cannot be edited.
+// asks for changes in a review, once per call (a review body cannot be edited), when the project turned reviews on.
 func (s *Service) upsertComment(ctx context.Context, run Run, overall CheckState, body string) (string, string, error) {
 	login, err := s.ghLogin(ctx)
 	if err != nil {
@@ -798,7 +1540,7 @@ func (s *Service) upsertComment(ctx context.Context, run Run, overall CheckState
 		HTMLURL string `json:"html_url"`
 	}
 	_ = json.Unmarshal(out, &sent)
-	if overall == CheckFail {
+	if overall == CheckFail && s.reviewOn(run) {
 		if err := s.requestChanges(ctx, run, login, sent.HTMLURL); err != nil { // the comment is up; only the review failed
 			s.commentLog(run, fmt.Errorf("review not submitted: %w", err))
 		}

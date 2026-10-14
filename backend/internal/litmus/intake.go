@@ -25,6 +25,8 @@ import (
 )
 
 const (
+	// IntakeBudget caps fetching and pinning the PR before prepare begins.
+	IntakeBudget = 10 * time.Minute
 	maxPackWords = 4000
 	maxDiffLines = 300
 	maxIssues    = 3
@@ -208,7 +210,7 @@ func (s *Service) Intake(ctx context.Context, sessionID, prRef string) (Run, err
 		return run, nil
 	}
 	defer done()
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute) // a cold mirror clone outlives the CLI's call; a retry waits for this one
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), IntakeBudget) // a cold mirror clone outlives the CLI's call; a retry waits for this one
 	defer cancel()
 
 	d, ferr := s.pullWords(ctx, repo, number)                 // network, so the service lock is not held
@@ -244,7 +246,7 @@ func (s *Service) Intake(ctx context.Context, sessionID, prRef string) (Run, err
 		return Run{}, conflict("TESTING_RUN_EXISTS", "run "+id+" changed while intake was fetching")
 	}
 	if ferr == nil {
-		pack := renderPack(d, s.store.recipeText(d.repo), s.store.priorVerdicts(d.repo, id, 3))
+		pack := renderPack(d, s.store.recipeText(d.repo))
 		for name, data := range map[string]string{"files.txt": filesText(d.files), "diff.patch": d.diff, "context-pack.md": pack} {
 			if ferr = s.store.WriteFile(id, name, []byte(data)); ferr != nil {
 				break
@@ -274,6 +276,19 @@ func isCode(err error, code string) bool {
 // (a retry after a CLI timeout) waits for it; when that call pinned the run, the run is returned with a nil done, so
 // a slow mirror clone is never done twice.
 func (s *Service) claimIntake(ctx context.Context, id, sessionID, repo string, number int) (Run, func(), error) {
+	spawn, markerFound, err := s.store.waitForSpawned(ctx, sessionID, s.spawnMarkerWait)
+	if err != nil {
+		return Run{}, nil, err
+	}
+	if markerFound && (spawn.Repo != repo || spawn.PR != number) {
+		markerFound = false
+	}
+	commentMode := CommentOff // a direct or incomplete start cannot safely opt into posting
+	if markerFound {
+		commentMode = s.store.commentMode(sessionID)
+	}
+	evidenceMode := s.store.evidenceMode(sessionID)
+
 	waited := false
 	for {
 		s.mu.Lock()
@@ -291,7 +306,7 @@ func (s *Service) claimIntake(ctx context.Context, id, sessionID, repo string, n
 			s.mu.Unlock()
 			return cur, nil, nil
 		}
-		run, err := s.claim(id, sessionID, repo, number)
+		run, err := s.claim(id, sessionID, repo, number, commentMode, evidenceMode)
 		var done func()
 		if err == nil {
 			done, err = s.markBusy(id, "intake")
@@ -303,7 +318,7 @@ func (s *Service) claimIntake(ctx context.Context, id, sessionID, repo string, n
 
 // claim creates the session's run, or restarts a failed intake in place. Any
 // other existing run, pinned or closed, is a conflict. Callers hold s.mu.
-func (s *Service) claim(id, sessionID, repo string, number int) (Run, error) {
+func (s *Service) claim(id, sessionID, repo string, number int, commentMode, evidenceMode string) (Run, error) {
 	prev, err := s.store.Get(id)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -313,8 +328,16 @@ func (s *Service) claim(id, sessionID, repo string, number int) (Run, error) {
 		return Run{}, conflict("TESTING_RUN_EXISTS", "this session already has run "+id)
 	}
 	now := s.clock()
-	run := Run{ID: id, SessionID: sessionID, ProjectID: s.store.sessionProject(sessionID), Repo: repo, RequestedRepo: repo, PRNumber: number, State: RunIntake, CreatedAt: now, Deadline: now.Add(RunBudget), Comment: s.store.commentMode(sessionID), Evidence: s.store.evidenceMode(sessionID)}
-	return run, s.store.Save(run)
+	run := Run{ID: id, SessionID: sessionID, ProjectID: s.store.sessionProject(sessionID), Repo: repo, RequestedRepo: repo, PRNumber: number, State: RunIntake, CreatedAt: now, Deadline: now.Add(RunBudget), Comment: commentMode, Evidence: evidenceMode}
+	if err := s.store.Save(run); err != nil {
+		return run, err
+	}
+	if prev.ID == "" {
+		if err := s.store.put(id, ownerLoginsFile, readOwnerLogins(context.Background())); err != nil {
+			return run, err
+		}
+	}
+	return run, nil
 }
 
 // pullWords reads the PR's words through gh: its text, ids, branches, comments, reviews, CI and linked issues. A PR gh
@@ -646,24 +669,6 @@ func (s *Store) recipeText(repo string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-// priorVerdicts returns "<run> (#pr): <verdict.md first line>" for the newest n
-// other runs on repo that have a verdict.
-func (s *Store) priorVerdicts(repo, exclude string, n int) (out []string) {
-	runs, _ := s.List()
-	for i := len(runs) - 1; i >= 0 && len(out) < n; i-- {
-		r := runs[i]
-		path, err := s.path(r.ID, "verdict.md")
-		if r.ID == exclude || !strings.EqualFold(r.Repo, repo) || err != nil {
-			continue
-		}
-		if data, err := os.ReadFile(path); err == nil {
-			first, _, _ := strings.Cut(string(data), "\n")
-			out = append(out, fmt.Sprintf("%s (#%d): %s", r.ID, r.PRNumber, first))
-		}
-	}
-	return out
 }
 
 // capWords keeps the first limit words of s with its original spacing.
@@ -1251,7 +1256,7 @@ func namedIn(text string) func(path string) bool {
 
 // renderPack writes context-pack.md. Sections are word-capped, and the diff
 // excerpt shrinks until the whole pack fits maxPackWords.
-func renderPack(d intakeData, recipe string, prior []string) string {
+func renderPack(d intakeData, recipe string) string {
 	pr, files, big := d.pr, splitDiff(d.diff), d.big()
 	total := 0
 	for _, f := range files {
@@ -1371,25 +1376,18 @@ func renderPack(d intakeData, recipe string, prior []string) string {
 		} else {
 			p("```yaml\n%s\n```\n", capWords(recipe, 200))
 		}
-		p("## 7. Prior runs on this repo\n")
-		for _, l := range prior {
-			p("- %s", l)
-		}
-		if len(prior) == 0 {
-			p("none")
-		}
-		p("\n## 8. What to do next\n")
+		p("## 7. What to do next\n")
 		p("1. Read this pack. The full diff is diff.patch in this run directory; files.txt lists every changed file.")
 		p("2. Decide what the PR claims to change and what it could break.")
-		plan := maxChecks // pairs; a big PR gets fewer, so each pair can be run on both builds
+		plan := 6 // pairs, as advice only; a big PR gets fewer, so each pair can be run on both builds
 		if len(d.files) > bigFiles {
 			plan = 4
 		}
-		p("3. Plan at most %d pairs of checks (4 for a PR over %d files, %d otherwise), starting from Suggested checks above: `ao testing check add \"<name>\" --expect \"<observable>\"`. One observable thing per check; split a check that mixes two things. Litmus accepts at most %d checks; a main twin is free.", plan, bigFiles, maxChecks, maxChecks)
+		p("3. Plan at most %d pairs of checks as a guide (4 for a PR over %d files, 6 otherwise), starting from Suggested checks above: `ao testing check add \"<name>\" --expect \"<observable>\"`. One observable thing per check; split a check that mixes two things. Litmus enforces no limit on checks; the time is the limit.", plan, bigFiles)
 		if len(uiFiles(d)) > 0 {
-			p("   The PR touches UI files, so every check is something a user would do in the app, in the order of Suggested checks. Package tests come only after the UI checks, only with at least 5 minutes left, and at most one test check (one command per build).")
+			p("   The PR touches UI files, so every check is something a user would do in the app, in the order of Suggested checks.")
 		}
-		p("4. Launch both builds: `ao testing launch head`, `ao testing launch base`.")
+		p("4. Launch both builds: `ao testing launch head`, `ao testing launch base`. If launch prints \"seed step N failed\", that build is up but its sample content is missing: do not fail a check for content the seed should have made, and say the failure may itself be a finding.")
 		p("5. Run each check on the PR build (check start, act, check end), then at once on main with `--leg base`, before the next check. A check is done only when it has a result on both. If main does not have the feature at all, end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken.")
 		p("6. With time left, add another pair: the next suggested check or the next changed area from section 4. Never add a check that runs on the PR build alone. Stop early only when nothing is left to check.")
 		p("7. `ao testing submit`.")

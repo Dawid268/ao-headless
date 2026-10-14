@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +22,7 @@ import (
 // Tests shorten these.
 var (
 	settleDelay = 400 * time.Millisecond // let the UI react before the after-shot
-	settleLoad  = 3 * time.Second        // cap on `wait --load`, whose failure is ignored
+	settleLoad  = 3 * time.Second        // cap on `wait --load`; a failure is recorded as a replay stop warning
 	shotRetry   = time.Second            // pause before the one retry of an after-shot that timed out
 )
 
@@ -187,35 +189,269 @@ func (s *Service) Drive(ctx context.Context, sessionID, action string, args []st
 	e := s.engineFor(run.ID, leg)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if v.receipt && e.last == "" { // nothing before it yet: this leg's first state change gets a before-shot of its own
-		if p := filepath.Join(runDir, "receipts", leg.Name+"-before.png"); s.shoot(ctx, e, p) == nil {
-			e.last = p
-		}
-	}
 	var target refInfo // what the last snapshot called the element about to be acted on, read before the page changes
 	if v.refs > 0 {
 		target = e.refs[cmd[len(cmdWords(action, v))]]
 	}
+	var click *clickAt
+	var box *ElementBox
+	if action == "click" { // read before the click: the page may move or close the element
+		var pointErr error
+		click, box, pointErr = e.clickTarget(ctx, cmd[1])
+		if pointErr != nil {
+			if isTabDrift(pointErr) {
+				return nil, apierr.Unavailable("TESTING_ENGINE_FAILED", pointErr.Error())
+			}
+			slog.Default().Debug("litmus: click point unavailable", "ref", cmd[1], "error", pointErr)
+		}
+	}
+	if v.receipt && e.last == "" { // nothing before it yet: this leg's first state change gets a before-shot of its own
+		p := filepath.Join(runDir, "receipts", leg.Name+"-before.png")
+		if err := s.shoot(ctx, e, p); err == nil || fileExists(p) {
+			e.last = p
+			if err != nil {
+				slog.Default().Warn("litmus: before-shot", "error", err)
+			}
+		}
+	}
 	t0 := time.Now()
 	out, err := e.Run(ctx, cmdTimeout, cmd...)
 	if err != nil {
+		if action == "click" && isCoveredClickError(err) {
+			// A covered click is a useful, reproducible result. Keep the same
+			// after-shot and receipt evidence as a successful state change, then
+			// return the refusal so the tester stops rather than guessing.
+			rec := s.receipt(ctx, run.ID, e, leg.Name, action, cmd[len(cmdWords(action, v)):], target, click, box, time.Since(t0), err.Error())
+			s.recordingReceipt(ctx, run.ID, leg.Name, e)
+			res := map[string]any{"leg": leg.Name, "action": action, "output": out, "receipt": rec, "refused": true, "reason": err.Error()}
+			if rec.After != "" {
+				res["after"] = relPath(runDir, rec.After)
+			}
+			if snap, snapErr := e.Run(ctx, cmdTimeout, "snapshot", "-i"); snapErr == nil {
+				e.refs = parseRefs(snap)
+				res["snapshot"] = compactSnapshot(snap)
+			}
+			addDriveText(res, runDir, "")
+			message := "click refused because the element is covered: " + err.Error()
+			if text, ok := res["text"].(string); ok && text != "" {
+				message += "\n" + text
+			}
+			return res, apierr.Conflict("TESTING_ELEMENT_COVERED", message, nil)
+		}
 		return nil, apierr.Unavailable("TESTING_ENGINE_FAILED", err.Error())
 	}
 	if action == "snapshot" {
 		e.refs = parseRefs(out)
 	}
 	res := map[string]any{"leg": leg.Name, "action": action, "output": out}
+	if action == "screenshot" {
+		if err := e.flatten(ctx, file); err != nil {
+			res["warning"] = "opaque screenshot: " + err.Error()
+		}
+	}
 	if file != "" {
 		res["path"] = file
 	}
 	if v.receipt {
-		rec := s.receipt(ctx, run.ID, e, leg.Name, action, cmd[len(cmdWords(action, v)):], target, time.Since(t0))
+		rec := s.receipt(ctx, run.ID, e, leg.Name, action, cmd[len(cmdWords(action, v)):], target, click, box, time.Since(t0), "")
+		s.recordingReceipt(ctx, run.ID, leg.Name, e)
 		res["receipt"] = rec
 		if rec.After != "" { // the tester reads this shot to judge anything visual
 			res["after"] = relPath(runDir, rec.After)
 		}
+		if snap, err := e.Run(ctx, cmdTimeout, "snapshot", "-i"); err == nil {
+			e.refs = parseRefs(snap)
+			res["snapshot"] = compactSnapshot(snap)
+		}
 	}
+	if action == "snapshot" {
+		res["snapshot"] = compactSnapshot(out)
+	}
+	addDriveText(res, runDir, "")
 	return res, nil
+}
+
+// isCoveredClickError recognizes agent-browser's refusal when another painted
+// element receives the click. The engine has used both "covered" and
+// "intercepted" wording across releases.
+func isCoveredClickError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, word := range []string{"covered", "intercept", "obscur", "overlap"} {
+		if strings.Contains(msg, word) {
+			return true
+		}
+	}
+	return false
+}
+
+var interactiveSnapshotRoles = map[string]bool{
+	"button": true, "checkbox": true, "combobox": true, "link": true,
+	"listbox": true, "menuitem": true, "menuitemcheckbox": true, "menuitemradio": true, "option": true, "radio": true,
+	"searchbox": true, "slider": true, "spinbutton": true, "switch": true,
+	"tab": true, "textbox": true, "treeitem": true,
+}
+
+// compactSnapshot keeps only named interactive refs and caps the returned text
+// so a single action does not consume the tester's context window.
+func compactSnapshot(snapshot string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(snapshot, "\n") {
+		m := snapRef.FindStringSubmatch(line)
+		if m == nil || !interactiveSnapshotRoles[strings.ToLower(m[1])] {
+			continue
+		}
+		line = strings.TrimRight(line, " \t\r")
+		if line == "" {
+			continue
+		}
+		if b.Len() > 0 && b.Len()+1+len(line) > 2048 {
+			break
+		}
+		if b.Len() == 0 && len(line) > 2048 {
+			return line[:validUTF8Prefix(line, 2048)]
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func validUTF8Prefix(s string, n int) int {
+	if n >= len(s) {
+		return len(s)
+	}
+	for n > 0 && (s[n]&0xc0) == 0x80 {
+		n--
+	}
+	return n
+}
+
+// addDriveText is the compact human-readable output used by `ao testing`.
+// JSON callers still receive the structured fields alongside it.
+func addDriveText(res map[string]any, runDir, fallbackSnapshot string) {
+	snapshot, _ := res["snapshot"].(string)
+	if snapshot == "" {
+		snapshot = fallbackSnapshot
+	}
+	var lines []string
+	if rec, ok := res["receipt"].(actionRec); ok {
+		after := ""
+		if rec.After != "" {
+			after = relPath(runDir, rec.After)
+		}
+		line := fmt.Sprintf("receipt %d: %s %dms", rec.Seq, cmp.Or(after, "(none)"), rec.MS)
+		line += " page errors: " + cmp.Or(strings.ReplaceAll(rec.PageErrors, "\n", " | "), "none")
+		if rec.Reason != "" {
+			line += " reason: " + rec.Reason
+		}
+		lines = append(lines, line)
+		if rec.ConsoleTail != "" {
+			lines = append(lines, rec.ConsoleTail)
+		}
+	}
+	if snapshot != "" {
+		lines = append(lines, snapshot)
+	}
+	if len(lines) == 0 {
+		if action, _ := res["action"].(string); action != "snapshot" {
+			if output, _ := res["output"].(string); output != "" {
+				lines = append(lines, output)
+			}
+		}
+	}
+	res["text"] = strings.Join(lines, "\n")
+}
+
+// clickAt is where a click lands: the element's centre and the viewport it is in, both in CSS pixels, so the point
+// can be placed on a screenshot of any size.
+type clickAt struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+// ElementBox is the CSS-pixel box returned by `get box` for a clicked element.
+// It is kept separately from clickAt: clickAt also carries the viewport used to
+// draw the pointer ring on an after-shot.
+type ElementBox struct {
+	X              float64 `json:"x"`
+	Y              float64 `json:"y"`
+	W              float64 `json:"w"`
+	H              float64 `json:"h"`
+	ViewportWidth  float64 `json:"viewportWidth,omitempty"`
+	ViewportHeight float64 `json:"viewportHeight,omitempty"`
+}
+
+const pointTimeout = 5 * time.Second
+
+// boxField reads one field (x, y, width, height) from `get box` output, whether it prints JSON or "x: 1 y: 2".
+func boxField(out, name string) (float64, bool) {
+	m := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(name) + `[^\w\s+-]{0,3}\s*([-+]?\d+(?:\.\d+)?)`).FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	return v, err == nil
+}
+
+func isTabDrift(err error) bool {
+	return errors.Is(err, errTabDrift)
+}
+
+// clickPoint asks the engine where ref sits and how big the viewport is. It is best effort and bounded: any failure
+// returns nil and the click simply has no ring in the slideshow, except tab drift, which must reach the tester.
+func (e *Engine) clickPoint(ctx context.Context, ref string) (*clickAt, error) {
+	point, _, err := e.clickTarget(ctx, ref)
+	return point, err
+}
+
+// clickTarget reads the element box and viewport before a click. The box is
+// returned even when the viewport lookup fails, so a refused click can still
+// leave useful evidence.
+func (e *Engine) clickTarget(ctx context.Context, ref string) (*clickAt, *ElementBox, error) {
+	if _, err := e.Run(ctx, pointTimeout, "scrollintoview", ref); err != nil {
+		return nil, nil, err
+	}
+	box, err := e.Run(ctx, pointTimeout, "get", "box", ref)
+	if err != nil {
+		return nil, nil, err
+	}
+	x, okx := boxField(box, "x")
+	y, oky := boxField(box, "y")
+	w, okw := boxField(box, "width")
+	h, okh := boxField(box, "height")
+	if !okx || !oky || !okw || !okh {
+		return nil, nil, errors.New("get box returned no usable coordinates")
+	}
+	element := &ElementBox{X: x, Y: y, W: w, H: h}
+	ctx, cancel := context.WithTimeout(ctx, pointTimeout)
+	defer cancel()
+	p, err := e.pageCDP(ctx)
+	if err != nil {
+		return nil, element, err
+	}
+	if p.conn != nil {
+		defer p.conn.CloseNow()
+	}
+	var size []float64
+	if err := p.evaluate(ctx, "[innerWidth, innerHeight]", &size); err != nil {
+		return nil, element, err
+	}
+	if len(size) != 2 {
+		return nil, element, errors.New("viewport size was not returned")
+	}
+	vw, vh := size[0], size[1]
+	if vw <= 0 || vh <= 0 {
+		return nil, element, errors.New("viewport size was invalid")
+	}
+	element.ViewportWidth, element.ViewportHeight = vw, vh
+	return &clickAt{X: x + w/2, Y: y + h/2, W: vw, H: vh}, element, nil
 }
 
 // shoot saves a screenshot and, on macOS, downsizes it with the built-in sips (no Go image dependency).
@@ -226,27 +462,34 @@ func (s *Service) shoot(ctx context.Context, e *Engine, path string) error {
 	if _, err := e.Run(ctx, cmdTimeout, "screenshot", path); err != nil {
 		return err
 	}
+	if err := e.flatten(ctx, path); err != nil {
+		return err
+	}
 	_, _ = s.runner.Run(ctx, "", nil, "sips", "-Z", "1320", path)
 	return nil
 }
 
 // actionRec is one line of actions.jsonl.
 type actionRec struct {
-	Seq         int       `json:"seq"`
-	Leg         string    `json:"leg"`
-	Action      string    `json:"action"`
-	Args        []string  `json:"args,omitempty"`
-	Before      string    `json:"before"`
-	After       string    `json:"after"`
-	ConsoleTail string    `json:"consoleTail"`
-	At          time.Time `json:"at"`
-	MS          int64     `json:"ms"`
-	Unassigned  bool      `json:"unassigned,omitempty"` // no check was open when it happened
-	Warnings    []string  `json:"warnings,omitempty"`
-	TargetRole  string    `json:"targetRole,omitempty"` // from the last snapshot: the element acted on, for plain captions
-	TargetName  string    `json:"targetName,omitempty"`
-	Exit        *int      `json:"exit,omitempty"`    // test only: the command's exit code
-	NoTests     bool      `json:"noTests,omitempty"` // test only: it exited 0 and its runner counted no tests, so it is not one of the maxTests runs
+	Seq         int         `json:"seq"`
+	Leg         string      `json:"leg"`
+	Action      string      `json:"action"`
+	Args        []string    `json:"args,omitempty"`
+	Before      string      `json:"before"`
+	After       string      `json:"after"`
+	ConsoleTail string      `json:"consoleTail"`
+	At          time.Time   `json:"at"`
+	MS          int64       `json:"ms"`
+	Click       *clickAt    `json:"click,omitempty"` // click only: where the pointer went, for the slideshow's ring
+	Box         *ElementBox `json:"box,omitempty"`   // click only: the element's CSS-pixel box
+	PageErrors  string      `json:"pageErrors,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+	Unassigned  bool        `json:"unassigned,omitempty"` // no check was open when it happened
+	Warnings    []string    `json:"warnings,omitempty"`
+	TargetRole  string      `json:"targetRole,omitempty"` // from the last snapshot: the element acted on, for plain captions
+	TargetName  string      `json:"targetName,omitempty"`
+	Exit        *int        `json:"exit,omitempty"`    // test only: the command's exit code
+	NoTests     bool        `json:"noTests,omitempty"` // test only: it exited 0 and its runner counted no tests, so it is not one of the maxTests runs
 	// WithTestsFrom and CopiedFiles are test only: the PR's test files copied from that leg onto the base checkout.
 	WithTestsFrom string   `json:"withTestsFrom,omitempty"`
 	CopiedFiles   []string `json:"copiedFiles,omitempty"`
@@ -254,18 +497,20 @@ type actionRec struct {
 
 // receipt settles the UI, takes the after-shot and the console tail, appends the record to
 // actions.jsonl and attaches it to the open check. Its failures are warnings: the action already happened.
-func (s *Service) receipt(ctx context.Context, runID string, e *Engine, leg, action string, args []string, target refInfo, took time.Duration) actionRec {
+func (s *Service) receipt(ctx context.Context, runID string, e *Engine, leg, action string, args []string, target refInfo, click *clickAt, box *ElementBox, took time.Duration, reason string) actionRec {
 	s.mu.Lock()
 	seq := s.nextSeq(runID)
 	s.mu.Unlock()
-	rec := actionRec{Seq: seq, Leg: leg, Action: action, Args: args, Before: e.last, At: s.clock(), MS: took.Milliseconds(), TargetRole: target.role, TargetName: target.name}
+	rec := actionRec{Seq: seq, Leg: leg, Action: action, Args: args, Before: e.last, At: s.clock(), MS: took.Milliseconds(), TargetRole: target.role, TargetName: target.name, Click: click, Box: box, Reason: reason}
 	warn := func(what string, err error) { rec.Warnings = append(rec.Warnings, what+": "+err.Error()) }
 
 	select {
 	case <-time.After(settleDelay):
 	case <-ctx.Done():
 	}
-	_, _ = e.Run(ctx, settleLoad, "wait", "--load", "load")
+	if _, err := e.Run(ctx, settleLoad, "wait", "--load", "load"); err != nil && ctx.Err() == nil {
+		warn("load", err)
+	}
 	rec.After = filepath.Join(e.RunDir, "receipts", fmt.Sprintf("%d-after.png", seq))
 	err := s.shoot(ctx, e, rec.After)
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil { // a window the OS hid often paints on the next frame
@@ -276,20 +521,50 @@ func (s *Service) receipt(ctx context.Context, runID string, e *Engine, leg, act
 		}
 	}
 	if err != nil {
-		rec.After = ""
+		if !fileExists(rec.After) {
+			rec.After = ""
+		} else {
+			e.last = rec.After
+		}
 		warn("after-shot", err)
 	} else {
 		e.last = rec.After
 	}
+	if out, err := e.Run(ctx, cmdTimeout, "errors"); err != nil {
+		warn("page errors", err)
+	} else {
+		rec.PageErrors = compactErrors(out)
+	}
 	if out, err := e.Run(ctx, cmdTimeout, "console"); err != nil {
 		warn("console", err)
 	} else {
-		rec.ConsoleTail = lastLines([]byte(out), 20)
-		rec.ConsoleTail = rec.ConsoleTail[:min(len(rec.ConsoleTail), 4000)]
+		rec.ConsoleTail = consoleErrorTail(out)
 	}
 
-	s.attach(runID, &rec, Receipt{Seq: seq, Leg: leg, Action: action, Args: args, BeforePath: rec.Before, AfterPath: rec.After, ConsoleTail: rec.ConsoleTail, At: rec.At, TargetRole: target.role, TargetName: target.name})
+	s.attach(runID, &rec, Receipt{Seq: seq, Leg: leg, Action: action, Args: args, BeforePath: rec.Before, AfterPath: rec.After, ConsoleTail: rec.ConsoleTail, At: rec.At, MS: rec.MS, TargetRole: target.role, TargetName: target.name, Box: rec.Box, Reason: rec.Reason, PageErrors: rec.PageErrors})
 	return rec
+}
+
+func compactErrors(out string) string {
+	out = strings.TrimSpace(out)
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimRight(out, ".")))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	switch normalized {
+	case "", "no error", "no errors", "no page error", "no page errors", "no errors found", "no page errors found":
+		return ""
+	}
+	return clip(out, 2000)
+}
+
+// consoleErrorTail keeps the useful part of the console without returning a
+// normal log tail on every action. A page error is reported separately.
+func consoleErrorTail(out string) string {
+	tail := lastLines([]byte(out), 20)
+	low := strings.ToLower(tail)
+	if !strings.Contains(low, "error") && !strings.Contains(low, "exception") && !strings.Contains(low, "uncaught") && !strings.Contains(low, "failed") {
+		return ""
+	}
+	return clip(tail, 4000)
 }
 
 // attach adds r to the open check (rec is marked unassigned when none is open) and appends rec to

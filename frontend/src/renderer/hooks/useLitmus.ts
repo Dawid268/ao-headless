@@ -5,6 +5,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 export type LitmusRunSummary = components["schemas"]["TestingRunSummary"];
 export type LitmusRunDetail = components["schemas"]["TestingRunDetail"];
 export type LitmusSettings = components["schemas"]["TestingProjectSettings"];
+export type LitmusSettingsUpdate = components["schemas"]["UpdateTestingProjectSettingsRequest"];
 export type LitmusCheck = components["schemas"]["TestingCheck"];
 
 const RUNS_LIMIT = 50;
@@ -68,7 +69,7 @@ export function useLitmusSettings(projectId: string) {
 				params: { path: { id: projectId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
-			return data ?? { askBeforePosting: false };
+			return data ?? { askBeforePosting: false, review: false };
 		},
 	});
 }
@@ -76,7 +77,7 @@ export function useLitmusSettings(projectId: string) {
 export function useSetLitmusSettings(projectId: string) {
 	const client = useQueryClient();
 	return useMutation({
-		mutationFn: async (body: LitmusSettings) => {
+		mutationFn: async (body: LitmusSettingsUpdate) => {
 			const { data, error } = await apiClient.PUT("/api/v1/testing/projects/{id}/settings", {
 				params: { path: { id: projectId } },
 				body,
@@ -87,7 +88,10 @@ export function useSetLitmusSettings(projectId: string) {
 		onMutate: async (body) => {
 			await client.cancelQueries({ queryKey: litmusSettingsQueryKey(projectId) });
 			const previous = client.getQueryData<LitmusSettings>(litmusSettingsQueryKey(projectId));
-			client.setQueryData<LitmusSettings>(litmusSettingsQueryKey(projectId), body);
+			client.setQueryData<LitmusSettings>(litmusSettingsQueryKey(projectId), {
+				...body,
+				review: body.review ?? previous?.review ?? false,
+			});
 			return { previous };
 		},
 		onError: (_error, _body, context) => client.setQueryData(litmusSettingsQueryKey(projectId), context?.previous),

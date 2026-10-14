@@ -53,7 +53,15 @@ func baseResult(checks []Check, c Check) string {
 // and exited non-zero. A fail that rests only on test files that did not compile, on runs that exited 0, on a timeout or a
 // missing command (exit 127), or on a run that counted no tests, shows nothing.
 func ranAndFailed(b Check) bool {
-	return b.State == CheckFail && slices.ContainsFunc(b.legReceipts(), func(r Receipt) bool { return r.Action != "test" || r.ranAndFailed() })
+	if b.State != CheckFail {
+		return false
+	}
+	recs := b.legReceipts()
+	tests := slices.DeleteFunc(slices.Clone(recs), func(r Receipt) bool { return r.Action != "test" || r.Exit == nil || !fileExists(r.OutputPath) })
+	if len(tests) > 0 {
+		return slices.ContainsFunc(tests, Receipt.ranAndFailed)
+	}
+	return slices.ContainsFunc(recs, func(r Receipt) bool { return r.Action != "test" && fileExists(r.AfterPath) })
 }
 
 // failedOnBase reports whether the head check's base twin shows main without the behavior: it ran and failed, or the
@@ -64,18 +72,18 @@ func failedOnBase(checks []Check, c Check) bool {
 }
 
 // preExisting reports whether a head check that failed or was partial did the same on the base: the PR did not cause it.
-// Only the same state counts: a head fail beside a base partial, skip or absent may be the PR's. Absent never counts as
-// the equal state: a feature main does not have cannot have failed there first.
+// The tester must mark the base twin --same-fault, and only the same state counts: a head fail beside a base partial,
+// skip or absent may be the PR's. Absent never counts as the equal state: a feature main does not have cannot have failed there first.
 func preExisting(checks []Check, c Check) bool {
 	i := baseTwin(checks, c)
-	if c.onLeg() != "head" || i < 0 || checks[i].State != c.State {
+	if c.onLeg() != "head" || i < 0 || !checks[i].SameFault || checks[i].State != c.State {
 		return false
 	}
 	return c.State == CheckPartial || (c.State == CheckFail && ranAndFailed(checks[i])) // absent matches neither
 }
 
 // headlineRule is the rule derive applies, as verdict.md states it (the result is the overall verdict).
-const headlineRule = "The result is fail if any head check failed. It is pass if every head check passed and at least one passed on the head while failing on the base or while the base did not have the feature at all (absent), which shows the difference. A base failure counts only when a test ran and failed or it was seen on screen; tests that did not compile, or that exited 0, show nothing. A head failure or partial beside an absent base is the PR's own, never pre-existing. Otherwise it is partial. Checks the tester could not reach are left out, base-only checks are context, and a head check that failed or was partial the same way on the base is pre-existing and left out."
+const headlineRule = "The result is fail if any head check was absent or failed, except a head fail beside an unmarked base fail that ran and has evidence; that finding stays in the comment but leaves the result partial. A --same-fault base fail with evidence is pre-existing and left out. Equal partial labels on both builds still count as a failure unless the tester marked the base twin --same-fault. It is pass if every remaining head check passed and at least one passed on the head while failing on the base or while the base did not have the feature at all (absent), which shows the difference. A base failure counts only with saved test output showing a test ran and failed or an existing after-shot; tests that did not compile, exited 0, timed out or ran no tests show nothing. A head failure or partial beside an absent base is the PR's own, never pre-existing. Otherwise it is partial. Checks the tester could not reach are left out and base-only checks are context."
 
 // The reasons derive gives for a partial with nothing worse; the comment says them in its own words.
 const (
@@ -101,8 +109,26 @@ func derive(checks []Check) (overall CheckState, reasons []string) {
 		if c.State != CheckPass && c.Note != "" {
 			reasons = append(reasons, c.ID+" "+c.Name+": "+c.Note)
 		}
+		unproven := false
+		if i := baseTwin(checks, c); i >= 0 && !checks[i].SameFault {
+			base := checks[i]
+			unproven = c.State == CheckPartial && base.State == CheckPartial ||
+				c.State == CheckFail && base.State == CheckFail && ranAndFailed(base)
+		}
+		if unproven {
+			what := "fails"
+			if c.State == CheckPartial {
+				what = "is partial"
+			}
+			reasons = append(reasons, c.ID+" "+c.Name+": "+what+" on main too; not shown to be the same fault")
+		}
+		if c.State == CheckAbsent {
+			reasons = append(reasons, c.ID+" "+c.Name+": the PR build does not have this")
+		}
 		reached = true
-		failed, allPass = failed || c.State == CheckFail, allPass && c.State == CheckPass
+		// An evidenced but unmarked head/base fail remains in the findings but does not block the merge.
+		matchingFailure := unproven && c.State == CheckFail
+		failed, allPass = failed || (c.State == CheckFail && !matchingFailure) || c.State == CheckAbsent || (unproven && c.State == CheckPartial), allPass && c.State == CheckPass
 		differs = differs || (c.State == CheckPass && failedOnBase(checks, c))
 	}
 	switch {
@@ -148,9 +174,6 @@ func (s *Service) Submit(ctx context.Context, sessionID, summary, skipBase strin
 	if len(checks) == 0 {
 		return Verdict{}, invalid("TESTING_NO_CHECKS", "submit needs at least one check")
 	}
-	if err := forAuthor(skip); err != nil {
-		return Verdict{}, err
-	}
 	var incomplete []string // no receipt, or never ended
 	for _, c := range checks {
 		if (len(c.Receipts) == 0 && c.State != CheckSkipped) || !slices.Contains(outcomes, c.State) {
@@ -164,11 +187,8 @@ func (s *Service) Submit(ctx context.Context, sessionID, summary, skipBase strin
 		return Verdict{}, conflict("TESTING_BASE_NOT_RUN", run.baseName()+" was prepared but failed to launch, so there are no base results; submit with `--skip-base --reason \"<say that "+run.baseName()+" failed to launch and why>\"`")
 	}
 	if skip == "" && s.baseNeverLaunched(run, checks) {
-		how := "run " + run.baseName() + " (`ao testing launch base`), repeat every check there"
-		if testsOnly(checks) { // nothing on screen to repeat: the tests are enough
-			how = "run the same tests on " + run.baseName() + " (`ao testing test --leg base`)"
-		}
-		return Verdict{}, conflict("TESTING_BASE_NOT_RUN", how+" and record a result for each: pass, fail, partial, or skipped with a note saying why; or submit with `--skip-base --reason \"<why main was not run>\"`")
+		how := "run " + run.baseName() + " (`ao testing launch base`), repeat each check there in the app and record its visible result"
+		return Verdict{}, conflict("TESTING_BASE_NOT_RUN", how+"; record pass, fail, partial, or skipped with a note saying why, or submit with `--skip-base --reason \"<why main was not run>\"`")
 	}
 	if skip == "" {
 		if ids := s.notComparedOnBase(run, checks); len(ids) > 0 {
@@ -287,7 +307,7 @@ func baseSkippedWithoutNote(checks []Check, c Check) bool {
 	return i >= 0 && checks[i].State == CheckSkipped && strings.TrimSpace(checks[i].Note) == ""
 }
 
-// SubmitBlocked closes the run as blocked: the tester hit an error it cannot fix. No receipts are
+// SubmitBlocked stops a run early: a recorded failure stays fail, otherwise the result is blocked. No receipts are
 // required; verdict.md carries the reason and whatever evidence the run has.
 func (s *Service) SubmitBlocked(ctx context.Context, sessionID, reason string) (Verdict, error) {
 	if strings.TrimSpace(reason) == "" {
@@ -305,7 +325,7 @@ func (s *Service) SubmitBlocked(ctx context.Context, sessionID, reason string) (
 	return s.closeRun(ctx, run, checks, "", strings.TrimSpace(reason), "")
 }
 
-// closeRun turns the checks into a verdict (overall blocked when blocked is the reason), writes verdict.md,
+// closeRun turns the checks into a verdict (a recorded fail survives a blocked reason), writes verdict.md,
 // publishes the evidence, marks the run submitted and reports the session done. A run of a project that asks before
 // posting stops at awaiting-approval instead, with comment.md written and nothing published or posted. skipBase is
 // the reason the tester gave for not running the base, and lands in Limits.
@@ -331,7 +351,13 @@ func (s *Service) closeRun(ctx context.Context, run Run, checks []Check, summary
 	claims := claimsChange(runDir)
 	v := Verdict{Checks: checks, Summary: strings.TrimSpace(summary), SkipBase: skipBase}
 	if blocked != "" {
-		v.Overall, v.Reasons = CheckBlocked, []string{blocked}
+		v.Overall, v.Reasons = derive(checks)
+		if v.Overall == CheckFail {
+			v.Reasons = append([]string{blocked}, v.Reasons...)
+			v.StoppedEarly = blocked
+		} else {
+			v.Overall, v.Reasons = CheckBlocked, []string{blocked}
+		}
 	} else {
 		v.Overall, v.Reasons = derive(checks)
 	}
@@ -339,7 +365,7 @@ func (s *Service) closeRun(ctx context.Context, run Run, checks []Check, summary
 	if err := s.store.WriteFile(run.ID, "verdict.md", []byte(md)); err != nil {
 		return Verdict{}, err
 	}
-	if err := publishArtifacts(sessionartifacts.Dir(s.store.dataDir(), domain.SessionID(run.SessionID)), runDir, md, renderIndex(run, v, videos)); err != nil {
+	if err := publishArtifacts(sessionartifacts.Dir(s.store.dataDir(), domain.SessionID(run.SessionID)), runDir, md, renderIndex(run, v, videos), videos); err != nil {
 		return Verdict{}, fmt.Errorf("copy evidence to the session artifact dir: %w", err)
 	}
 	if s.mustAsk(run, v) { // compose the comment and stop: nothing is published or posted until the user approves it
@@ -471,12 +497,23 @@ func renderVerdict(run Run, v Verdict, claims bool, videos []legVideo, runDir st
 			p("Daemon: %s\n", run.Error)
 		}
 	}
+	if v.StoppedEarly != "" {
+		p("Stopped early: %s\n", v.StoppedEarly)
+	}
 	if v.Summary != "" {
 		p("## Summary\n\n%s\n", v.Summary)
 	}
-	if len(run.Gaps) > 0 {
+	var gaps []string
+	for _, g := range run.Gaps {
+		if strings.HasPrefix(g, "The PR build started without its sample content (seed step ") || strings.HasPrefix(g, "The main build started without its sample content (seed step ") {
+			limits = append(limits, g)
+		} else {
+			gaps = append(gaps, g)
+		}
+	}
+	if len(gaps) > 0 {
 		p("## Gaps\n\nWhat intake could not get; none of it changes the result.\n")
-		for _, g := range run.Gaps {
+		for _, g := range gaps {
 			p("- %s", g)
 		}
 		p("")
@@ -569,7 +606,7 @@ func renderIndex(run Run, v Verdict, videos []legVideo) string {
 
 // publishArtifacts copies the receipts and each leg's videos into the session's artifact dir and writes verdict.md and
 // index.md beside them; index.md with relative <img> links is how AO shows content inline in the session.
-func publishArtifacts(dir, runDir, verdictMD, indexMD string) error {
+func publishArtifacts(dir, runDir, verdictMD, indexMD string, videos []legVideo) error {
 	if dir == "" {
 		return errors.New("no artifact dir for this session")
 	}
@@ -581,11 +618,22 @@ func publishArtifacts(dir, runDir, verdictMD, indexMD string) error {
 	for _, f := range files {
 		copies[f] = filepath.Join(dir, relPath(runDir, f))
 	}
-	for _, leg := range []string{"head", "base"} { // each leg's recording and cut land beside verdict.md
-		copies[recordingPath(runDir, leg)], copies[cutPath(runDir, leg)] = filepath.Join(dir, leg+".mp4"), filepath.Join(dir, leg+"-cut.mp4")
+	for _, video := range videos {
+		if video.raw {
+			copies[cmp.Or(video.source, recordingPath(runDir, video.leg))] = filepath.Join(dir, video.leg+".mp4")
+		}
+		if video.cut {
+			copies[cutPath(runDir, video.leg)] = filepath.Join(dir, video.leg+"-cut.mp4")
+		}
+		for _, clip := range video.clips {
+			copies[clip] = filepath.Join(dir, "clips", filepath.Base(clip))
+		}
 	}
 	for src, dst := range copies {
 		if fileExists(src) {
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+				return err
+			}
 			if err := copyFile(src, dst); err != nil {
 				return err
 			}

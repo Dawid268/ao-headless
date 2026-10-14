@@ -44,7 +44,7 @@ var (
 		"Bash(gh pr unlock:*)", "Bash(gh pr update-branch:*)", "Bash(gh issue:*)", "Bash(gh api:*)", "Bash(gh release:*)",
 		"Bash(gh repo:*)", "Bash(gh workflow:*)", "Bash(gh run:*)", "Bash(gh gist:*)", "Bash(gh label:*)", "Bash(gh secret:*)",
 		"Bash(gh variable:*)", "Bash(gh ssh-key:*)", "Bash(gh gpg-key:*)", "Bash(gh cache:*)", "Bash(gh agent-task:*)", "Bash(gh auth:*)",
-		"Bash(ao testing start:*)", "Bash(ao testing post:*)", "Bash(ao testing prune:*)", "Bash(ao spawn:*)", "Bash(ao session:*)", "Bash(ao send:*)", "Bash(ao pr:*)",
+		"Bash(ao testing start:*)", "Bash(ao testing post:*)", "Bash(ao testing prune:*)", "Bash(ao testing test:*)", "Bash(ao spawn:*)", "Bash(ao session:*)", "Bash(ao send:*)", "Bash(ao pr:*)",
 		"Bash(ao review:*)", "Bash(ao project:*)", "Bash(ao orchestrator:*)", "Bash(ao automation:*)", "Bash(ao cue:*)",
 		"Bash(ao stop:*)", "Bash(ao start:*)", "Bash(ao import:*)", "Bash(ao remote-host:*)", "Bash(ao browser:*)",
 		"Bash(ao preview:*)", "Bash(ao render:*)", "Bash(ao dev:*)",
@@ -81,7 +81,7 @@ func GuardEnv(env map[string]string, runDir string) {
 	env["GIT_CONFIG_COUNT"] = strconv.Itoa(base + len(pushPrefixes))
 }
 
-// RefuseTester refuses a verb only the user may run (start, post, prune) when the request names a tester's own session:
+// RefuseTester refuses a verb only the user may run (start, post, prune, test) when the request names a tester's own session:
 // one that has a run or a spawn marker. The CLI sends AO_SESSION_ID, so this holds for any harness, whatever its tool
 // rules; the deny list and GuardEnv stay as the first line. A request that names no session is the user's.
 func (s *Service) RefuseTester(sessionID, verb string) error {
@@ -91,7 +91,7 @@ func (s *Service) RefuseTester(sessionID, verb string) error {
 	}
 	_, spawnedBy := s.store.spawnedSession(sessionID)
 	if _, gerr := s.store.Get(id); gerr == nil || spawnedBy {
-		return apierr.Forbidden("TESTING_TESTER_FORBIDDEN", fmt.Sprintf("`ao testing %s` is for the user: a Litmus tester cannot start runs, post comments or prune; end the run with `ao testing submit`", verb))
+		return apierr.Forbidden("TESTING_TESTER_FORBIDDEN", fmt.Sprintf("`ao testing %s` is for the user: a Litmus tester cannot run PR tests, start runs, post comments or prune; end the run with `ao testing submit`", verb))
 	}
 	return nil
 }
@@ -124,9 +124,9 @@ func IsRunDir(dataDir, path string) bool {
 // neither forgets an expiry nor repeats it.
 const reapedFile = "reaped"
 
-// SweepExpired closes every run past its deadline: the run flips to expired (so
-// every verb refuses), the session is stopped through kill, the engines close
-// and the legs are cleaned. A run is marked reaped only once all of that has
+// SweepExpired closes every run past its deadline. A run with checks is finished with what exists, as a submit would
+// (see closeAtDeadline). Any other run flips to expired (so every verb refuses), the session is stopped through kill,
+// the engines close and the legs are cleaned. A run is marked reaped only once all of that has
 // worked and no long verb is still in flight, so anything else is retried on
 // the next tick. State is on disk, so a restarted daemon picks up runs the
 // previous one never got to.
@@ -154,6 +154,9 @@ func (s *Service) SweepExpired(ctx context.Context, kill func(ctx context.Contex
 			continue
 		}
 		if run.State != RunExpired && !s.clock().After(run.Deadline) {
+			continue
+		}
+		if s.closeAtDeadline(ctx, run, log) {
 			continue
 		}
 		if _, err := s.update(run.ID, func(r *Run) {
@@ -186,6 +189,64 @@ func (s *Service) SweepExpired(ctx context.Context, kill func(ctx context.Contex
 	}
 }
 
+// closeAtDeadline finishes a run that ran out of time with checks: every check without a result becomes skipped
+// ("ran out of time"), the verdict is derived from what exists, verdict.md and comment.md are written, and the run
+// follows its comment mode as a submit does. It reports whether the sweep is done with the run for this tick: it was
+// closed, or a long verb is in flight and the next tick tries again. False sends the run down the plain expiry, which
+// is also where a close that failed ends up. A run whose tester never ran intake has nothing to salvage.
+func (s *Service) closeAtDeadline(ctx context.Context, run Run, log *slog.Logger) bool {
+	checks, err := s.store.Checks(run.ID)
+	if err != nil || len(checks) == 0 || run.Error == ReasonNoIntake {
+		return false
+	}
+	if s.inFlight(run.ID) {
+		return true
+	}
+	s.mu.Lock()
+	done, err := s.markBusy(run.ID, "submit")
+	if err != nil {
+		s.mu.Unlock()
+		return true // a submit or launch began in between
+	}
+	defer done()
+	run, err = s.store.Get(run.ID)
+	if err != nil {
+		s.mu.Unlock()
+		log.Warn("litmus: could not read a run at its deadline", "error", err)
+		return false
+	}
+	if (run.State.Closed() && run.State != RunExpired) || s.reaped(run.ID) {
+		s.mu.Unlock()
+		return true
+	}
+	checks, err = s.store.Checks(run.ID)
+	if err != nil || len(checks) == 0 || run.Error == ReasonNoIntake {
+		s.mu.Unlock()
+		return false
+	}
+	for i := range checks {
+		if !slices.Contains(outcomes, checks[i].State) {
+			checks[i].State, checks[i].Note = CheckSkipped, ReasonOutOfTime
+		}
+	}
+	err = s.store.SaveChecks(run.ID, checks)
+	s.mu.Unlock()
+	if err != nil {
+		log.Warn("litmus: could not save the checks of a run at its deadline", "run", run.ID, "error", err)
+		return false
+	}
+	why := "" // the head checks the tester reached but did not repeat on the base say so
+	if _, notRun := baseCoverage(checks); len(notRun) > 0 {
+		why = ReasonOutOfTime
+	}
+	if _, err := s.closeRun(ctx, run, skipOnBase(checks, why), "", "", why); err != nil {
+		log.Warn("litmus: could not close a run at its deadline", "run", run.ID, "error", err)
+		return false
+	}
+	log.Info("litmus: run closed at its deadline", "run", run.ID)
+	return true
+}
+
 // expireUnstarted expires the run of every tester that has not completed intake (no run.json, or one still in intake
 // with no checks) once its session has been exited or idle for IdleBudget, or SpawnBudget has passed since it was
 // spawned. The run keeps the reason, and the loop in SweepExpired then stops the session. It reports whether any run
@@ -215,7 +276,7 @@ func (s *Service) expireUnstarted(ctx context.Context, log *slog.Logger) (change
 				continue
 			}
 		}
-		if !s.gaveUp(ctx, sid, sp) {
+		if s.inFlight(id) || !s.gaveUp(ctx, sid, sp) { // an intake or prepare in flight is a tester at work
 			continue
 		}
 		s.mu.Lock()

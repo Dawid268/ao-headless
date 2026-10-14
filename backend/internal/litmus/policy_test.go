@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -98,13 +99,17 @@ func TestSweepExpiredTransitionsAndRestart(t *testing.T) {
 	is(t, "TESTING_RUN_CLOSED")(svc.Submit(ctx, "old", "", ""))
 	is(t, "")(svc.CheckAdd(ctx, "young", "still open", "x", ""))
 
-	// A new daemon over the same data dir knows what was reaped from disk alone.
+	// A new daemon over the same data dir knows what was reaped from disk alone: it leaves old and lazy be, and closes
+	// young (it has a check) with that check skipped, without killing anything itself.
 	again := New(NewStore(dir), func() time.Time { return now.Add(time.Hour) }).WithGH(fixtureGH(t))
-	if got := sweep(again, nil); !slices.Equal(got, []string{"young"}) {
-		t.Fatalf("restart killed %v, want only young", got)
+	if got := sweep(again, nil); got != nil {
+		t.Fatalf("restart killed %v", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "litmus", "runs", "run_young", reapedFile)); err != nil {
-		t.Fatal(err)
+	if run, _ := again.store.Get("run_young"); run.State != RunSubmitted {
+		t.Fatalf("young = %s, want it closed at its deadline", run.State)
+	}
+	if checks, _ := again.store.Checks("run_young"); len(checks) != 1 || checks[0].State != CheckSkipped || checks[0].Note != ReasonOutOfTime {
+		t.Fatalf("young's checks = %+v", checks)
 	}
 }
 
@@ -184,6 +189,142 @@ func TestSweepReapsATesterThatNeverRanIntake(t *testing.T) {
 	}
 	if run, _ := svc.store.Get("run_slow"); run.State != RunExpired || run.Error != ReasonNoIntake {
 		t.Fatalf("slow = %+v", run)
+	}
+}
+
+func TestSweepSparesATesterWithIntakeOrPrepareInFlight(t *testing.T) {
+	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	svc := New(NewStore(t.TempDir()), func() time.Time { return now }).WithGH(fixtureGH(t))
+	spawnTester(t, svc, "s1")
+	for _, verb := range []string{"intake", "prepare"} {
+		svc.busy["run_s1 "+verb] = busyVerb{since: now, done: make(chan struct{})}
+		now = now.Add(SpawnBudget + time.Second)
+		if got := sweep(svc, nil); got != nil {
+			t.Fatalf("killed %v while %s was in flight", got, verb)
+		}
+		delete(svc.busy, "run_s1 "+verb)
+	}
+	if got := sweep(svc, nil); !slices.Equal(got, []string{"s1"}) {
+		t.Fatalf("killed %v once nothing was in flight", got)
+	}
+}
+
+// A run with checks that reaches its deadline is finished with what exists, and then follows its comment mode.
+func TestSweepClosesARunWithChecksAtItsDeadline(t *testing.T) {
+	for name, c := range map[string]struct {
+		ask  bool
+		mode string
+		want RunState
+		sent bool
+	}{
+		"post":       {false, CommentPost, RunSubmitted, true},
+		"ask":        {true, CommentPost, RunAwaitingApproval, false},
+		"no comment": {false, CommentOff, RunSubmitted, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, runDir, g := askSvc(t, c.ask)
+			_, err := svc.update("run_s1", func(r *Run) { r.Comment = c.mode })
+			is(t, "")(nil, err)
+			checks, _ := svc.store.Checks("run_s1")
+			is(t, "")(nil, svc.store.SaveChecks("run_s1", append(checks,
+				Check{ID: "c4", Name: "late check", Expect: "opens", State: CheckRunning},
+				Check{ID: "c5", Name: "late check", Expect: "opens", State: CheckPending, Leg: "base"})))
+			run, _ := svc.store.Get("run_s1")
+			svc.clock = func() time.Time { return run.Deadline.Add(time.Second) }
+			sweep(svc, nil)
+			got, _ := svc.store.Get("run_s1")
+			if got.State != c.want || (len(g.sent) > 0) != c.sent {
+				t.Fatalf("state %s (want %s), comments sent %q", got.State, c.want, g.sent)
+			}
+			saved, _ := svc.store.Checks("run_s1")
+			for _, i := range []int{3, 4} {
+				if saved[i].State != CheckSkipped || saved[i].Note != ReasonOutOfTime {
+					t.Errorf("%s = %+v, want skipped %q", saved[i].ID, saved[i], ReasonOutOfTime)
+				}
+			}
+			for _, f := range []string{"verdict.md", "comment.md"} {
+				exists(t, filepath.Join(runDir, f))
+			}
+			if md, _ := os.ReadFile(filepath.Join(runDir, "verdict.md")); !strings.Contains(string(md), "# Verdict: pass") {
+				t.Errorf("verdict.md:\n%s", md)
+			}
+			if sweep(svc, nil); len(g.sent) > 1 {
+				t.Errorf("the next sweep posted again: %q", g.sent)
+			}
+		})
+	}
+}
+
+func TestDeadlineCloseLeavesARunSubmittedAfterListingAlone(t *testing.T) {
+	svc, runDir, g := askSvc(t, false)
+	runs, err := svc.store.List()
+	is(t, "")(nil, err)
+	closed := 0
+	svc.closeEngine = func(string) { closed++ }
+	is(t, "")(svc.Submit(ctx, "s1", "original verdict", ""))
+	before, err := os.ReadFile(filepath.Join(runDir, "verdict.md"))
+	is(t, "")(nil, err)
+	if len(g.sent) != 1 || closed != 1 {
+		t.Fatalf("submit: comments %d, teardowns %d", len(g.sent), closed)
+	}
+	svc.clock = func() time.Time { return runs[0].Deadline.Add(time.Second) }
+	if !svc.closeAtDeadline(ctx, runs[0], quiet) {
+		t.Fatal("a run submitted after listing was not handled")
+	}
+	after, err := os.ReadFile(filepath.Join(runDir, "verdict.md"))
+	is(t, "")(nil, err)
+	if len(g.sent) != 1 || closed != 1 || string(after) != string(before) {
+		t.Fatalf("closed again: comments %d, teardowns %d, verdict changed %t", len(g.sent), closed, string(after) != string(before))
+	}
+	if svc.inFlight(runs[0].ID) {
+		t.Fatal("the skipped close did not release its busy marker")
+	}
+}
+
+func TestDeadlineCloseLeavesClosedOrReapedRunsAlone(t *testing.T) {
+	for _, state := range []RunState{RunSubmitted, RunAwaitingApproval, RunCleaned, RunExpired} {
+		t.Run(string(state), func(t *testing.T) {
+			svc, runDir, g := askSvc(t, false)
+			run, err := svc.store.Get("run_s1")
+			is(t, "")(nil, err)
+			is(t, "")(svc.update(run.ID, func(cur *Run) { cur.State = state }))
+			if state == RunExpired {
+				is(t, "")(nil, svc.store.WriteFile(run.ID, reapedFile, []byte("already reaped")))
+			}
+			is(t, "")(nil, svc.store.WriteFile(run.ID, "verdict.md", []byte("original")))
+			svc.closeEngine = func(string) { t.Error("closed a finished run's engines") }
+			if !svc.closeAtDeadline(ctx, run, quiet) || svc.inFlight(run.ID) {
+				t.Fatal("finished run was not handled or busy marker was retained")
+			}
+			md, err := os.ReadFile(filepath.Join(runDir, "verdict.md"))
+			if err != nil || string(md) != "original" || len(g.sent) != 0 {
+				t.Fatalf("finished run changed: verdict %q, error %v, comments %d", md, err, len(g.sent))
+			}
+		})
+	}
+}
+
+func TestDeadlineCloseKeepsAReceiptThatArrivedBeforeMarkBusy(t *testing.T) {
+	svc, _, _ := askSvc(t, false)
+	run, err := svc.store.Get("run_s1")
+	is(t, "")(nil, err)
+	var once sync.Once
+	svc.clock = func() time.Time {
+		once.Do(func() { // markBusy runs after the first ledger read
+			checks, err := svc.store.Checks(run.ID)
+			is(t, "")(nil, err)
+			checks[0].Receipts = append(checks[0].Receipts, Receipt{Seq: 99, Leg: "head", Action: "click"})
+			is(t, "")(nil, svc.store.SaveChecks(run.ID, checks))
+		})
+		return run.Deadline.Add(time.Second)
+	}
+	if !svc.closeAtDeadline(ctx, run, quiet) {
+		t.Fatal("deadline close was not handled")
+	}
+	checks, err := svc.store.Checks(run.ID)
+	is(t, "")(nil, err)
+	if !slices.ContainsFunc(checks[0].Receipts, func(r Receipt) bool { return r.Seq == 99 }) {
+		t.Fatalf("the new receipt was overwritten: %+v", checks[0].Receipts)
 	}
 }
 

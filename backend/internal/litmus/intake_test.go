@@ -150,7 +150,7 @@ func TestIntakeWritesContextPack(t *testing.T) {
 		t.Fatalf("second intake: err %v, %d bare clones", err, f.count("clone --bare"))
 	}
 	pack, last := readRunFile(t, svc, run, "context-pack.md"), -1
-	for _, h := range []string{"## 1. PR", "## 2. What the PR says", "## 3. Linked issue", "## 4. Changed files", "### Diff excerpt", "## 5. CI status", "## 6. Recipe", "## 7. Prior runs on this repo", "## 8. What to do next"} {
+	for _, h := range []string{"## 1. PR", "## 2. What the PR says", "## 3. Linked issue", "## 4. Changed files", "### Diff excerpt", "## 5. CI status", "## 6. Recipe", "## 7. What to do next"} {
 		if i := strings.Index(pack, h); i <= last {
 			t.Fatalf("heading %q out of order (at %d, previous %d)", h, i, last)
 		} else {
@@ -158,13 +158,97 @@ func TestIntakeWritesContextPack(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"keep model menu open on Other models", "Author: ronishrohan | State: MERGED", "Base: main@0ca80cfc370b", "Head: fix/model-menu-closes-on-selection@e2204e0f3618",
-		"Size: 2 files, +43/-16", "### frontend/src/renderer", "components/chat/TurnSettingsBar.tsx +7/-0", "full diff: diff.patch", "- test -> SUCCESS", "None linked.", "none yet", "ao testing launch head", "the next changed area from section 4", "every check is something a user would do in the app, in the order of Suggested checks", "Package tests come only after the UI checks, only with at least 5 minutes left, and at most one test check (one command per build)", "## Where the code is", "/repos/orchestratorinc__agent-orchestrator/e2204e0f361867a28310e71421a4227ab1d09544", "/repos/orchestratorinc__agent-orchestrator/0ca80cfc370b21443c4a2b9d22199c047b8c74e7"} {
+		"Size: 2 files, +43/-16", "### frontend/src/renderer", "components/chat/TurnSettingsBar.tsx +7/-0", "full diff: diff.patch", "- test -> SUCCESS", "None linked.", "none yet", "ao testing launch head", "the next changed area from section 4", "every check is something a user would do in the app, in the order of Suggested checks", "## Where the code is", "/repos/orchestratorinc__agent-orchestrator/e2204e0f361867a28310e71421a4227ab1d09544", "/repos/orchestratorinc__agent-orchestrator/0ca80cfc370b21443c4a2b9d22199c047b8c74e7"} {
 		if !strings.Contains(pack, want) {
 			t.Errorf("context-pack.md lacks %q", want)
 		}
 	}
 	if n := len(strings.Fields(pack)); n > maxPackWords {
 		t.Fatalf("pack has %d words", n)
+	}
+}
+
+func TestIntakeWaitsForSpawnMarkerBeforeReadingModes(t *testing.T) {
+	svc, _ := newSvc(t)
+	svc.spawnMarkerWait = 5 * time.Second
+	sessionID := "delayed"
+	markerWritten := make(chan error, 1)
+	go func() {
+		time.Sleep(2 * time.Second)
+		if err := svc.store.markOff("comment", sessionID); err != nil {
+			markerWritten <- err
+			return
+		}
+		if err := svc.store.setSessionProject(sessionID, "p1"); err != nil {
+			markerWritten <- err
+			return
+		}
+		markerWritten <- svc.store.markSpawned(sessionID, spawned{At: time.Now(), Repo: "aoagents/agent-orchestrator", PR: 6394})
+	}()
+
+	run, err := svc.Intake(ctx, sessionID, prURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-markerWritten; err != nil {
+		t.Fatal(err)
+	}
+	if run.Comment != CommentOff || run.ProjectID != "p1" {
+		t.Fatalf("intake read modes before the delayed marker: comment %q project %q", run.Comment, run.ProjectID)
+	}
+}
+
+func TestIntakeMissingSpawnMarkerFailsClosedWithoutWaitingTenSeconds(t *testing.T) {
+	svc, _ := newSvc(t)
+	svc.spawnMarkerWait = time.Millisecond
+	run, err := svc.Intake(ctx, "missing-marker", prURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Comment != CommentOff {
+		t.Fatalf("missing spawn marker allowed comment mode %q, want off", run.Comment)
+	}
+}
+
+func TestIntakeReturnsSpawnMarkerReadErrors(t *testing.T) {
+	svc, _ := newSvc(t)
+	svc.spawnMarkerWait = 0
+	sessionID := "unreadable-marker"
+	if err := os.MkdirAll(svc.store.spawnedDir(), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(svc.store.spawnedDir(), sessionID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Intake(ctx, sessionID, prURL); err == nil || !strings.Contains(err.Error(), "read spawned marker") {
+		t.Fatalf("intake error = %v, want propagated spawned marker read error", err)
+	}
+}
+
+func TestIntakeCorruptSpawnMarkerKeepsCommentOff(t *testing.T) {
+	for _, tc := range []struct{ name, contents string }{
+		{"invalid JSON", "{"},
+		{"missing fields", `{}`},
+		{"different pull request", `{"at":"2026-10-14T00:00:00Z","repo":"other/repo","pr":7}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newSvc(t)
+			svc.spawnMarkerWait = 0
+			sessionID := "corrupt-marker"
+			if err := os.MkdirAll(svc.store.spawnedDir(), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(svc.store.spawnedDir(), sessionID), []byte(tc.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			run, err := svc.Intake(ctx, sessionID, prURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Comment != CommentOff {
+				t.Fatalf("corrupt spawn marker allowed comment mode %q, want off", run.Comment)
+			}
+		})
 	}
 }
 
@@ -208,12 +292,12 @@ func TestIntakeIssuePriorRunsRecipeAndCaps(t *testing.T) {
 		t.Fatalf("issues %+v, want %+v", run.Issues, want)
 	}
 	pack := readRunFile(t, svc, run, "context-pack.md")
-	for _, want := range []string{"[truncated at 1500 words]", "Menu closes by itself", "issue-comment-5", "comment-04", "run_old (#5): # Verdict: fail", "kind: electron"} {
+	for _, want := range []string{"[truncated at 1500 words]", "Menu closes by itself", "issue-comment-5", "comment-04", "kind: electron"} {
 		if !strings.Contains(pack, want) {
 			t.Errorf("context-pack.md lacks %q", want)
 		}
 	}
-	for _, unwanted := range []string{"issue-comment-6", "comment-03", "run_noverdict", "none yet"} {
+	for _, unwanted := range []string{"issue-comment-6", "comment-03", "run_noverdict", "run_old", "none yet"} {
 		if strings.Contains(pack, unwanted) {
 			t.Errorf("context-pack.md has %q", unwanted)
 		}
@@ -243,7 +327,7 @@ func TestDiffExcerpt(t *testing.T) {
 		t.Fatalf("big PR excerpt order: ui %d, named %d, deleted %d, lock %d", ui, named, gone, lock)
 	}
 	huge := strings.Repeat("+"+strings.Repeat("word ", 20)+"\n", 400)
-	pack := renderPack(intakeData{repo: "o/r", pr: pullRequest{Number: 1}, diff: "diff --git a/h b/h\n" + huge}, "", nil)
+	pack := renderPack(intakeData{repo: "o/r", pr: pullRequest{Number: 1}, diff: "diff --git a/h b/h\n" + huge}, "")
 	if n := len(strings.Fields(pack)); n > maxPackWords || !strings.Contains(pack, "full diff: diff.patch") || !strings.Contains(pack, "```diff") {
 		t.Fatalf("pack has %d words or lost its excerpt", n)
 	}
@@ -277,7 +361,7 @@ func TestIntakeFatalFailuresLeaveNoPartialFiles(t *testing.T) {
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		if !slices.Equal(names, []string{"receipts", "run.json"}) { // no diff.patch, files.txt, context-pack.md or .tmp-* files
+		if !slices.Equal(names, []string{"owner-logins.json", "receipts", "run.json"}) { // no diff.patch, files.txt, context-pack.md or .tmp-* files
 			t.Fatalf("%s: files after failure: %v", c.code, names)
 		}
 		if saved, err := svc.store.Get(run.ID); err != nil || saved.State != RunIntake || saved.Error == "" || saved.HeadSHA != "" {
@@ -413,7 +497,7 @@ func TestSuggestedChecksOnThreeRealPRs(t *testing.T) {
 		if got != want {
 			t.Errorf("#%s:\n got %q\nwant %q", n, got, want)
 		}
-		if pack := renderPack(d, "", nil); !strings.Contains(pack, "\n"+want+"\n") || strings.Index(pack, want) > strings.Index(pack, "## 1. PR") {
+		if pack := renderPack(d, ""); !strings.Contains(pack, "\n"+want+"\n") || strings.Index(pack, want) > strings.Index(pack, "## 1. PR") {
 			t.Errorf("#%s: the section is not at the top of the pack", n)
 		}
 		noSlop(t, strings.ReplaceAll(got, "Headline claim", "Main claim"))
@@ -825,42 +909,47 @@ func TestIntakeMergedPRKeepsTheBaseTip(t *testing.T) {
 	}
 }
 
-// Section 8 plans pairs, names the cap, and tells the tester to finish a check on both builds before the next one.
+// Section 8 plans pairs as advice with no cap, and tells the tester to finish a check on both builds before the next one.
 func TestPackSaysHowToPlanAndRunPairs(t *testing.T) {
 	for _, n := range []int{30, 31} {
 		d := intakeData{repo: "o/r", pr: pullRequest{Number: 1}}
 		for i := 0; i < n; i++ {
 			d.files = append(d.files, changedFile{Path: fmt.Sprintf("backend/internal/cli/f%d.go", i), Status: "M", Added: 1})
 		}
-		pack := renderPack(d, "", nil)
-		next := pack[strings.Index(pack, "## 8. What to do next"):]
+		pack := renderPack(d, "")
+		next := pack[strings.Index(pack, "## 7. What to do next"):]
 		plan, other := "Plan at most 6 pairs of checks", "Plan at most 4 pairs"
 		if n > bigFiles {
 			plan, other = "Plan at most 4 pairs of checks", "Plan at most 6 pairs"
 		}
-		for _, want := range []string{plan, "(4 for a PR over 30 files, 6 otherwise)", "split a check that mixes two things", "Litmus accepts at most 6 checks; a main twin is free",
-			"`ao testing launch head`, `ao testing launch base`", "then at once on main with `--leg base`, before the next check", "A check is done only when it has a result on both",
+		for _, want := range []string{plan, "(4 for a PR over 30 files, 6 otherwise)", "split a check that mixes two things", "Litmus enforces no limit on checks",
+			"`ao testing launch head`, `ao testing launch base`", "seed step N failed", "its sample content is missing: do not fail a check", "may itself be a finding", "then at once on main with `--leg base`, before the next check", "A check is done only when it has a result on both",
 			"end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken", "add another pair", "Never add a check that runs on the PR build alone", browserDataRule} {
 			if !strings.Contains(next, want) {
-				t.Errorf("%d files: section 8 lacks %q:\n%s", n, want, next)
+				t.Errorf("%d files: section 7 lacks %q:\n%s", n, want, next)
 			}
 		}
+		if strings.Contains(next, "accepts at most") {
+			t.Errorf("%d files: section 7 states a cap on checks", n)
+		}
 		if strings.Contains(next, other) {
-			t.Errorf("%d files: section 8 also says %q", n, other)
+			t.Errorf("%d files: section 7 also says %q", n, other)
 		}
 	}
 }
 
-// Section 8 sends a PR that touches UI files to the app first and tests last; a PR with none keeps the old steps alone.
-func TestPackSaysUIChecksComeBeforeTests(t *testing.T) {
-	pack := func(path string) string {
-		return renderPack(intakeData{repo: "o/r", pr: pullRequest{Number: 1}, files: []changedFile{{Path: path, Status: "M", Added: 3}}}, "", nil)
-	}
-	const rule = "Package tests come only after the UI checks"
-	if got := pack("frontend/src/renderer/components/chat/Bar.tsx"); !strings.Contains(got, rule) || strings.Index(got, rule) > strings.Index(got, "4. Launch both builds") {
-		t.Errorf("a UI PR's section 8 lacks the rule before launch:\n%s", got)
-	}
-	if got := pack("backend/internal/cli/hooks.go"); strings.Contains(got, rule) || !strings.Contains(got, "ao testing launch head") {
-		t.Errorf("a PR with no UI files got the UI rule:\n%s", got)
+// The pack always sends the tester to observable app checks, never PR/package tests.
+func TestPackDoesNotSuggestRunningPRTests(t *testing.T) {
+	for _, path := range []string{"frontend/src/renderer/components/chat/Bar.tsx", "backend/internal/cli/hooks.go"} {
+		pack := renderPack(intakeData{repo: "o/r", pr: pullRequest{Number: 1}, files: []changedFile{{Path: path, Status: "M", Added: 3}}}, "")
+		const heading = "## 7. What to do next"
+		if !strings.Contains(pack, heading) {
+			t.Fatalf("pack for %s is missing %q", path, heading)
+		}
+		for _, banned := range []string{"ao testing test", "package tests", "with-tests-from", "test check"} {
+			if strings.Contains(pack, banned) {
+				t.Errorf("pack for %s suggests %q:\n%s", path, banned, pack)
+			}
+		}
 	}
 }

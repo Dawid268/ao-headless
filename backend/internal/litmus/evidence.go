@@ -7,6 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	_ "image/jpeg"
+	"image/png"
 	"log/slog"
 	"os"
 	"path"
@@ -45,10 +50,28 @@ var (
 	assetURL  = regexp.MustCompile(`^https://github\.com/user-attachments/assets/[0-9a-fA-F-]{36}$`)
 )
 
+type cropBox struct {
+	x, y, w, h float64
+	vw, vh     float64
+}
+
+// receiptCropBox uses the click target recorded with the receipt. Older
+// receipts have no box and intentionally use the full screenshot.
+func receiptCropBox(r Receipt) (cropBox, bool) {
+	if r.Box == nil || r.Box.W <= 0 || r.Box.H <= 0 {
+		return cropBox{}, false
+	}
+	return cropBox{
+		x: r.Box.X, y: r.Box.Y, w: r.Box.W, h: r.Box.H,
+		vw: r.Box.ViewportWidth, vh: r.Box.ViewportHeight,
+	}, true
+}
+
 // shot is a receipt's after-shot; label is the check in words.
 type shot struct {
 	label string
 	rcpt  Receipt
+	theme string
 }
 
 // hero is one table row's lead image: main and the PR build side by side, or whichever side there is.
@@ -68,6 +91,132 @@ func lastAfterShot(c Check, leg string) (Receipt, bool) {
 	return Receipt{}, false
 }
 
+func openEvidenceImage(path string) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	img, _, err := image.Decode(f)
+	return img, err
+}
+
+func cropRect(bounds image.Rectangle, b cropBox) image.Rectangle {
+	if b.w <= 0 || b.h <= 0 {
+		return bounds
+	}
+	sx, sy := 1.0, 1.0
+	if b.vw > 0 {
+		sx = float64(bounds.Dx()) / b.vw
+	}
+	if b.vh > 0 {
+		sy = float64(bounds.Dy()) / b.vh
+	}
+	cx, cy := (b.x+b.w/2)*sx+float64(bounds.Min.X), (b.y+b.h/2)*sy+float64(bounds.Min.Y)
+	w, h := max(b.w*sx+80, 600), max(b.h*sy+80, 400)
+	const aspect = 1.5
+	if w/h < aspect {
+		w = h * aspect
+	} else {
+		h = w / aspect
+	}
+	if w > float64(bounds.Dx()) {
+		w = float64(bounds.Dx())
+	}
+	if h > float64(bounds.Dy()) {
+		h = float64(bounds.Dy())
+	}
+	left, top := cx-w/2, cy-h/2
+	if left < float64(bounds.Min.X) {
+		left = float64(bounds.Min.X)
+	}
+	if top < float64(bounds.Min.Y) {
+		top = float64(bounds.Min.Y)
+	}
+	if left+w > float64(bounds.Max.X) {
+		left = float64(bounds.Max.X) - w
+	}
+	if top+h > float64(bounds.Max.Y) {
+		top = float64(bounds.Max.Y) - h
+	}
+	return image.Rect(int(left), int(top), int(left+w), int(top+h)).Intersect(bounds)
+}
+
+func cropEvidenceImage(src image.Image, b cropBox, hasBox bool) image.Image {
+	if !hasBox {
+		return src
+	}
+	r := cropRect(src.Bounds(), b)
+	if sub, ok := src.(interface {
+		SubImage(image.Rectangle) image.Image
+	}); ok {
+		return sub.SubImage(r)
+	}
+	return src
+}
+
+func scaleEvidenceImage(src image.Image, w, h int) *image.RGBA {
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(dst, dst.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	scale := min(float64(w)/float64(src.Bounds().Dx()), float64(h)/float64(src.Bounds().Dy()))
+	dw, dh := max(1, int(float64(src.Bounds().Dx())*scale)), max(1, int(float64(src.Bounds().Dy())*scale))
+	ox, oy := (w-dw)/2, (h-dh)/2
+	for y := 0; y < dh; y++ {
+		sy := src.Bounds().Min.Y + y*src.Bounds().Dy()/dh
+		for x := 0; x < dw; x++ {
+			sx := src.Bounds().Min.X + x*src.Bounds().Dx()/dw
+			dst.Set(ox+x, oy+y, src.At(sx, sy))
+		}
+	}
+	return dst
+}
+
+// makeBugImage writes one 1200x400 comparison image, with main on the left
+// and the PR on the right. A receipt without a usable box keeps its full shot.
+func makeBugImage(b bugComment, out string) error {
+	pr, prOK := lastAfterShot(b.Check, "head")
+	if !prOK {
+		return errors.New("bug has no PR after-shot")
+	}
+	base, baseOK := Receipt{}, false
+	if b.Base != nil {
+		base, baseOK = lastAfterShot(*b.Base, "base")
+	}
+	if !baseOK {
+		base, baseOK = lastAfterShot(b.Check, "base")
+	}
+	if !baseOK {
+		return errors.New("bug has no base after-shot")
+	}
+	left, err := openEvidenceImage(base.AfterPath)
+	if err != nil {
+		return err
+	}
+	right, err := openEvidenceImage(pr.AfterPath)
+	if err != nil {
+		return err
+	}
+	lb, lok := receiptCropBox(base)
+	rb, rok := receiptCropBox(pr)
+	left = cropEvidenceImage(left, lb, lok)
+	right = cropEvidenceImage(right, rb, rok)
+	canvas := image.NewRGBA(image.Rect(0, 0, 1200, 400))
+	draw.Draw(canvas, image.Rect(0, 0, 600, 400), scaleEvidenceImage(left, 600, 400), image.Point{}, draw.Src)
+	draw.Draw(canvas, image.Rect(600, 0, 1200, 400), scaleEvidenceImage(right, 600, 400), image.Point{}, draw.Src)
+	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
+		return err
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	err = png.Encode(f, canvas)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
 // baseTwin is the index of the base-leg check that gives head check c its base result, or -1.
 func baseTwin(checks []Check, c Check) int {
 	return slices.IndexFunc(checks, func(b Check) bool {
@@ -83,7 +232,7 @@ func planShots(checks []Check) (heroes []hero, extras []shot) {
 		r, ok := lastAfterShot(c, leg)
 		if ok {
 			used[r.Seq] = true
-			return &shot{label, r}
+			return &shot{label: label, rcpt: r}
 		}
 		return nil
 	}
@@ -112,7 +261,20 @@ func planShots(checks []Check) (heroes []hero, extras []shot) {
 	for _, c := range checks {
 		for _, r := range c.Receipts {
 			if !used[r.Seq] && fileExists(r.AfterPath) && len(heroes)+len(extras) < maxShots {
-				extras = append(extras, shot{rowLabel(checks, c), r})
+				extras = append(extras, shot{label: rowLabel(checks, c), rcpt: r})
+			}
+		}
+	}
+	// Theme pairs are required evidence, so the cap on optional step shots cannot
+	// discard a check's light or dark capture.
+	for _, c := range checks {
+		for _, r := range c.Receipts {
+			for _, theme := range r.ThemeShots {
+				if fileExists(theme.Path) {
+					pair := r
+					pair.AfterPath = theme.Path
+					extras = append(extras, shot{label: rowLabel(checks, c), rcpt: pair, theme: theme.Theme})
+				}
 			}
 		}
 	}
@@ -122,6 +284,7 @@ func planShots(checks []Check) (heroes []hero, extras []shot) {
 // evItem is one image in the comment: file is its name in the stage dir and in the repo, kind where it goes.
 type evItem struct {
 	file, alt, caption, url string
+	check                   string // non-empty for one check's bug image
 	kind                    int
 }
 
@@ -130,6 +293,8 @@ const (
 	kindHero = iota
 	kindGIF
 	kindShot
+	kindTheme // required check-end evidence; captions do not consume the prose cap
+	kindBug   // one cropped comparison image for one PR-introduced bug
 )
 
 func (it evItem) image() string { return "![" + it.alt + "](" + it.url + ")" }
@@ -152,10 +317,18 @@ type evidence struct {
 	limits        []string
 	videos        []vidItem
 	videoState    string
+	bugImages     map[string]string // check name -> published URL
+	checkClips    map[string]string // check name -> published or local clip URL
 }
 
 // videoURLs are the attached videos' links by leg, for the Run.
 func (e evidence) videoURLs() (m map[string]string) {
+	if len(e.checkClips) > 0 {
+		m = make(map[string]string, len(e.checkClips))
+		for name, url := range e.checkClips {
+			m[name] = url
+		}
+	}
 	for _, v := range e.videos {
 		if v.url != "" {
 			if m == nil {
@@ -167,10 +340,13 @@ func (e evidence) videoURLs() (m map[string]string) {
 	return m
 }
 
-// imageChars is the length of the image lines, which do not count against the comment's cap.
+// imageChars counts image lines and required theme captions, which do not consume the comment's prose cap.
 func (e evidence) imageChars() (n int) {
 	for _, it := range e.items {
 		n += len(it.image()) + 1
+		if it.kind == kindTheme {
+			n += len(it.caption) + 2
+		}
 	}
 	return n
 }
@@ -246,6 +422,23 @@ func (s *Service) stageEvidence(ctx context.Context, run Run, v Verdict, dir str
 	}
 	main := run.baseName()
 	v = plainVerdict(run, v)
+	bugs := failingBugComments(v.Checks)
+	s.numberBugComments(run, bugs)
+	for _, b := range bugs {
+		file := fmt.Sprintf("bug-%d.png", b.Number)
+		local := filepath.Join(s.store.root, run.ID, "comments", file)
+		var err error
+		if fileExists(local) {
+			err = copyFile(local, filepath.Join(dir, file))
+		} else {
+			err = makeBugImage(b, filepath.Join(dir, file))
+		}
+		if err != nil {
+			note(err)
+			continue
+		}
+		items = append(items, evItem{file: file, alt: "base branch on the left, PR build on the right", caption: fmt.Sprintf("Bug %d of %d: %s", b.Number, b.Total, b.Check.Name), check: b.Check.Name, kind: kindBug})
+	}
 	heroes, extras := planShots(v.Checks)
 	for _, h := range heroes {
 		if h.pr != nil && h.base != nil {
@@ -270,18 +463,33 @@ func (s *Service) stageEvidence(ctx context.Context, run Run, v Verdict, dir str
 	}
 	for _, x := range extras {
 		leg := x.rcpt.onLeg()
-		f := name(x.label, fmt.Sprintf("%s-step-%d", sideSlug(run, leg), x.rcpt.Seq))
-		if err := s.media.Run(ctx, pngArgs(x.rcpt.AfterPath, filepath.Join(dir, f))...); err != nil {
+		suffix := fmt.Sprintf("%s-step-%d", sideSlug(run, leg), x.rcpt.Seq)
+		if x.theme != "" {
+			suffix = sideSlug(run, leg) + "-" + x.theme + "-preference"
+		}
+		f := name(x.label, suffix)
+		args := pngArgs(x.rcpt.AfterPath, filepath.Join(dir, f))
+		if x.theme != "" {
+			args = []string{"-y", "-i", x.rcpt.AfterPath, "-frames:v", "1", filepath.Join(dir, f)}
+		}
+		if err := s.media.Run(ctx, args...); err != nil {
 			note(err)
 			limits = append(limits, "I could not prepare a screenshot for "+lowerFirst(x.label)+".")
 			continue
 		}
-		args := x.rcpt.Args // what was typed stays out of a public comment
+		args = x.rcpt.Args // what was typed stays out of a public comment
 		if x.rcpt.Action != "press" {
 			args = args[:min(len(args), 1)]
 		}
 		step := fmt.Sprintf("Step %d, %s: %s", x.rcpt.Seq, sideLabel(run, leg), mdText(stepText(x.rcpt.Action, args, x.rcpt.TargetRole, x.rcpt.TargetName), 100))
-		items = append(items, evItem{file: f, caption: step, kind: kindShot})
+		alt := ""
+		kind := kindShot
+		if x.theme != "" {
+			step = x.label + ", " + sideLabel(run, leg) + ", " + x.theme + " system theme preference. Full retina size; embedded browser pages are separate targets and never appear in these shots."
+			alt = step
+			kind = kindTheme
+		}
+		items = append(items, evItem{file: f, alt: alt, caption: step, kind: kind})
 	}
 	for _, leg := range []string{"head", "base"} {
 		cut := cutPath(filepath.Dir(dir), leg)
@@ -370,7 +578,7 @@ var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 // publishEvidence prepares the comment's images and publishes them to the repo's litmus/evidence branch. It never
 // fails the submit: whatever goes wrong becomes the state failed:<reason> and a Limits line.
 func (s *Service) publishEvidence(ctx context.Context, run Run, v Verdict) evidence {
-	if run.Evidence != EvidencePost {
+	if run.Evidence != EvidencePost || len(failingBugComments(v.Checks)) == 0 {
 		return evidence{state: EvidenceOff}
 	}
 	dir := filepath.Join(s.store.root, run.ID, "evidence")
@@ -397,11 +605,73 @@ func (s *Service) publishEvidence(ctx context.Context, run Run, v Verdict) evide
 		return s.evidenceFailed(run, err)
 	}
 	private := s.repoPrivate(gctx, run)
+	bugImages := map[string]string{}
 	for i := range items {
 		items[i].url = evidenceURL(run.Repo, sha, path.Join(evidencePath(run), items[i].file), private)
+		if items[i].kind == kindBug && items[i].check != "" {
+			bugImages[items[i].check] = items[i].url
+		}
 	}
 	s.commentLogf(run, "evidence published at %s: %d files", sha, len(items))
-	return evidence{state: "published", commit: sha, items: items, limits: limits}
+	return evidence{state: "published", commit: sha, items: items, limits: limits, bugImages: bugImages}
+}
+
+// publishCheckClips uploads each failing check's own PR clip. Local draft
+// links are replaced only after GitHub serves the attachment back as video.
+func (s *Service) publishCheckClips(ctx context.Context, run Run, v Verdict) (map[string]string, string) {
+	if run.Evidence != EvidencePost {
+		return nil, "off"
+	}
+	clips := make(map[string]string)
+	attempted := 0
+	var first error
+	for _, bug := range failingBugComments(v.Checks) {
+		file := checkClipPath(filepath.Join(s.store.root, run.ID), bug.Check.ID)
+		if !fileExists(file) {
+			continue
+		}
+		attempted++
+		id, err := s.repoID(ctx, run)
+		var url string
+		if err == nil {
+			url, err = s.uploadVideoFile(ctx, run, file, "check-"+bug.Check.ID, id)
+		}
+		if err != nil {
+			first = cmp.Or(first, err)
+			s.commentLogf(run, "video of check %s: %v", bug.Check.Name, err)
+			continue
+		}
+		clips[bug.Check.Name] = url
+	}
+	if attempted == 0 {
+		return clips, "off"
+	}
+	if len(clips) == attempted {
+		return clips, "attached"
+	}
+	if len(clips) > 0 {
+		return clips, "partial"
+	}
+	reason, _, _ := strings.Cut(s.scrub(first.Error()), "\n")
+	return clips, "failed:" + clip(strings.TrimSpace(reason), 120)
+}
+
+func (s *Service) uploadVideoFile(ctx context.Context, run Run, file, name string, repoID int64) (string, error) {
+	uctx, cancel := context.WithTimeout(ctx, uploadTimeout)
+	out, err := s.gh.Run(uctx, "api", "--method", "POST", "-H", "Content-Type: video/mp4",
+		fmt.Sprintf("%s?name=%s.mp4&content_type=video%%2Fmp4&repository_id=%d", assetsURL, name, repoID), "--input", file)
+	cancel()
+	if err != nil {
+		return "", err
+	}
+	var up struct{ URL string }
+	if json.Unmarshal(out, &up) != nil || !assetURL.MatchString(up.URL) {
+		return "", errors.New("GitHub's answer to the upload had no video link")
+	}
+	if err := s.verifyVideo(ctx, up.URL); err != nil {
+		return "", err
+	}
+	return up.URL, nil
 }
 
 // publishVideos uploads each leg's video (the PR build's first), its recording or, when the live recording was lost,
@@ -447,7 +717,7 @@ func (s *Service) publishVideos(ctx context.Context, run Run, videos []legVideo)
 func (s *Service) attachVideo(ctx context.Context, run Run, v legVideo, repoID int64) (vidItem, error) {
 	leg := v.leg
 	runDir, it := filepath.Join(s.store.root, run.ID), vidItem{leg: leg}
-	file := recordingPath(runDir, leg)
+	file := cmp.Or(v.source, recordingPath(runDir, leg))
 	st, err := os.Stat(file)
 	if !v.raw {
 		it.stitched, it.span, file = true, slideSpan(runDir, leg), cutPath(runDir, leg)
@@ -461,21 +731,10 @@ func (s *Service) attachVideo(ctx context.Context, run Run, v legVideo, repoID i
 	if err != nil {
 		return it, err
 	}
-	uctx, cancel := context.WithTimeout(ctx, uploadTimeout)
-	out, err := s.gh.Run(uctx, "api", "--method", "POST", "-H", "Content-Type: video/mp4",
-		fmt.Sprintf("%s?name=%s.mp4&content_type=video%%2Fmp4&repository_id=%d", assetsURL, sideSlug(run, leg), repoID), "--input", file)
-	cancel()
+	it.url, err = s.uploadVideoFile(ctx, run, file, sideSlug(run, leg), repoID)
 	if err != nil {
 		return it, err
 	}
-	var up struct{ URL string }
-	if json.Unmarshal(out, &up) != nil || !assetURL.MatchString(up.URL) {
-		return it, errors.New("GitHub's answer to the upload had no video link")
-	}
-	if err := s.verifyVideo(ctx, up.URL); err != nil {
-		return it, err
-	}
-	it.url = up.URL
 	if i := slices.IndexFunc(run.Legs, func(l Leg) bool { return l.Name == leg }); i >= 0 && !it.cut && !it.stitched && !run.Legs[i].RecordStartedAt.IsZero() {
 		it.span = max(run.Legs[i].RecordStoppedAt.Sub(run.Legs[i].RecordStartedAt), 0) // the cut's length is not known
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,6 +26,7 @@ type fakeEngine struct {
 	noImg bool // diff writes no image, as the engine does when it has nothing to diff
 	// noCursor makes a record start with --cursor fail, as an engine that cannot draw the overlay would.
 	noCursor bool
+	shot     []byte
 	hook     func(args []string) // called with each engine call's arguments, before it is answered
 }
 
@@ -43,10 +45,14 @@ func (f *fakeEngine) exec(ctx context.Context, _ string, args, env []string) (st
 		return "", errors.New("unknown flag --cursor")
 	}
 	if args[2] == "screenshot" {
-		_ = os.WriteFile(args[3], []byte("png"), 0o600)
+		data := f.shot
+		if data == nil {
+			data = pngBytes(tinyOpaque())
+		}
+		_ = os.WriteFile(args[3], data, 0o600)
 	}
 	if args[2] == "diff" && !f.noImg {
-		_ = os.WriteFile(args[7], []byte("png"), 0o600)
+		_ = os.WriteFile(args[7], pngBytes(tinyOpaque()), 0o600)
 	}
 	if args[2] == "hang" {
 		<-ctx.Done()
@@ -112,6 +118,96 @@ func TestDriveMapsVerbsAndNormalizesRefs(t *testing.T) {
 	}
 }
 
+func TestBoxFieldPreservesNegativeCoordinates(t *testing.T) {
+	const padded = "x:      48\ny:      48\nwidth:  1184\nheight: 18"
+	const wrapped = `{"success":true,"data":{"height":18,"width":1184,"x":48,"y":48},"error":null}`
+	for _, c := range []struct {
+		out, name string
+		want      float64
+	}{
+		{`{"x":-12.5}`, "x", -12.5},
+		{`x: -12.5`, "x", -12.5},
+		{`{"width":320.25}`, "width", 320.25},
+		{`{"prefix":99,"xOffset":100,"x":-12.5}`, "x", -12.5},
+		{padded, "x", 48},
+		{padded, "y", 48},
+		{padded, "width", 1184},
+		{padded, "height", 18},
+		{wrapped, "x", 48},
+		{wrapped, "y", 48},
+		{wrapped, "width", 1184},
+		{wrapped, "height", 18},
+	} {
+		got, ok := boxField(c.out, c.name)
+		if !ok || got != c.want {
+			t.Errorf("boxField(%q, %q) = %v, %t; want %v, true", c.out, c.name, got, ok, c.want)
+		}
+	}
+}
+
+func TestDriveClickTabDriftReturnsErrorWithoutClick(t *testing.T) {
+	svc, f, _, _ := driveSvc(t)
+	initial := "→ [t1] App - http://localhost:5173/#/x\n  [t2] about:blank - about:blank\n"
+	moved := "  [t1] App - http://localhost:5173/#/x\n→ [t2] about:blank - about:blank\n"
+	f.out["tab"] = initial
+	var tabLists int
+	f.hook = func(args []string) {
+		if len(args) == 2 && args[0] == "tab" && args[1] == "list" {
+			tabLists++
+			if tabLists == 2 {
+				f.out["tab"] = moved
+			}
+		}
+	}
+	run, err := svc.store.Get("run_s1")
+	is(t, "")(nil, err)
+	e := svc.engineFor(run.ID, run.Legs[0])
+	e.last = "before.png" // avoid a before-shot, so the first click-point call observes the drift
+	_, err = svc.Drive(ctx, "s1", "click", []string{"e1"})
+	is(t, "TESTING_ENGINE_FAILED")(nil, err)
+	if !strings.Contains(err.Error(), errTabDrift.Error()) {
+		t.Fatalf("error %q does not preserve tab-drift guidance", err)
+	}
+	for _, call := range f.calls {
+		if len(call) > 0 && call[0] == "click" {
+			t.Fatalf("click ran after tab drift: %v", f.calls)
+		}
+	}
+}
+
+func TestDriveClickPointFailuresAreBestEffortAndLogged(t *testing.T) {
+	old := slog.Default()
+	var logs strings.Builder
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	for _, c := range []struct {
+		name  string
+		setup func(*fakeEngine)
+	}{
+		{name: "parse", setup: func(f *fakeEngine) { f.out["get"] = "box unavailable" }},
+		{name: "engine", setup: func(f *fakeEngine) { f.fail["get"] = errors.New("box failed") }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			svc, f, _, _ := driveSvc(t)
+			c.setup(f)
+			run, err := svc.store.Get("run_s1")
+			is(t, "")(nil, err)
+			e := svc.engineFor(run.ID, run.Legs[0])
+			e.last = "before.png" // skip the unrelated first-action before-shot
+			if _, err := svc.Drive(ctx, "s1", "click", []string{"e1"}); err != nil {
+				t.Fatalf("click failed after best-effort point failure: %v", err)
+			}
+			if f.find("click") == nil {
+				t.Fatalf("click was not performed after %s failure: %v", c.name, f.calls)
+			}
+		})
+	}
+	if !strings.Contains(logs.String(), "click point unavailable") {
+		t.Fatalf("debug log does not describe best-effort click-point failures: %q", logs.String())
+	}
+}
+
 func TestDriveRefusals(t *testing.T) {
 	svc, f, _, _ := driveSvc(t)
 	base, err := svc.attachEngine(ctx, "run_s1", Leg{Name: "base", DebugPort: 9401}) // created but not launched
@@ -149,6 +245,17 @@ func TestDriveRefusals(t *testing.T) {
 	is(t, "TESTING_RUN_CLOSED")(svc.Drive(ctx, "s1", "snapshot", nil)) // past the deadline
 }
 
+func TestDriveAllowsMultilineInputAndEnter(t *testing.T) {
+	svc, f, _, _ := driveSvc(t)
+	for _, action := range []string{"type", "fill"} {
+		is(t, "")(svc.Drive(ctx, "s1", action, []string{"e1", "first\nsecond\rthird"}))
+	}
+	is(t, "")(svc.Drive(ctx, "s1", "press", []string{"Enter"}))
+	if f.find("type") == nil || f.find("fill") == nil || f.find("press") == nil || f.find("eval") != nil {
+		t.Fatalf("input actions did not reach the engine directly: %v", f.calls)
+	}
+}
+
 func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	svc, f, r, runDir := driveSvc(t)
 	var console []string
@@ -165,7 +272,7 @@ func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	if res["after"] != "receipts/1-after.png" { // the reply names the shot to Read
 		t.Fatalf("reply names the after-shot %v", res["after"])
 	}
-	if got, want := f.words(), "stream,tab,screenshot,click,wait,screenshot,console"; got != want {
+	if got, want := f.words(), "stream,tab,scrollintoview,get,screenshot,click,wait,screenshot,errors,console,snapshot"; got != want {
 		t.Fatalf("engine calls %s, want %s", got, want)
 	}
 	if w := f.find("wait"); !reflect.DeepEqual(w, []string{"wait", "--load", "load"}) {
@@ -174,7 +281,7 @@ func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	if r.count("sips -Z 1320") != 2 {
 		t.Fatalf("downscale calls: %q", r.calls)
 	}
-	if lines := strings.Split(rec.ConsoleTail, "\n"); len(lines) != 20 || lines[19] != "line 30" {
+	if rec.ConsoleTail != "" {
 		t.Fatalf("console tail %q", rec.ConsoleTail)
 	}
 
@@ -186,7 +293,7 @@ func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	if err != nil || rec.Seq != 2 || rec.Unassigned || rec.Before != filepath.Join(runDir, "receipts", "1-after.png") {
 		t.Fatalf("second receipt %+v err %v", rec, err)
 	}
-	if got := f.words(); got != "fill,wait,screenshot,console" { // the leg already has a before-shot
+	if got := f.words(); got != "fill,wait,screenshot,errors,console,snapshot" { // the leg already has a before-shot
 		t.Fatalf("engine calls %s", got)
 	}
 	if _, err := svc.Drive(ctx, "s1", "snapshot", nil); err != nil { // read-only verbs leave no receipt
@@ -230,10 +337,31 @@ func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	if res, _ = svc.Drive(ctx, "s1", "check", []string{"e4"}); res["receipt"].(actionRec).Seq != 4 {
 		t.Fatalf("seq after restart: %+v", res["receipt"])
 	}
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckPass, ""))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckPass, "", false))
 	if v, err := svc.Submit(ctx, "s1", "", ""); err != nil || v.Overall != CheckPartial { // the attached receipt satisfies submit; the base was never looked at
 		t.Fatalf("submit %+v err %v", v, err)
 	}
+}
+
+func TestDriveFailedShotCannotEndCheck(t *testing.T) {
+	svc, f, _, _ := driveSvc(t)
+	is(t, "")(svc.CheckAdd(ctx, "s1", "menu opens", "list shown", ""))
+	is(t, "")(svc.CheckStart(ctx, "s1", "c1"))
+	f.fail["screenshot"] = errors.New("capture failed")
+	res, err := svc.Drive(ctx, "s1", "click", []string{"e1"})
+	if rec, ok := res["receipt"].(actionRec); err != nil || !ok || rec.After != "" || len(rec.Warnings) == 0 {
+		t.Fatalf("receipt %+v, %v", res, err)
+	}
+	_, err = svc.CheckEnd(ctx, "s1", "c1", CheckFail, "menu closed", false)
+	is(t, "TESTING_CHECK_EVIDENCE")(nil, err)
+	if !strings.Contains(err.Error(), "no picture was saved; act again or end it skipped") {
+		t.Fatalf("evidence refusal: %v", err)
+	}
+	checks, err := svc.store.Checks("run_s1")
+	if err != nil || checks[0].State != CheckRunning || len(checks[0].Receipts) != 1 {
+		t.Fatalf("checks %+v, %v", checks, err)
+	}
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, "capture failed", false))
 }
 
 func TestEngineEnvAndSocketGuard(t *testing.T) {
@@ -434,5 +562,50 @@ func TestDriveNamesTheTargetFromTheLastSnapshot(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(runDir, "actions.jsonl"))
 	if lines := strings.Split(strings.TrimSpace(string(data)), "\n"); len(lines) != 6 || !strings.Contains(lines[1], `"targetRole":"button","targetName":"Go back"`) || strings.Contains(lines[0], "target") {
 		t.Fatalf("actions.jsonl:\n%s", data)
+	}
+}
+
+// A click records where the pointer went, read from the element's box before the click and the viewport size.
+func TestDriveClickRecordsItsPoint(t *testing.T) {
+	svc, f, _, runDir := driveSvc(t)
+	f.out["get"] = `{"x":10,"y":20,"width":100,"height":40}`
+	run, _ := svc.store.Get("run_s1")
+	e := svc.engineFor(run.ID, run.Legs[0])
+	f.out["eval"] = "--- AGENT_BROWSER_PAGE_CONTENT nonce=999999 origin=app ---\n1280 720\n--- END_AGENT_BROWSER_PAGE_CONTENT nonce=999999 ---"
+	size := []float64{1280, 720}
+	e.connectPage = func(context.Context) (*pageCDP, error) {
+		return &pageCDP{request: func(_ context.Context, method string, params, out any) error {
+			if method != "Runtime.evaluate" || params.(map[string]any)["expression"] != "[innerWidth, innerHeight]" {
+				t.Fatalf("unexpected viewport request: %s %v", method, params)
+			}
+			data, _ := json.Marshal(map[string]any{"result": map[string]any{"value": size}})
+			return json.Unmarshal(data, out)
+		}}, nil
+	}
+	res, err := svc.Drive(ctx, "s1", "click", []string{"e1"})
+	rec, _ := res["receipt"].(actionRec)
+	if want := (&clickAt{X: 60, Y: 40, W: 1280, H: 720}); err != nil || !reflect.DeepEqual(rec.Click, want) {
+		t.Fatalf("click point %+v, want %+v, err %v", rec.Click, want, err)
+	}
+	if got := f.find("get"); !reflect.DeepEqual(got, []string{"get", "box", "@e1"}) {
+		t.Fatalf("box asked as %v", got)
+	}
+	if acts := readActions(runDir); len(acts) != 1 || !reflect.DeepEqual(acts[0].Click, rec.Click) {
+		t.Fatalf("actions.jsonl lost the point: %+v", acts)
+	}
+	f.out["get"] = "x: 5 y: 6 width: 10 height: 20" // plain text works too
+	size = []float64{800, 600}
+	res, _ = svc.Drive(ctx, "s1", "click", []string{"e1"})
+	if rec, _ = res["receipt"].(actionRec); !reflect.DeepEqual(rec.Click, &clickAt{X: 10, Y: 16, W: 800, H: 600}) {
+		t.Fatalf("plain text box: %+v", rec.Click)
+	}
+	f.fail["get"] = errors.New("no such element") // best effort: the click still goes ahead, without a point
+	res, err = svc.Drive(ctx, "s1", "click", []string{"e1"})
+	if rec, _ = res["receipt"].(actionRec); err != nil || rec.Click != nil {
+		t.Fatalf("a failed box lookup: %+v, err %v", rec.Click, err)
+	}
+	f.calls = nil
+	if _, err := svc.Drive(ctx, "s1", "fill", []string{"e1", "x"}); err != nil || f.find("get") != nil {
+		t.Fatalf("fill unexpectedly read a target box: %v %v", f.calls, err)
 	}
 }

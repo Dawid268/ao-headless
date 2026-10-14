@@ -183,6 +183,58 @@ func (s *Store) spawnedSession(sessionID string) (sp spawned, found bool) {
 	return sp, err == nil && json.Unmarshal(data, &sp) == nil
 }
 
+// WithSpawnMarkerWait sets how long intake waits for Start's marker to appear.
+func (s *Service) WithSpawnMarkerWait(wait time.Duration) *Service {
+	s.spawnMarkerWait = wait
+	return s
+}
+
+// waitForSpawned waits for Start's marker, which is written after its mode and project files. A missing or corrupt
+// marker is treated as no spawn, so intake cannot infer permission to post; other read errors are returned.
+func (s *Store) waitForSpawned(ctx context.Context, sessionID string, maxWait time.Duration) (spawned, bool, error) {
+	if sessionID == "" || sessionID == "." || sessionID == ".." || filepath.Base(sessionID) != sessionID {
+		return spawned{}, false, fmt.Errorf("invalid session id %q", sessionID)
+	}
+	path := filepath.Join(s.spawnedDir(), sessionID)
+	read := func() (spawned, bool, error) {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return spawned{}, false, nil
+		}
+		if err != nil {
+			return spawned{}, false, fmt.Errorf("read spawned marker for session %s: %w", sessionID, err)
+		}
+		var sp spawned
+		if err := json.Unmarshal(data, &sp); err != nil || sp.At.IsZero() || strings.TrimSpace(sp.Repo) == "" || sp.PR < 1 {
+			return spawned{}, false, nil
+		}
+		return sp, true, nil
+	}
+
+	timer := time.NewTimer(maxWait)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return spawned{}, false, err
+		}
+		if sp, found, err := read(); found || err != nil {
+			return sp, found, err
+		}
+		select {
+		case <-ctx.Done():
+			return spawned{}, false, ctx.Err()
+		case <-timer.C:
+			if err := ctx.Err(); err != nil {
+				return spawned{}, false, err
+			}
+			return read()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *Store) clearSpawned(sessionID string) {
 	_ = os.Remove(filepath.Join(s.spawnedDir(), sessionID))
 }

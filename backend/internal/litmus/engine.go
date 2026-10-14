@@ -30,6 +30,8 @@ var (
 	socketBase = "/tmp" // not os.TempDir(): macOS temp paths would blow the socket path limit
 )
 
+var errTabDrift = errors.New("the app's tab was re-selected after a page it opened took focus, which clears element refs; take a new snapshot and use its refs")
+
 // envAllow is the part of the daemon's environment an engine process may see (mirrors AO's allowlist).
 var envAllow = []string{"path", "lang", "lc_all", "lc_ctype", "term", "colorterm", "no_color", "force_color"}
 
@@ -54,15 +56,17 @@ type execFn func(ctx context.Context, bin string, args, env []string) (string, e
 // its own client process; the engine's per-session daemon lives on between them.
 type Engine struct {
 	EngineInfo
-	exec execFn
-	mu   sync.Mutex         // one action at a time per leg; Drive holds it across a whole receipt
-	last string             // the previous after-shot of this leg
-	refs map[string]refInfo // the last snapshot's elements by @ref, so receipts can name what was acted on
-	once sync.Once          // home dir, config.json, the stream-off call and the app tab lookup
-	tab  string             // the app's own tab: the engine's active tab follows pages the app opens, so it is re-selected when it moves
-	ierr error
-	life context.Context // canceled by Close, which stops anything in flight
-	stop context.CancelFunc
+	exec        execFn
+	connectPage func(context.Context) (*pageCDP, error) // nil uses the leg's CDP endpoint
+	mu          sync.Mutex                              // one action at a time per leg; Drive holds it across a whole receipt
+	last        string                                  // the previous after-shot of this leg
+	theme       string                                  // Litmus's current prefers-color-scheme override; empty follows the system
+	refs        map[string]refInfo                      // the last snapshot's elements by @ref, so receipts can name what was acted on
+	once        sync.Once                               // home dir, config.json, the stream-off call and the app tab lookup
+	tab         string                                  // the app's own tab: the engine's active tab follows pages the app opens, so it is re-selected when it moves
+	ierr        error
+	life        context.Context // canceled by Close, which stops anything in flight
+	stop        context.CancelFunc
 }
 
 func newEngine(info EngineInfo, run execFn) *Engine {
@@ -142,7 +146,7 @@ func (e *Engine) Run(ctx context.Context, timeout time.Duration, args ...string)
 			if active, _ := parseTabs(list); active != e.tab {
 				_, _ = e.invoke(ctx, "tab", e.tab)
 				if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "@e") }) {
-					return "", errors.New("the app's tab was re-selected after a page it opened took focus, which clears element refs; take a new snapshot and use its refs")
+					return "", errTabDrift
 				}
 			}
 		}

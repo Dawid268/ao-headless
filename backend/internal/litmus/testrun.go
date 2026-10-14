@@ -20,11 +20,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
+// MaxTestMin is the most minutes one `test` verb may ask for.
+const MaxTestMin = 10
+
 const (
-	testCap     = 3 * time.Minute // longest one `test` verb runs, inside the run's own budget
-	maxTests    = 6               // test actions per leg
-	testTail    = 40              // lines of output handed back to the tester
-	testFileCap = 4 << 20         // bytes of output kept in the receipt file
+	// DefaultTestBudget caps a test verb unless the request asks for more.
+	DefaultTestBudget = 3 * time.Minute
+	testCap           = DefaultTestBudget // longest one `test` verb runs unless the tester asks for more, inside the run's own budget
+	maxTests          = 6                 // test actions per leg
+	testTail          = 40                // lines of output handed back to the tester
+	testFileCap       = 4 << 20           // bytes of output kept in the receipt file
 )
 
 // TestResult is what the tester gets back from the test verb; the full output is in Receipt.
@@ -172,12 +177,15 @@ func testsRan(argv []string, out string) *int {
 // With withTestsFrom "head" (base leg only) the PR's added or changed test files are first copied from the head
 // checkout into a throwaway git worktree of the base checkout, and the command runs there; the base checkout is
 // never touched.
-func (s *Service) Test(ctx context.Context, sessionID, leg, dir string, argv []string, withTestsFrom string) (TestResult, error) {
+func (s *Service) Test(ctx context.Context, sessionID, leg, dir string, argv []string, withTestsFrom string, minutes int) (TestResult, error) {
 	if leg != "base" && leg != "head" {
 		return TestResult{}, invalid("TESTING_LEG_INVALID", "name the leg with --leg head|base")
 	}
 	if withTestsFrom != "" && (withTestsFrom != "head" || leg != "base") {
 		return TestResult{}, invalid("TESTING_TEST_NOT_ALLOWED", "--with-tests-from head works only with --leg base")
+	}
+	if minutes < 0 || minutes > MaxTestMin {
+		return TestResult{}, invalid("TESTING_TEST_MINUTES_INVALID", fmt.Sprintf("--minutes must be 1 to %d (default %d)", MaxTestMin, int(testCap/time.Minute)))
 	}
 	if len(argv) == 0 {
 		return TestResult{}, invalid("TESTING_ARGS_INVALID", "wrong number of arguments; usage: test --leg head|base --dir <subdir> -- <command...>")
@@ -232,6 +240,9 @@ func (s *Service) Test(ctx context.Context, sessionID, leg, dir string, argv []s
 	s.mu.Unlock()
 	file := filepath.Join(runDir, "receipts", fmt.Sprintf("%d-test.txt", seq))
 	limit := s.testCap
+	if minutes > 0 {
+		limit = time.Duration(minutes) * time.Minute
+	}
 	if left := run.Deadline.Sub(s.clock()); left < limit {
 		limit = left
 	}

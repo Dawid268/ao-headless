@@ -8,8 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/litmus"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
 type testingCapture struct {
@@ -42,6 +47,39 @@ func runTesting(t *testing.T, args ...string) (string, error) {
 	return out, err
 }
 
+func TestTestingCheckEndSameFaultSendsFlag(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "w1")
+	cfg := setConfigEnv(t)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, same := range []bool{false, true} {
+		var body map[string]any
+		calls := 0
+		deps := Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/api/v1/testing/checks/c1/end" {
+				return jsonResponse(http.StatusNoContent, ""), nil
+			}
+			calls++
+			if req.Method != http.MethodPost {
+				t.Errorf("method %s", req.Method)
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			return jsonResponse(http.StatusOK, `{"id":"c1","state":"fail"}`), nil
+		})}}
+		args := []string{"testing", "check", "end", "c1", "--result", "fail", "--note", "same row"}
+		if same {
+			args = append(args, "--same-fault")
+		}
+		_, _, err := executeCLI(t, deps, args...)
+		if err != nil || calls != 1 || body["sessionId"] != "w1" || body["result"] != "fail" || body["note"] != "same row" || (body["sameFault"] == true) != same {
+			t.Fatalf("same=%t, calls=%d, body=%v, err=%v", same, calls, body, err)
+		}
+	}
+}
+
 func TestTestingVerbsSendOneRequestEach(t *testing.T) {
 	verdict := filepath.Join(t.TempDir(), "verdict.txt")
 	if err := os.WriteFile(verdict, []byte("head only"), 0o600); err != nil {
@@ -64,7 +102,9 @@ func TestTestingVerbsSendOneRequestEach(t *testing.T) {
 		{"check add menu --expect shown --leg base", "POST /testing/checks", M{"name": "menu", "expect": "shown", "leg": "base"}},
 		{"check start c1", "POST /testing/checks/c1/start", M{}},
 		{"compare c1", "POST /testing/checks/c1/compare", M{}},
+		{"replay c1 --leg base", "POST /testing/checks/c1/replay", M{"leg": "base"}},
 		{"check end c1 --result fail --note clipped", "POST /testing/checks/c1/end", M{"result": "fail", "note": "clipped"}},
+		{"check end c1 --result fail --note same --same-fault", "POST /testing/checks/c1/end", M{"result": "fail", "note": "same", "sameFault": true}},
 		{"check end c2 --result absent --note nopicker", "POST /testing/checks/c2/end", M{"result": "absent", "note": "nopicker"}},
 		{"submit", "POST /testing/submit", M{}},
 		{"submit --verdict-file " + verdict, "POST /testing/submit", M{"summary": "head only"}},
@@ -99,11 +139,146 @@ func TestTestingVerbsSendOneRequestEach(t *testing.T) {
 	}
 }
 
+func TestTestingLongCallsOutlastServerBudgets(t *testing.T) {
+	recipe, err := litmus.NewStore(t.TempDir()).LoadRecipe(litmus.DefaultRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recipe.Seed) != 2 {
+		t.Fatalf("default recipe seed count = %d, want two for DefaultLaunchBudget", len(recipe.Seed))
+	}
+	for _, tc := range []struct {
+		name, path string
+		args       []string
+		budget     time.Duration
+	}{
+		{"launch head", "/testing/launch", []string{"launch", "head"}, litmus.DefaultLaunchBudget},
+		{"launch base", "/testing/launch", []string{"launch", "base"}, litmus.DefaultLaunchBudget},
+		{"prepare", "/testing/prepare", []string{"prepare"}, litmus.PrepareBudget},
+		{"intake", "/testing/intake", []string{"intake", "o/r#7"}, litmus.IntakeBudget},
+		{"recipe validate with SHA", "/testing/recipe/validate", []string{"recipe", "validate", "recipe.yaml", "--sha", strings.Repeat("a", 40)}, litmus.RecipeValidateBudget},
+		{"post", "/testing/runs/run_w1/post", []string{"post", "run_w1"}, litmus.PostBudget},
+		{"submit", "/testing/submit", []string{"submit"}, litmus.SubmitBudget},
+		{"test default", "/testing/test", []string{"test", "--leg", "head", "--", "go", "test"}, litmus.DefaultTestBudget},
+		{"test extended", "/testing/test", []string{"test", "--leg", "head", "--minutes", "7", "--", "go", "test"}, 7 * time.Minute},
+		{"test maximum", "/testing/test", []string{"test", "--leg", "base", "--minutes", strconv.Itoa(litmus.MaxTestMin), "--", "go", "test"}, time.Duration(litmus.MaxTestMin) * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "w1")
+			cfg := setConfigEnv(t)
+			if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			client := &http.Client{Timeout: time.Second, Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/api/v1"+tc.path {
+					return jsonResponse(http.StatusOK, `{}`), nil
+				}
+				calls++
+				deadline, ok := req.Context().Deadline()
+				if !ok {
+					t.Error("testing request has no client deadline")
+				} else if remaining := time.Until(deadline); remaining < tc.budget+time.Minute-time.Second {
+					t.Errorf("client deadline in %s, want server budget %s plus at least 60s", remaining, tc.budget)
+				}
+				return jsonResponse(http.StatusOK, `{}`), nil
+			})}
+			_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: client}, append([]string{"testing"}, tc.args...)...)
+			if err != nil || calls != 1 {
+				t.Fatalf("calls=%d err=%v", calls, err)
+			}
+			if client.Timeout != time.Second {
+				t.Fatalf("shared client timeout changed to %s", client.Timeout)
+			}
+		})
+	}
+}
+
+func TestTestingCheckEndNamesThemeFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, receipt string
+		want          []string
+	}{
+		{"pair", `{"themeShots":[{"theme":"light","path":"/run/receipts/c1-light.png"},{"theme":"dark","path":"/run/receipts/c1-dark.png"}]}`, []string{"after (light): /run/receipts/c1-light.png", "after (dark): /run/receipts/c1-dark.png"}},
+		{"pinned", `{"themeShots":[{"theme":"light","path":"/run/receipts/c1-light.png"}],"themeNote":"theme pair not taken: the app ignored the system theme"}`, []string{"after (light): /run/receipts/c1-light.png", "theme pair not taken: the app ignored the system theme"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "w1")
+			cfg := setConfigEnv(t)
+			if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001}); err != nil {
+				t.Fatal(err)
+			}
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/api/v1/testing/checks/c1/end" {
+					return jsonResponse(http.StatusOK, `{}`), nil
+				}
+				return jsonResponse(http.StatusOK, fmt.Sprintf(`{"id":"c1","name":"accounts","state":"pass","receipts":[%s]}`, tc.receipt)), nil
+			})}
+			out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: client}, "testing", "check", "end", "c1", "--result", "pass")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range append([]string{"c1 pass accounts"}, tc.want...) {
+				if !strings.Contains(out, want) {
+					t.Errorf("check end lacks %q: %s", want, out)
+				}
+			}
+			if tc.name == "pinned" && strings.Contains(out, "after (dark)") {
+				t.Errorf("pinned page printed a second copy: %s", out)
+			}
+		})
+	}
+}
+
+func TestTestingDrivePrintsCompactText(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "w1")
+	cfg := setConfigEnv(t)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 49301, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	want := "receipt 7: receipts/7-after.png 12ms page errors: none\n- button \"Save\" [ref=e1]"
+	for _, action := range []string{"click", "replay"} {
+		t.Run(action, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if !strings.HasPrefix(req.URL.Path, "/api/v1/testing/") {
+					return jsonResponse(http.StatusNoContent, ""), nil
+				}
+				var body map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				path := "/api/v1/testing/drive"
+				if action == "replay" {
+					path = "/api/v1/testing/checks/c1/replay"
+					if body["leg"] != "base" {
+						t.Errorf("replay body %v", body)
+					}
+				} else if body["action"] != "click" {
+					t.Errorf("drive body %v", body)
+				}
+				if req.URL.Path != path || body["sessionId"] != "w1" {
+					t.Errorf("request %s body %v", req.URL.Path, body)
+				}
+				data, _ := json.Marshal(map[string]any{"text": want, "output": "large engine output"})
+				return jsonResponse(http.StatusOK, string(data)), nil
+			})}
+			args := []string{"testing", "click", "e1"}
+			if action == "replay" {
+				args = []string{"testing", "replay", "c1", "--leg", "base"}
+			}
+			out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: client}, args...)
+			if err != nil || strings.TrimSpace(out) != want {
+				t.Fatalf("output %q, error %v; want %q", out, err, want)
+			}
+		})
+	}
+}
+
 func TestTestingUsageErrors(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "w1")
 	for _, args := range []string{
 		"intake", "launch", "check add x", "check add --expect y", "check end c1", "check end c1 --result maybe",
-		"check start", "check add x --expect y --leg main", "compare", "start", "start --pr x --harness codex", "submit --blocked", "submit --reason x", "submit --skip-base", "submit --skip-base --reason", "submit --skip-base --blocked --reason x", "submit --blocked --reason x --verdict-file f", "click", "fill e1", "type e1", "press", "wait", "wait 5 --text x", "record start", "recipe validate", "status extra",
+		"replay", "replay c1", "replay c1 --leg head", "replay c1 --leg main", "check start", "check add x --expect y --leg main", "compare", "start", "start --pr x --harness codex", "submit --blocked", "submit --reason x", "submit --skip-base", "submit --skip-base --reason", "submit --skip-base --blocked --reason x", "submit --blocked --reason x --verdict-file f", "click", "fill e1", "type e1", "press", "wait", "wait 5 --text x", "record start", "recipe validate", "status extra",
 	} {
 		t.Run(args, func(t *testing.T) {
 			if _, err := runTesting(t, strings.Fields(args)...); ExitCode(err) != 2 {
@@ -118,9 +293,9 @@ func TestTestingUsageErrors(t *testing.T) {
 }
 
 func TestTestingOutputAndDaemonErrors(t *testing.T) {
-	testingDaemon(t, http.StatusOK, `{"run":{"id":"run_1","state":"intake","repo":"o/r","prNumber":7},"checks":[{"id":"c1","name":"menu","state":"pass","receipts":[{"seq":1}]}]}`)
+	testingDaemon(t, http.StatusOK, `{"run":{"id":"run_1","state":"intake","repo":"o/r","prNumber":7},"ownerLogins":"owner logins: unchanged","checks":[{"id":"c1","name":"menu","state":"pass","receipts":[{"seq":1}]}]}`)
 	out, err := runTesting(t, "status")
-	if err != nil || !strings.Contains(out, "run run_1 intake o/r#7") || !strings.Contains(out, "c1 pass menu (1 receipts)") {
+	if err != nil || !strings.Contains(out, "run run_1 intake o/r#7") || !strings.Contains(out, "c1 pass menu (1 receipts)") || !strings.Contains(out, "owner logins: unchanged") {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
 	testingDaemon(t, http.StatusOK, `{"run":{"id":"run_1","state":"intake","repo":"o/r","prNumber":7,"error":"blocked at prepare: no registered AO project matches o/r"},"checks":[]}`)
@@ -223,15 +398,15 @@ func TestTestingPanelVerbs(t *testing.T) {
 		{args: "discard run_ao-25", reply: `{"id":"run_ao-25","state":"cleaned","repo":"o/r","prNumber":7,"commentState":"discarded"}`,
 			method: "POST", path: "/testing/runs/run_ao-25/discard", body: M{"sessionId": "w1"}, want: "comment discarded"},
 		{args: "settings --project p1", reply: `{"askBeforePosting":true}`, method: "GET", path: "/testing/projects/p1/settings", want: "ask-before-posting on"},
-		{args: "settings --project p1 --ask-before-posting off", reply: `{"askBeforePosting":false}`, method: "PUT", path: "/testing/projects/p1/settings", body: M{"askBeforePosting": false}, want: "ask-before-posting off"},
-		{args: "settings --project p1 --ask-before-posting on", reply: `{"askBeforePosting":true}`, method: "PUT", path: "/testing/projects/p1/settings", body: M{"askBeforePosting": true}, want: "ask-before-posting on"},
+		{args: "settings --project p1 --ask-before-posting off", reply: `{"askBeforePosting":false}`, method: "PUT", path: "/testing/projects/p1/settings", body: M{"askBeforePosting": false, "review": false}, want: "ask-before-posting off"},
+		{args: "settings --project p1 --ask-before-posting on", reply: `{"askBeforePosting":true}`, method: "PUT", path: "/testing/projects/p1/settings", body: M{"askBeforePosting": true, "review": false}, want: "ask-before-posting on"},
 		// A set reads the stored settings first and sends them back with only the given flags changed.
 		{args: "settings --project p1 --model opus --effort max", reply: `{"askBeforePosting":true}`, method: "PUT", path: "/testing/projects/p1/settings",
-			body: M{"askBeforePosting": true, "model": "opus", "effort": "max"}, want: "ask-before-posting on"},
+			body: M{"askBeforePosting": true, "model": "opus", "effort": "max", "review": false}, want: "ask-before-posting on"},
 		{args: "settings --project p1 --model=", reply: `{"askBeforePosting":true,"model":"opus","effort":"max"}`, method: "PUT", path: "/testing/projects/p1/settings",
-			body: M{"askBeforePosting": true, "effort": "max"}},
+			body: M{"askBeforePosting": true, "effort": "max", "review": false}},
 		{args: "settings --project p1 --harness codex --model gpt-6.1-sol --effort high", reply: `{"askBeforePosting":true,"harness":"codex","model":"gpt-6.1-sol","effort":"high"}`, method: "PUT", path: "/testing/projects/p1/settings",
-			body: M{"askBeforePosting": true, "harness": "codex", "model": "gpt-6.1-sol", "effort": "high"}, want: "harness codex | model gpt-6.1-sol | effort high"},
+			body: M{"askBeforePosting": true, "harness": "codex", "model": "gpt-6.1-sol", "effort": "high", "review": false}, want: "harness codex | model gpt-6.1-sol | effort high"},
 		{args: "settings --project p1", reply: `{"askBeforePosting":false,"model":"opus"}`, method: "GET", path: "/testing/projects/p1/settings", want: "harness (default) | model opus | effort (default)"},
 	} {
 		t.Run(tc.args, func(t *testing.T) {
@@ -271,5 +446,62 @@ func TestTestingSettingsHarnessChangeNeedsTheModel(t *testing.T) {
 	got = testingDaemon(t, http.StatusOK, `{"askBeforePosting":true}`)
 	if _, err := runTesting(t, "settings", "--project", "p1", "--harness", "codex"); err != nil || got.method != "PUT" {
 		t.Fatalf("harness change with no stored model: err=%v method=%s", err, got.method)
+	}
+}
+
+func TestTestingTestMinutesIsSentAndBounded(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "w1")
+	got := testingDaemon(t, http.StatusOK, `{}`)
+	if _, err := runTesting(t, "test", "--leg", "head", "--minutes", "7", "--", "go", "test", "./..."); err != nil {
+		t.Fatal(err)
+	}
+	if got.path != "/api/v1/testing/test" || fmt.Sprint(got.body["minutes"]) != "7" {
+		t.Fatalf("request %s body %v", got.path, got.body)
+	}
+	if _, err := runTesting(t, "test", "--leg", "head", "--", "go", "test"); err != nil || got.body["minutes"] != nil {
+		t.Fatalf("no --minutes must send none: err=%v body=%v", err, got.body)
+	}
+	for _, m := range []string{"0", "11", "-1"} {
+		if _, err := runTesting(t, "test", "--leg", "head", "--minutes", m, "--", "go", "test"); ExitCode(err) != 2 {
+			t.Errorf("--minutes %s: err=%v", m, err)
+		}
+	}
+}
+
+func TestTestingSettingsReviewFlag(t *testing.T) {
+	t.Setenv("AO_PROJECT_ID", "")
+	got := testingDaemon(t, http.StatusOK, `{"askBeforePosting":true}`)
+	if _, err := runTesting(t, "settings", "--project", "p1", "--review", "on"); err != nil || got.method != "PUT" || got.body["review"] != true {
+		t.Fatalf("--review on: err=%v method=%s body=%v", err, got.method, got.body)
+	}
+	if _, err := runTesting(t, "settings", "--project", "p1", "--review", "maybe"); ExitCode(err) != 2 {
+		t.Fatalf("--review maybe: err=%v", err)
+	}
+}
+
+func TestTestingLaunchPrintsAFailedSeedStep(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "w1")
+	prGap := "The PR build started without its sample content (seed step 2 failed: no project)."
+	mainGap := "The main build started without its sample content (seed step 2 failed: no project)."
+	for _, c := range []struct{ leg, gap, other string }{{"head", prGap, mainGap}, {"base", mainGap, prGap}} {
+		t.Run(c.leg, func(t *testing.T) {
+			testingDaemon(t, http.StatusOK, `{"id":"run_w1","state":"running","gaps":["I could not read the linked issue #1 (not found).","`+prGap+`","`+mainGap+`"]}`)
+			out, err := runTesting(t, "launch", c.leg)
+			if err != nil || !strings.Contains(out, "\n"+c.gap) || strings.Contains(out, c.other) || strings.Contains(out, "linked issue") {
+				t.Fatalf("out=%q err=%v", out, err)
+			}
+		})
+	}
+}
+
+func TestLaunchLinePrintsOnlyItsBuildSeedGap(t *testing.T) {
+	prGap := "The PR build started without its sample content (seed step 2 failed: no project)."
+	mainGap := "The main build started without its sample content (seed step 2 failed: no project)."
+	run := litmus.Run{ID: "run_w1", Gaps: []string{prGap, mainGap, "I could not read the linked issue #1 (not found)."}}
+	for _, c := range []struct{ leg, gap, other string }{{"head", prGap, mainGap}, {"base", mainGap, prGap}} {
+		out := launchLine(run, c.leg)
+		if !strings.Contains(out, "\n"+c.gap) || strings.Contains(out, c.other) || strings.Contains(out, "linked issue") {
+			t.Errorf("launch %s: %q", c.leg, out)
+		}
 	}
 }

@@ -3329,6 +3329,17 @@ type TestingProjectIDParam struct {
 	ID string `path:"id" description:"AO project id."`
 }
 
+// UpdateTestingProjectSettingsRequest is the partial body accepted when
+// updating a project's Litmus settings. Review is a pointer so an omitted
+// value preserves the stored setting while an explicit false turns it off.
+type UpdateTestingProjectSettingsRequest struct {
+	AskBeforePosting bool   `json:"askBeforePosting" description:"When on, a finished run writes its comment and waits for approval instead of posting it."`
+	Review           *bool  `json:"review,omitempty" description:"When on, a failing verdict also submits a REQUEST_CHANGES review beside its comment. Omit to keep the stored value."`
+	Harness          string `json:"harness,omitempty" description:"Agent the project's testers run on: claude-code or codex. Empty uses the project's worker agent, then claude-code." enum:"claude-code,codex"`
+	Model            string `json:"model,omitempty" description:"Model the project's testers run on. Empty uses the project's worker model, then the Litmus default."`
+	Effort           string `json:"effort,omitempty" description:"Reasoning effort the project's testers run at. Empty uses the project's worker effort, then the Litmus default."`
+}
+
 // TestingRequest is the body of every POST /api/v1/testing verb; each verb reads
 // only the fields it needs. SessionID attributes the call to the worker's run; start and recipe validate need none.
 type TestingRequest struct {
@@ -3342,14 +3353,16 @@ type TestingRequest struct {
 	Expect        string   `json:"expect,omitempty"`
 	Result        string   `json:"result,omitempty" enum:"pass,fail,partial,absent,skipped"`
 	Note          string   `json:"note,omitempty"`
+	SameFault     bool     `json:"sameFault,omitempty" description:"check end only, base leg: the failure or partial is the same fault as on the PR build."`
 	Summary       string   `json:"summary,omitempty"`
-	Blocked       bool     `json:"blocked,omitempty" description:"submit only: close the run as blocked instead of judging checks."`
+	Blocked       bool     `json:"blocked,omitempty" description:"submit only: stop early with a reason; a recorded failure keeps the overall result fail."`
 	Reason        string   `json:"reason,omitempty" description:"submit with blocked: what failed; required and non-empty."`
 	SkipBase      string   `json:"skipBase,omitempty" description:"submit only: why the base was not run; lets a submit through while a prepared base is unlaunched."`
 	Action        string   `json:"action,omitempty"`
 	Args          []string `json:"args,omitempty" description:"drive: the action's arguments; test: the command and its arguments."`
 	Dir           string   `json:"dir,omitempty" description:"test only: folder inside the leg's checkout to run in, like backend."`
 	WithTestsFrom string   `json:"withTestsFrom,omitempty" enum:"head" description:"test only, with leg base: copy the PR's added or changed test files from the head checkout into a scratch copy of the base checkout and run there."`
+	Minutes       int      `json:"minutes,omitempty" minimum:"1" maximum:"10" description:"test only: how long this command may run, in minutes (default 3)."`
 	Path          string   `json:"path,omitempty"`
 	NoComment     bool     `json:"noComment,omitempty" description:"start only: the run's verdict is written to comment.md but not posted to the pull request."`
 	NoEvidence    bool     `json:"noEvidence,omitempty" description:"start only: no screenshots or GIFs are published to the repo's litmus/evidence branch for the comment."`

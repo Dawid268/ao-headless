@@ -1,7 +1,10 @@
 package controllers_test
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +22,9 @@ import (
 
 func testingServer(t *testing.T, deps httpd.APIDeps) func(method, path, body string, status int, want ...string) {
 	t.Helper()
+	if svc, ok := deps.Testing.(*litmus.Service); ok {
+		deps.Testing = svc.WithSpawnMarkerWait(time.Millisecond)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
@@ -36,11 +42,24 @@ func testingServer(t *testing.T, deps httpd.APIDeps) func(method, path, body str
 	}
 }
 
+func savedTestPNG(t *testing.T) string {
+	t.Helper()
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewGray(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(path, data.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestTestingAPIStatusAndSubmit(t *testing.T) {
 	store := litmus.NewStore(t.TempDir())
 	do := testingServer(t, httpd.APIDeps{Testing: litmus.New(store, nil).WithGH(recordedGH{t: t})})
 	do("GET", "/status?sessionId=ao-1", "", http.StatusNotFound, "TESTING_RUN_NOT_FOUND")
-	do("POST", "/intake", `{"sessionId":"ao-1","prUrl":"https://github.com/aoagents/agent-orchestrator/pull/6394"}`, http.StatusOK, `"state":"intake"`, `"prNumber":6394`, `"comment":"post"`)
+	do("POST", "/intake", `{"sessionId":"ao-1","prUrl":"https://github.com/aoagents/agent-orchestrator/pull/6394"}`, http.StatusOK, `"state":"intake"`, `"prNumber":6394`, `"comment":"off"`)
 	do("GET", "/status?sessionId=ao-1", "", http.StatusOK, `"checks":[]`)
 	do("POST", "/checks", `{"sessionId":"ao-1","name":"model menu","expect":"last model reachable"}`, http.StatusOK, `"id":"c1"`)
 	do("POST", "/checks/c1/start", `{"sessionId":"ao-1"}`, http.StatusOK, `"state":"running"`)
@@ -51,7 +70,8 @@ func TestTestingAPIStatusAndSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checks[0].Receipts = []litmus.Receipt{{Seq: 1, Action: "click"}}
+	shot := savedTestPNG(t)
+	checks[0].Receipts = []litmus.Receipt{{Seq: 1, Action: "click", AfterPath: shot}}
 	if err := store.SaveChecks("run_ao-1", checks); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +97,61 @@ func TestTestingAPICheckLegAndCompareRoute(t *testing.T) {
 	do("POST", "/checks", `{"sessionId":"ao-1","name":"menu","expect":"opens","leg":"main"}`, http.StatusBadRequest, "TESTING_LEG_INVALID")
 	do("POST", "/checks/c9/compare", `{"sessionId":"ao-1"}`, http.StatusNotFound, "TESTING_CHECK_NOT_FOUND")
 	do("POST", "/checks/c1/compare", `{"sessionId":"ao-1"}`, http.StatusConflict, "TESTING_COMPARE_INCOMPLETE") // no after-shots
+}
+
+func TestTestingAPIReplayValidationAndTesterAccess(t *testing.T) {
+	store := litmus.NewStore(t.TempDir())
+	run := litmus.Run{ID: "run_ao-1", SessionID: "ao-1", State: litmus.RunRunning, Deadline: time.Now().Add(time.Minute)}
+	if err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+	router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, httpd.APIDeps{Testing: litmus.New(store, nil)}, httpd.ControlDeps{})
+	for _, tc := range []struct {
+		leg  string
+		code int
+		want string
+	}{
+		{"head", http.StatusBadRequest, "TESTING_REPLAY_LEG"},
+		{"base", http.StatusNotFound, "TESTING_CHECK_NOT_FOUND"},
+	} {
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/api/v1/testing/checks/c1/replay", strings.NewReader(`{"sessionId":"ao-1","leg":"`+tc.leg+`"}`)))
+		if res.Code != tc.code || !strings.Contains(res.Body.String(), tc.want) {
+			t.Fatalf("leg %s: %d %s", tc.leg, res.Code, res.Body.String())
+		}
+	}
+}
+
+func TestTestingAPICheckEndSameFaultAndDuplicate(t *testing.T) {
+	store := litmus.NewStore(t.TempDir())
+	svc := litmus.New(store, nil)
+	run := litmus.Run{ID: "run_ao-1", SessionID: "ao-1", State: litmus.RunRunning, Deadline: time.Now().Add(time.Minute)}
+	if err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+	shot := savedTestPNG(t)
+	checks := []litmus.Check{
+		{ID: "c1", Name: "menu", State: litmus.CheckRunning, Receipts: []litmus.Receipt{{Action: "click", AfterPath: shot}}},
+		{ID: "c2", Name: "menu", State: litmus.CheckRunning, Leg: "base", Receipts: []litmus.Receipt{{Action: "click", Leg: "base", AfterPath: shot}}},
+	}
+	if err := store.SaveChecks(run.ID, checks); err != nil {
+		t.Fatal(err)
+	}
+	router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, httpd.APIDeps{Testing: svc}, httpd.ControlDeps{})
+	for _, row := range []struct {
+		path, body, want string
+		code             int
+	}{
+		{"/checks/c1/end", `{"sessionId":"ao-1","result":"fail","sameFault":true}`, "TESTING_CHECK_SAME_FAULT", http.StatusBadRequest},
+		{"/checks/c2/end", `{"sessionId":"ao-1","result":"fail","sameFault":true}`, `"sameFault":true`, http.StatusOK},
+		{"/checks", `{"sessionId":"ao-1","name":"MENU","expect":"shown","leg":"head"}`, "TESTING_CHECK_DUPLICATE", http.StatusConflict},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/testing"+row.path, strings.NewReader(row.body)))
+		if w.Code != row.code || !strings.Contains(w.Body.String(), row.want) {
+			t.Fatalf("%s = %d %s", row.path, w.Code, w.Body.String())
+		}
+	}
 }
 
 func TestTestingAPITestVerbTakesWithTestsFrom(t *testing.T) {
@@ -155,23 +230,13 @@ func TestTestingAPITestRoute(t *testing.T) {
 	store := litmus.NewStore(t.TempDir())
 	do := testingServer(t, httpd.APIDeps{Testing: litmus.New(store, nil).WithGH(recordedGH{t: t})})
 	do("POST", "/intake", `{"sessionId":"ao-1","prUrl":"https://github.com/aoagents/agent-orchestrator/pull/6394"}`, http.StatusOK)
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test"]}`, http.StatusConflict, "TESTING_LEG_NOT_PREPARED")
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["sh","-c","id"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
-	checkout := t.TempDir()
-	for name, body := range map[string]string{"go.mod": "module fixture\n\ngo 1.21\n", "a_test.go": "package fixture\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"} {
-		if err := os.WriteFile(filepath.Join(checkout, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	run, err := store.Get("run_ao-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	run.State, run.Legs = litmus.RunPrepared, []litmus.Leg{{Name: "head", Worktree: checkout, State: "prepared"}}
-	if err := store.Save(run); err != nil {
-		t.Fatal(err)
-	}
-	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test","./...","-count=1"]}`, http.StatusOK, `"exit":0`, `"summary":"1 ok, 0 FAIL, 0 --- FAIL"`, `1-test.txt`)
+	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test"]}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
+	// Owner calls reach command validation. Execution still needs a run, whose
+	// session the current guard would reject; no real HTTP happy path exists.
+	do("POST", "/test", `{"leg":"head","args":["sh","-c","id"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
+	do("POST", "/test", `{"sessionId":"ao-owner","leg":"head","args":["sh","-c","id"]}`, http.StatusBadRequest, "TESTING_TEST_NOT_ALLOWED")
+	do("POST", "/test", `{"leg":"head","args":["go","test"]}`, http.StatusBadRequest, "SESSION_ID_REQUIRED")
+	do("POST", "/test", `{"sessionId":"ao-owner","leg":"head","args":["go","test"]}`, http.StatusNotFound, "TESTING_RUN_NOT_FOUND")
 }
 
 func TestTestingAPIPrune(t *testing.T) {
@@ -248,7 +313,7 @@ func TestTestingAPIRunsAskBeforePostingAndRerun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checks[0].Receipts = []litmus.Receipt{{Seq: 1, Action: "click"}}
+		checks[0].Receipts = []litmus.Receipt{{Seq: 1, Action: "click", AfterPath: savedTestPNG(t)}}
 		if err := store.SaveChecks(id, checks); err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +353,30 @@ func TestTestingAPIRunsAskBeforePostingAndRerun(t *testing.T) {
 	do("POST", "/rerun", `{}`, http.StatusBadRequest, "TESTING_ID_INVALID")
 }
 
-// The daemon, not the prompt, keeps a tester out of start, post and prune.
+func TestTestingAPIProjectSettingsReviewPreservesOmittedValue(t *testing.T) {
+	svc := litmus.New(litmus.NewStore(t.TempDir()), nil)
+	router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, httpd.APIDeps{Testing: svc}, httpd.ControlDeps{})
+	put := func(body string, want ...string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/testing/projects/p1/settings", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PUT settings = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
+		}
+		for _, text := range want {
+			if !strings.Contains(rr.Body.String(), text) {
+				t.Fatalf("PUT settings body %s lacks %q", rr.Body.String(), text)
+			}
+		}
+	}
+	put(`{"askBeforePosting":false,"review":true}`, `"review":true`)
+	put(`{"askBeforePosting":true}`, `"askBeforePosting":true`, `"review":true`)
+	put(`{"askBeforePosting":true,"review":false}`, `"review":false`)
+}
+
+// The daemon, not the prompt, keeps a tester out of start, post, prune and package tests.
 func TestTestingAPIRefusesTheTesterOnUserVerbs(t *testing.T) {
 	svc := litmus.New(litmus.NewStore(t.TempDir()), nil).WithGH(recordedGH{t: t}).WithSpawner(func(context.Context, litmus.SpawnRequest) (string, error) { return "ao-9", nil })
 	do := testingServer(t, httpd.APIDeps{Testing: svc})
@@ -297,9 +385,11 @@ func TestTestingAPIRefusesTheTesterOnUserVerbs(t *testing.T) {
 	do("POST", "/prune", `{"sessionId":"ao-1","dryRun":true}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 	do("POST", "/start", `{"sessionId":"ao-1","projectId":"p1","prUrl":"aoagents/agent-orchestrator#6394"}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 	do("POST", "/runs/run_ao-1/post", `{"sessionId":"ao-1"}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
+	do("POST", "/test", `{"sessionId":"ao-1","leg":"head","args":["go","test"]}`, http.StatusForbidden, "TESTING_TESTER_FORBIDDEN")
 
 	// The user's own session, or no session, is allowed through.
 	do("POST", "/prune", `{"sessionId":"ao-orch","dryRun":true}`, http.StatusOK, `"dryRun":true`)
 	do("POST", "/prune", `{"dryRun":true}`, http.StatusOK, `"dryRun":true`)
 	do("POST", "/start", `{"sessionId":"ao-orch","projectId":"p1","prUrl":"aoagents/agent-orchestrator#6394"}`, http.StatusOK, `"sessionId":"ao-9"`)
+	do("POST", "/test", `{"sessionId":"ao-orch","leg":"head","args":["go","test"]}`, http.StatusNotFound, "TESTING_RUN_NOT_FOUND")
 }

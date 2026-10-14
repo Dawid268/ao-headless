@@ -38,18 +38,21 @@ func newTestingCommand(ctx *commandContext) *cobra.Command {
 
 	cmd.AddCommand(t.startCommand())
 	cmd.AddCommand(verb("intake <pr-url>", "Start a testing run for a GitHub pull request (25 minutes from when the builds are ready)", exactArgs(1), func(cmd *cobra.Command, a []string) error {
-		return testingCall(t, cmd, "testing/intake", map[string]any{"prUrl": a[0]}, runLine)
+		return testingCallTimeout(t, cmd, "testing/intake", map[string]any{"prUrl": a[0]}, runLine, testingSetupCallTimeout)
 	}))
 	cmd.AddCommand(verb("prepare", "Prepare the base and head clones and builds", noArgs, func(cmd *cobra.Command, _ []string) error {
 		return testingCallTimeout(t, cmd, "testing/prepare", map[string]any{}, runLine, prepareCallTimeout)
 	}))
 	cmd.AddCommand(verb("launch <base|head>", "Launch a private copy of the base or head build", exactArgs(1), func(cmd *cobra.Command, a []string) error {
-		return testingCall(t, cmd, "testing/launch", map[string]any{"leg": a[0]}, runLine)
+		return testingCallTimeout(t, cmd, "testing/launch", map[string]any{"leg": a[0]}, func(r litmus.Run) string { return launchLine(r, a[0]) }, launchCallTimeout)
 	}))
 	cmd.AddCommand(verb("status", "Show the run, its deadline and its checks", noArgs, func(cmd *cobra.Command, _ []string) error {
 		return testingCall(t, cmd, "testing/status", nil, func(out litmus.RunStatus) string {
 			lines := make([]string, 0, 1+len(out.Run.Legs)+len(out.Checks))
 			lines = append(lines, runLine(out.Run))
+			if out.OwnerLogins != "" {
+				lines = append(lines, out.OwnerLogins)
+			}
 			for _, f := range out.InFlight {
 				lines = append(lines, fmt.Sprintf("%s in flight for %s", f.Verb, (time.Duration(f.Seconds)*time.Second).String()))
 			}
@@ -62,7 +65,7 @@ func newTestingCommand(ctx *commandContext) *cobra.Command {
 			return strings.Join(lines, "\n")
 		})
 	}))
-	cmd.AddCommand(t.checkCommand(), t.compareCommand(), t.submitCommand())
+	cmd.AddCommand(t.checkCommand(), t.compareCommand(), t.replayCommand(), t.submitCommand())
 	cmd.AddCommand(verb("cleanup", "Stop the run's targets and remove its private state", noArgs, func(cmd *cobra.Command, _ []string) error {
 		return testingCall(t, cmd, "testing/cleanup", map[string]any{}, runLine)
 	}))
@@ -135,6 +138,7 @@ func (t *testingCLI) startCommand() *cobra.Command {
 func (t *testingCLI) checkCommand() *cobra.Command {
 	check := verb("check", "Plan and bracket the checks a verdict is built from", noArgs, nil)
 	var expect, result, note string
+	var sameFault bool
 	add := verb("add <name>", "Add a check with the observable you expect", exactArgs(1), func(cmd *cobra.Command, a []string) error {
 		if strings.TrimSpace(expect) == "" {
 			return usageError{errors.New("usage: --expect is required")}
@@ -165,10 +169,26 @@ func (t *testingCLI) checkCommand() *cobra.Command {
 		if result != "pass" && result != "fail" && result != "partial" && result != "absent" && result != "skipped" {
 			return usageError{errors.New("usage: --result must be pass, fail, partial, absent or skipped")}
 		}
-		return testingCall(t, cmd, "testing/checks/"+url.PathEscape(a[0])+"/end", map[string]any{"result": result, "note": note}, checkLine)
+		body := map[string]any{"result": result, "note": note}
+		if sameFault {
+			body["sameFault"] = true
+		}
+		return testingCall(t, cmd, "testing/checks/"+url.PathEscape(a[0])+"/end", body, func(c litmus.Check) string {
+			lines := []string{checkLine(c)}
+			for _, r := range c.Receipts {
+				for _, shot := range r.ThemeShots {
+					lines = append(lines, fmt.Sprintf("after (%s): %s", shot.Theme, shot.Path))
+				}
+				if r.ThemeNote != "" {
+					lines = append(lines, r.ThemeNote)
+				}
+			}
+			return strings.Join(lines, "\n")
+		})
 	})
 	end.Flags().StringVar(&result, "result", "", "Outcome: pass, fail (the feature is there and broken), partial, absent (this build lacks the feature entirely; needs a screenshot of where it would be) or skipped (could not reach it; needs no receipt)")
 	end.Flags().StringVar(&note, "note", "", "Why, in one line")
+	end.Flags().BoolVar(&sameFault, "same-fault", false, "Base leg only: the failure or partial is the same fault as on the PR build")
 	check.AddCommand(add, list, start, end)
 	return check
 }
@@ -177,6 +197,15 @@ func (t *testingCLI) checkCommand() *cobra.Command {
 func (t *testingCLI) compareCommand() *cobra.Command {
 	return verb("compare <checkID>", "Diff a check's last base and head after-shots and keep the image on the check", exactArgs(1), func(cmd *cobra.Command, a []string) error {
 		return testingCall(t, cmd, "testing/checks/"+url.PathEscape(a[0])+"/compare", map[string]any{}, prettyJSON)
+	})
+}
+
+func (t *testingCLI) replayCommand() *cobra.Command {
+	return verb("replay <headCheckId>", "Repeat a check already walked on the PR build against the base build", exactArgs(1), func(cmd *cobra.Command, a []string) error {
+		if t.leg != "base" {
+			return usageError{errors.New("usage: replay requires --leg base")}
+		}
+		return testingCallTimeout(t, cmd, "testing/checks/"+url.PathEscape(a[0])+"/replay", map[string]any{"leg": t.leg}, driveText, litmus.RunBudget+time.Minute)
 	})
 }
 
@@ -214,9 +243,9 @@ func (t *testingCLI) submitCommand() *cobra.Command {
 				body["skipBase"] = strings.TrimSpace(reason)
 			}
 		}
-		return testingCall(t, cmd, "testing/submit", body, func(v litmus.Verdict) string {
+		return testingCallTimeout(t, cmd, "testing/submit", body, func(v litmus.Verdict) string {
 			return strings.Join(append(append(append([]string{"verdict: " + string(v.Overall)}, v.Reasons...), commentLine(v.CommentState, v.CommentURL)...), evidenceLine(v.EvidenceState, v.EvidenceCommit)...), "\n")
-		})
+		}, submitCallTimeout)
 	})
 	cmd.Flags().StringVar(&verdictFile, "verdict-file", "", "File whose text is kept as the verdict summary")
 	cmd.Flags().BoolVar(&blocked, "blocked", false, "Close the run as blocked: no receipts needed, the reason becomes the verdict")
@@ -237,9 +266,13 @@ func (t *testingCLI) recipeCommand() *cobra.Command {
 		if err != nil {
 			return usageError{err}
 		}
-		return testingCall(t, cmd, "testing/recipe/validate", map[string]any{"path": ref}, func(r litmus.Recipe) string {
+		timeout := commandTimeout
+		if sha != "" {
+			timeout = testingSetupCallTimeout
+		}
+		return testingCallTimeout(t, cmd, "testing/recipe/validate", map[string]any{"path": ref}, func(r litmus.Recipe) string {
 			return strings.Join(append([]string{"recipe ok: " + r.Kind}, r.Timings...), "\n")
-		})
+		}, timeout)
 	})
 	validate.Flags().StringVar(&sha, "sha", "", "Prepare, launch, seed and clean up a head leg at this commit and print the timings")
 	recipe.AddCommand(validate)
@@ -264,7 +297,8 @@ func (t *testingCLI) waitCommand() *cobra.Command {
 // testCommand runs a package's own tests in a leg's checkout. The daemon runs them, so it needs no launched leg.
 func (t *testingCLI) testCommand() *cobra.Command {
 	var dir, withTestsFrom string
-	cmd := verb("test --leg head|base --dir <subdir> -- <command...>", "Run go test, go vet, npm test or vitest/jest in a leg's checkout (3 minute cap)", func(cmd *cobra.Command, a []string) error {
+	var minutes int
+	cmd := verb("test --leg head|base --dir <subdir> -- <command...>", "Run go test, go vet, npm test or vitest/jest in a leg's checkout (3 minute cap, --minutes raises it to 10)", func(cmd *cobra.Command, a []string) error {
 		if err := cobra.MinimumNArgs(1)(cmd, a); err != nil {
 			return usageError{errors.New("usage: ao testing test --leg head|base --dir <subdir> -- <command...>")}
 		}
@@ -277,28 +311,44 @@ func (t *testingCLI) testCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if (cmd.Flags().Changed("minutes") && minutes < 1) || minutes > litmus.MaxTestMin {
+			return usageError{fmt.Errorf("usage: --minutes must be 1 to %d", litmus.MaxTestMin)}
+		}
 		var out litmus.TestResult
 		body := map[string]any{"sessionId": sessionID, "leg": t.leg, "dir": dir, "args": a}
+		if minutes > 0 {
+			body["minutes"] = minutes
+		}
 		if withTestsFrom != "" {
 			body["withTestsFrom"] = withTestsFrom
 		}
-		if err := t.c.doJSONPathWithHeadersAndTimeout(cmd.Context(), http.MethodPost, "/api/v1/testing/test", body, &out, nil, testCallTimeout); err != nil {
+		if err := t.c.doJSONPathWithHeadersAndTimeout(cmd.Context(), http.MethodPost, "/api/v1/testing/test", body, &out, nil, max(testCallTimeout, time.Duration(minutes+1)*time.Minute)); err != nil {
 			return err
 		}
 		return t.show(cmd, out, testLine(out))
 	})
 	cmd.Flags().StringVar(&dir, "dir", "", "Folder inside the checkout to run in, like backend")
+	cmd.Flags().IntVar(&minutes, "minutes", 0, "How long this command may run, 1 to 10 (default 3)")
 	cmd.Flags().StringVar(&withTestsFrom, "with-tests-from", "", "head: with --leg base, run the PR's added or changed test files against the base code (in a scratch copy)")
 	return cmd
 }
 
-// testCallTimeout outlasts the daemon's 3 minute cap on one test run.
-const testCallTimeout = 4 * time.Minute
+// testCallTimeout outlasts the daemon's default 3 minute cap on one test run; --minutes widens it.
+const testCallTimeout = litmus.DefaultTestBudget + time.Minute
+
+// launchCallTimeout covers the default recipe's launch budget plus a minute for the response.
+const launchCallTimeout = litmus.DefaultLaunchBudget + time.Minute
+
+// testingSetupCallTimeout adds a minute to intake and recipe validation.
+const testingSetupCallTimeout = litmus.RecipeValidateBudget + time.Minute
+
+const postCallTimeout = litmus.PostBudget + time.Minute
+const submitCallTimeout = litmus.SubmitBudget + time.Minute
 
 // prepareCallTimeout outlasts the daemon's 20 minute cap on one prepare: a cold
 // build of both legs runs for minutes, and a call cut short by the client would
 // only come back as a retry that waits for the same build.
-const prepareCallTimeout = 21 * time.Minute
+const prepareCallTimeout = litmus.PrepareBudget + time.Minute
 
 func testLine(r litmus.TestResult) string {
 	head := fmt.Sprintf("%s: exit %d in %.1fs", strings.Join(r.Args, " "), r.Exit, r.Seconds)
@@ -349,12 +399,19 @@ func testingCallTimeout[T any](t *testingCLI, cmd *cobra.Command, path string, b
 	return t.show(cmd, out, text(out))
 }
 
-// drive sends one engine action; the engine's result is printed as JSON.
+// drive sends one engine action and prints its compact result.
 func (t *testingCLI) drive(cmd *cobra.Command, action string, args []string) error {
 	if t.leg != "" {
 		args = append(args[:len(args):len(args)], "--leg", t.leg)
 	}
-	return testingCall(t, cmd, "testing/drive", map[string]any{"action": action, "args": args}, prettyJSON)
+	return testingCall(t, cmd, "testing/drive", map[string]any{"action": action, "args": args}, driveText)
+}
+
+func driveText(out map[string]any) string {
+	if text, ok := out["text"].(string); ok {
+		return text
+	}
+	return prettyJSON(out)
 }
 
 func prettyJSON(out map[string]any) string {
@@ -393,6 +450,19 @@ func runLine(r litmus.Run) string {
 		line += "\n" + r.Error
 	}
 	return strings.Join(append(append([]string{line}, commentLine(r.CommentState, r.CommentURL)...), evidenceLine(r.EvidenceState, r.EvidenceCommit)...), "\n")
+}
+
+// launchLine is runLine plus any seed step that failed on this leg: its sample content is missing, which the
+// tester must know before it judges a check.
+func launchLine(r litmus.Run, leg string) string {
+	lines := []string{runLine(r)}
+	prefix := "The " + map[string]string{"head": "PR", "base": "main"}[leg] + " build started without its sample content (seed step "
+	for _, g := range r.Gaps {
+		if strings.HasPrefix(g, prefix) {
+			lines = append(lines, g)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // commentLine says what became of the PR comment: its URL, or the state when there is none (off, failed:<reason>).
@@ -524,7 +594,11 @@ func (t *testingCLI) rerunCommand() *cobra.Command {
 func (t *testingCLI) decideCommand(name, short string) *cobra.Command {
 	return verb(name+" <runId>", short, exactArgs(1), func(cmd *cobra.Command, a []string) error {
 		var out litmus.Run
-		if err := t.c.postJSON(cmd.Context(), "testing/runs/"+url.PathEscape(a[0])+"/"+name, withCaller(map[string]any{}), &out); err != nil {
+		timeout := commandTimeout
+		if name == "post" {
+			timeout = postCallTimeout
+		}
+		if err := t.c.doJSONPathWithHeadersAndTimeout(cmd.Context(), http.MethodPost, "/api/v1/testing/runs/"+url.PathEscape(a[0])+"/"+name, withCaller(map[string]any{}), &out, nil, timeout); err != nil {
 			return err
 		}
 		return t.show(cmd, out, runLine(out))
@@ -534,21 +608,27 @@ func (t *testingCLI) decideCommand(name, short string) *cobra.Command {
 // settingsCommand shows or sets a project's Litmus settings. The API replaces the whole record, so a set reads the
 // current one first and changes only the flags given.
 func (t *testingCLI) settingsCommand() *cobra.Command {
-	var project, ask, harness, model, effort string
+	var project, ask, review, harness, model, effort string
 	cmd := verb("settings", "Show or set a project's Litmus settings", noArgs, func(cmd *cobra.Command, _ []string) error {
 		id := projectFlag(project)
 		if id == "" {
 			return usageError{errors.New("usage: --project is required")}
 		}
 		flags := cmd.Flags()
-		askOn := false
-		if flags.Changed("ask-before-posting") {
-			switch strings.ToLower(strings.TrimSpace(ask)) {
+		askOn, reviewOn := false, false
+		for _, o := range []struct {
+			name, val string
+			on        *bool
+		}{{"ask-before-posting", ask, &askOn}, {"review", review, &reviewOn}} {
+			if !flags.Changed(o.name) {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(o.val)) {
 			case "on", "true":
-				askOn = true
+				*o.on = true
 			case "off", "false":
 			default:
-				return usageError{errors.New("usage: --ask-before-posting must be on or off")}
+				return usageError{fmt.Errorf("usage: --%s must be on or off", o.name)}
 			}
 		}
 		path := "testing/projects/" + url.PathEscape(id) + "/settings"
@@ -556,9 +636,12 @@ func (t *testingCLI) settingsCommand() *cobra.Command {
 		if err := t.c.getJSON(cmd.Context(), path, &out); err != nil {
 			return err
 		}
-		if flags.Changed("ask-before-posting") || flags.Changed("harness") || flags.Changed("model") || flags.Changed("effort") {
+		if flags.Changed("ask-before-posting") || flags.Changed("review") || flags.Changed("harness") || flags.Changed("model") || flags.Changed("effort") {
 			if flags.Changed("ask-before-posting") {
 				out.AskBeforePosting = askOn
+			}
+			if flags.Changed("review") {
+				out.Review = reviewOn
 			}
 			if flags.Changed("harness") {
 				if h := strings.TrimSpace(harness); h != out.Harness && out.Model != "" && !flags.Changed("model") {
@@ -578,11 +661,12 @@ func (t *testingCLI) settingsCommand() *cobra.Command {
 			}
 			out = saved
 		}
-		return t.show(cmd, out, "ask-before-posting "+map[bool]string{true: "on", false: "off"}[out.AskBeforePosting]+
+		return t.show(cmd, out, "ask-before-posting "+map[bool]string{true: "on", false: "off"}[out.AskBeforePosting]+" | review "+map[bool]string{true: "on", false: "off"}[out.Review]+
 			" | harness "+cmp.Or(out.Harness, "(default)")+" | model "+cmp.Or(out.Model, "(default)")+" | effort "+cmp.Or(out.Effort, "(default)"))
 	})
 	cmd.Flags().StringVar(&project, "project", "", "Project id (default: AO_PROJECT_ID)")
 	cmd.Flags().StringVar(&ask, "ask-before-posting", "", "on: a finished run waits for `ao testing post <runId>` instead of commenting on the PR; off: it posts at once")
+	cmd.Flags().StringVar(&review, "review", "", "on: a failing verdict also submits a REQUEST_CHANGES review beside the comment; off (default): the comment alone")
 	cmd.Flags().StringVar(&harness, "harness", "", "Agent the project's testers run on: claude-code or codex (empty: the project's worker agent if supported, then claude-code)")
 	cmd.Flags().StringVar(&model, "model", "", "Model the project's testers run on, e.g. opus, or gpt-6.1-sol with --harness codex (empty: the project's worker model, then sonnet on claude-code or Codex's default)")
 	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort the project's testers run at, one the model supports (empty: the project's worker effort, then high)")

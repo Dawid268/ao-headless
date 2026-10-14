@@ -24,6 +24,30 @@ beforeEach(() => {
 });
 
 describe("useSetLitmusSettings", () => {
+	it("keeps review enabled while toggling askBeforePosting without sending review", async () => {
+		const client = newClient();
+		let saved = { askBeforePosting: false, review: true };
+		let finish!: () => void;
+		getMock.mockImplementation(async () => ({ data: saved, error: undefined }));
+		putMock.mockImplementation((_path: string, init: { body: { askBeforePosting: boolean } }) => new Promise((resolve) => {
+			finish = () => {
+				saved = { ...saved, ...init.body };
+				resolve({ data: saved, error: undefined });
+			};
+		}));
+		const { result } = renderHook(() => ({ settings: useLitmusSettings("p1"), set: useSetLitmusSettings("p1") }), { wrapper: wrapper(client) });
+		await waitFor(() => expect(result.current.settings.data).toEqual(saved));
+		await act(async () => { result.current.set.mutate({ askBeforePosting: true }); });
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/testing/projects/{id}/settings", {
+			params: { path: { id: "p1" } }, body: { askBeforePosting: true },
+		});
+		expect(client.getQueryData(litmusSettingsQueryKey("p1"))).toEqual({ askBeforePosting: true, review: true });
+		await act(async () => { finish(); });
+		await waitFor(() => expect(result.current.set.isPending).toBe(false));
+		await waitFor(() => expect(result.current.settings.data).toEqual({ askBeforePosting: true, review: true }));
+	});
+
 	it("ends on the server's value when two quick toggles both fail, not on the first optimistic one", async () => {
 		const client = newClient();
 		putMock.mockResolvedValue({ data: undefined, error: { message: "disk full" } });

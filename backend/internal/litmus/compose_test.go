@@ -27,6 +27,9 @@ func composeFixture(t *testing.T, name string) (Run, []Check) {
 	for i := range f.Checks {
 		for j := range f.Checks[i].Receipts {
 			r := &f.Checks[i].Receipts[j]
+			if r.OutputPath != "" {
+				r.OutputPath = evidenceFile(t)
+			}
 			if r.AfterPath == "" { // a test run has an output file, no shot
 				continue
 			}
@@ -67,7 +70,7 @@ func TestComposeRun12(t *testing.T) {
 	t.Logf("composed comment:\n%s", got)
 
 	for _, want := range []string{
-		"**Result: the fix works; fine to merge from my side. One check only ran on the PR build.**",
+		"**Result: the PR does what it says in the 2 checks I finished. One check only ran on the PR build.**",
 		"On the PR build, with the sidebar expanded, Collapse sidebar, Go back, Go forward (both disabled on Home) and the Orchestrator.inc brand are all present. On main, with the sidebar expanded, only Collapse sidebar and the Orchestrator.inc brand show.",
 		"On the PR build, opening a project enabled Go back.",
 		"I did not repeat this on main: main has no Go back or Go forward buttons, so there was nothing to re-check.\n",
@@ -273,6 +276,9 @@ func TestLowerLeadKeepsUILabelsAndNames(t *testing.T) {
 // anything failed, and a partial pair is not described as a failure.
 func TestComposeRun14(t *testing.T) {
 	run, checks := composeFixture(t, "compose-run14")
+	for i := range checks {
+		checks[i].SameFault = checks[i].onLeg() == "base"
+	}
 	v := commentVerdict(checks)
 	if v.Overall != CheckPartial || !slices.Equal(v.Reasons, []string{reasonPrePartial}) {
 		t.Fatalf("overall %s reasons %q", v.Overall, v.Reasons)
@@ -300,7 +306,7 @@ func TestComposeRun14(t *testing.T) {
 
 func TestPreExistingReasonSaysWhatWasLeftOut(t *testing.T) {
 	mk := func(id, name, leg string, s CheckState) Check {
-		return Check{ID: id, Name: name, State: s, Leg: leg, Receipts: []Receipt{{Seq: 1, Leg: leg, Action: "click"}}}
+		return Check{ID: id, Name: name, State: s, Leg: leg, SameFault: leg == "base", Receipts: []Receipt{{Seq: 1, Leg: leg, Action: "click", AfterPath: evidenceFile(t)}}}
 	}
 	for _, c := range []struct {
 		name   string
@@ -400,8 +406,8 @@ func TestSubmitNeedsNoLaunchedWindowForTestsAlone(t *testing.T) {
 		is(t, "")(nil, err)
 		v, err := svc.Submit(ctx, "s1", "", "")
 		is(t, c.want)(v, err)
-		if c.name == "tests on the PR build only" && !strings.Contains(err.Error(), "ao testing test --leg base") {
-			t.Errorf("%s: message %q", c.name, err)
+		if c.name == "tests on the PR build only" && (!strings.Contains(err.Error(), "visible result") || strings.Contains(err.Error(), "ao testing test --leg base")) {
+			t.Errorf("%s: message %q does not direct the tester to an app-visible result", c.name, err)
 		}
 	}
 }
@@ -423,7 +429,7 @@ func TestComposeRun17CountsTheSkippedCheckAsNotDone(t *testing.T) {
 	run, checks := composeFixture(t, "compose-run17")
 	v := commentVerdict(checks)
 	got, _ := composeComment(t, run, v)
-	if !strings.Contains(got, "**Result: the fix works; fine to merge from my side. One check could not be done.**") || strings.Contains(got, "only ran on the PR build") {
+	if !strings.Contains(got, "**Result: the PR does what it says in the 1 check I finished. One check could not be done.**") || strings.Contains(got, "only ran on the PR build") {
 		t.Errorf("result line:\n%s", got)
 	}
 	noSlop(t, got)
@@ -448,11 +454,19 @@ func TestWithoutComparisonDropsOnlyTheSentencesAboutMain(t *testing.T) {
 	}
 }
 
-func TestANoteAboutWhatWasComparedNeverReachesTheComment(t *testing.T) {
+// A sentence about what was compared with main is false when the check has no result on main, and true when it has one.
+func TestANoteAboutWhatWasComparedIsKeptOnlyWhenMainWasRun(t *testing.T) {
+	note := "Not yet compared against main; Local/Cloud tabs were not visible because cloud is off here."
 	run, checks := composeFixture(t, "compose-run17")
-	checks[0].Note = "Not yet compared against main; Local/Cloud tabs were not visible because cloud is off here."
-	got, _ := composeComment(t, run, commentVerdict(checks))
-	if strings.Contains(got, "compared against main") || !strings.Contains(got, "ocal/Cloud tabs were not visible because cloud is off here.") {
-		t.Errorf("comment:\n%s", got)
+	checks[0].Note = note
+	got, _ := composeComment(t, run, commentVerdict(checks)) // c3 is c1's result on main
+	if !strings.Contains(got, "ot yet compared against main") || !strings.Contains(got, "ocal/Cloud tabs were not visible because cloud is off here.") {
+		t.Errorf("a check that ran on main lost its sentence:\n%s", got)
+	}
+	checks = slices.DeleteFunc(checks, func(c Check) bool { return c.onLeg() == "base" })
+	checks[0].Note = note
+	got, _ = composeComment(t, run, commentVerdict(checks))
+	if strings.Contains(got, "ot yet compared against main") || !strings.Contains(got, "ocal/Cloud tabs were not visible because cloud is off here.") {
+		t.Errorf("a check with no result on main kept its claim:\n%s", got)
 	}
 }

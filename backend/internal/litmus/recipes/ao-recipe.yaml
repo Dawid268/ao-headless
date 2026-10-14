@@ -17,8 +17,9 @@ build:
   cmd: npm run predev
 run:
   dir: frontend
-  cmd: npm
-  args: [run, dev, --, --, "--remote-debugging-port=$LITMUS_DEBUG_PORT"]
+  # Prepare already ran predev; launch Forge directly so npm scripts in the dev tree keep their normal behavior.
+  cmd: ./node_modules/.bin/electron-forge
+  args: [start, --, "--remote-debugging-port=$LITMUS_DEBUG_PORT"]
 ready:
   daemonPath: /readyz
   debugPath: /json/version

@@ -1,6 +1,7 @@
 package litmus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,12 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeSys records every process action in order; started maps live pids to start times.
@@ -58,6 +61,9 @@ func TestLegEnvIsolatesTheTarget(t *testing.T) {
 	}
 	if got := envValue(legEnv(Recipe{}, "run_s1", 0, "base", "/run/base", "/clone", "", 1, 2), "AO_RUN_FILE"); got != "" {
 		t.Errorf("a recipe without isolation got AO_RUN_FILE=%q", got)
+	}
+	if got := envValue(env, "HOME"); got != os.Getenv("HOME") {
+		t.Errorf("HOME changed to %q", got)
 	}
 	ports, err := freePorts(2)
 	if err != nil || len(ports) != 2 || ports[0] == ports[1] || ports[0] == 0 || ports[1] == 0 {
@@ -142,6 +148,128 @@ func TestSeedStepsRunInOrderAndRetryWaitFor(t *testing.T) {
 	err := svc.seed(ctx, steps, nil, "/root", legDir)
 	if err == nil || !strings.HasPrefix(err.Error(), "seed step 1 (one): BRANCH_CHECKED_OUT_ELSEWHERE") || len(err.Error()) > 340 { // the step's own words, first 300 chars
 		t.Fatalf("err = %v", err)
+	}
+	gap, ok := seedGapOf(ctx, nil, "head", err)
+	if !ok || !strings.HasPrefix(gap, "The PR build started without its sample content (seed step 1 failed: BRANCH_CHECKED_OUT_ELSEWHERE: ao/litmus-head-1/root xxx") || !strings.HasSuffix(gap, "...).") || strings.Contains(gap, "\n") {
+		t.Fatalf("gap %q ok %t", gap, ok)
+	}
+	if _, ok := seedGapOf(ctx, nil, "head", errors.New("target not ready")); ok {
+		t.Fatal("a failure that is not a seed step became a gap")
+	}
+}
+
+func TestSeedFailureIsFatalAfterTargetExitOrContextExpiry(t *testing.T) {
+	err := &seedError{step: 2, reason: "no project"}
+	exited := make(chan struct{})
+	close(exited)
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	for _, c := range []struct {
+		name   string
+		ctx    context.Context
+		exited <-chan struct{}
+	}{
+		{"target exited", ctx, exited},
+		{"context expired", expired, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if gap, ok := seedGapOf(c.ctx, c.exited, "head", err); ok || gap != "" {
+				t.Fatalf("fatal seed failure became gap %q", gap)
+			}
+		})
+	}
+	if gap, ok := seedGapOf(ctx, nil, "head", err); !ok || gap == "" {
+		t.Fatalf("a running target lost its seed gap: %q, %t", gap, ok)
+	}
+}
+
+func TestSeedGapsNameBothBuildsAndScrubPaths(t *testing.T) {
+	svc, _ := newSvc(t)
+	home, err := os.UserHomeDir()
+	is(t, "")(nil, err)
+	path := filepath.Join(home, ".ao", "litmus", "runs", "run_private", "head", "data")
+	run := commentRun
+	run.Gaps = nil
+	for _, leg := range []string{"head", "base"} {
+		gap, ok := seedGapOf(ctx, nil, leg, &seedError{step: 2, reason: "could not open " + path})
+		if !ok {
+			t.Fatal("seed failure did not become a gap")
+		}
+		run.Gaps = append(run.Gaps, svc.scrub(gap))
+	}
+	if run.Gaps[0] == run.Gaps[1] || !strings.HasPrefix(run.Gaps[0], "The PR build ") || !strings.HasPrefix(run.Gaps[1], "The main build ") {
+		t.Fatalf("builds were not named separately: %q", run.Gaps)
+	}
+	comment := renderComment(run, commentVerdict(commentChecks(t)), evidence{}, run.CreatedAt.Add(time.Minute))
+	if strings.Contains(comment, home) || strings.Contains(strings.Join(run.Gaps, "\n"), home) || !strings.Contains(comment, "could not open ~/.ao/") {
+		t.Fatalf("seed path was not scrubbed in gaps or comment: %q\n%s", run.Gaps, comment)
+	}
+}
+
+type seedReadyTransport struct{}
+
+func (seedReadyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`[{"type":"page"}]`)), Header: http.Header{}}, nil
+}
+
+func TestLaunchScrubsSeedGapsAndKeepsBothBuilds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a stopped POSIX shell")
+	}
+	t.Setenv("HOME", t.TempDir())
+	oldClient := httpClient
+	httpClient = &http.Client{Transport: seedReadyTransport{}}
+	t.Cleanup(func() { httpClient = oldClient })
+	svc := New(NewStore(t.TempDir()), nil)
+	sys := (&fakeSys{}).ops()
+	sys.killGroup = sigkillGroup
+	svc.sys = sys
+	svc.binary = "fake-agent-browser"
+	svc.engExec = func(context.Context, string, []string, []string) (string, error) { return "", nil }
+	svc.closeEngine = func(string) {}
+	home, err := os.UserHomeDir()
+	is(t, "")(nil, err)
+	path := filepath.Join(home, ".ao", "litmus", "runs", "run_private", "head", "data")
+	svc.runner = &fakeRunner{sh: func(string) error { return os.ErrPermission }, shOut: "could not open " + path}
+	// A stopped shell stands in for the target. No app, daemon or browser process is started.
+	r := Recipe{Kind: "cli", Isolation: true, Run: Step{Cmd: "sh", Args: []string{"-c", "kill -STOP $$"}}, Ready: Ready{PageTargets: 1}, Seed: []SeedStep{{Cmd: "sample"}}}
+	text, err := yaml.Marshal(r)
+	is(t, "")(nil, err)
+	recipePath := svc.store.recipePath("o/r")
+	is(t, "")(nil, os.MkdirAll(filepath.Dir(recipePath), 0o750))
+	is(t, "")(nil, os.WriteFile(recipePath, text, 0o600))
+	run := Run{ID: "run_s1", SessionID: "s1", Repo: "o/r", State: RunPrepared, Deadline: time.Now().Add(RunBudget)}
+	for _, name := range []string{"head", "base"} {
+		root := t.TempDir()
+		is(t, "")(nil, writeManifest(root, Manifest{SHA: "abc"}))
+		run.Legs = append(run.Legs, Leg{Name: name, State: "prepared", Worktree: root})
+	}
+	is(t, "")(nil, svc.store.Save(run))
+	is(t, "")(nil, svc.store.SaveChecks(run.ID, []Check{{ID: "c1"}, {ID: "c2"}}))
+	t.Cleanup(func() {
+		for _, e := range svc.engines {
+			e.Close(sys)
+		}
+		for _, name := range []string{"head", "base"} {
+			is(t, "")(nil, cleanLeg(ctx, sys, svc.store.legDir(run.ID, name), false))
+		}
+	})
+	for _, name := range []string{"head", "base"} {
+		run, err = svc.Launch(ctx, "s1", name)
+		is(t, "")(nil, err)
+	}
+	if len(run.Gaps) != 2 {
+		t.Fatalf("identical seed failures merged across builds: %q", run.Gaps)
+	}
+	for i, build := range []string{"PR", "main"} {
+		want := "The " + build + " build started without its sample content (seed step 1 failed: could not open ~/.ao/litmus/runs/run_private/head/data)."
+		if run.Gaps[i] != want {
+			t.Errorf("gap %q, want %q", run.Gaps[i], want)
+		}
+	}
+	comment := renderComment(run, commentVerdict(commentChecks(t)), evidence{}, time.Now())
+	if strings.Contains(comment, home) || strings.Contains(strings.Join(run.Gaps, "\n"), home) || !strings.Contains(comment, "could not open ~/.ao/") {
+		t.Fatalf("seed path was not scrubbed in gaps or comment: %q\n%s", run.Gaps, comment)
 	}
 }
 
@@ -263,8 +391,8 @@ func TestElectronLaunchArgsKeepHiddenWindowsPainting(t *testing.T) {
 		goos string
 		want []string
 	}{
-		{"default recipe", def, "darwin", []string{"run", "dev", "--", "--", port, occ, bg}},
-		{"windows adds the occlusion feature", def, "windows", []string{"run", "dev", "--", "--", port, occ, bg, winOcclusion}},
+		{"default recipe", def, "darwin", []string{"start", "--", port, occ, bg}},
+		{"windows adds the occlusion feature", def, "windows", []string{"start", "--", port, occ, bg, winOcclusion}},
 		{"a listed flag is not repeated", Recipe{Kind: "electron", Run: Step{Args: []string{port, bg, "--inspect"}}}, "darwin", []string{port, occ, bg, "--inspect"}},
 		{"both listed", Recipe{Kind: "electron", Run: Step{Args: []string{occ, port, bg + "=true"}}}, "darwin", []string{occ, port, bg + "=true"}},
 		{"the recipe owns --disable-features", Recipe{Kind: "electron", Run: Step{Args: []string{port, "--disable-features=X"}}}, "windows", []string{port, occ, bg, "--disable-features=X"}},
@@ -275,8 +403,16 @@ func TestElectronLaunchArgsKeepHiddenWindowsPainting(t *testing.T) {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 	}
-	if len(def.Run.Args) != 5 {
+	if len(def.Run.Args) != 3 {
 		t.Errorf("expanding mutated the recipe: %q", def.Run.Args)
+	}
+}
+
+func TestDefaultLaunchBudgetMatchesRecipe(t *testing.T) {
+	def, err := ParseRecipe(defaultRecipe)
+	is(t, "")(nil, err)
+	if len(def.Seed) != 2 || launchBudget(len(def.Seed)) != DefaultLaunchBudget {
+		t.Fatalf("default recipe has %d seed steps and launch budget %s, want two steps and %s", len(def.Seed), launchBudget(len(def.Seed)), DefaultLaunchBudget)
 	}
 }
 

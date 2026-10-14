@@ -24,7 +24,19 @@ func newSvc(t *testing.T) (*Service, *time.Time) {
 	now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 	svc := New(NewStore(t.TempDir()), func() time.Time { return now }).WithGH(fixtureGH(t))
 	svc.runner, svc.retryPause = gitFixture(t), 0
+	svc.spawnMarkerWait = time.Millisecond
+	is(t, "")(nil, svc.store.markSpawned("s1", spawned{At: now, Repo: "aoagents/agent-orchestrator", PR: 6394}))
 	return svc, &now
+}
+
+// evidenceFile gives a receipt a saved file, as the drive and test verbs do.
+func evidenceFile(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "evidence")
+	if err := os.WriteFile(p, []byte("evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // is returns a checker for a call's outcome: is(t, "CODE")(svc.Verb(...)) wants
@@ -90,7 +102,7 @@ func TestTestingSubmitRequiresReceipts(t *testing.T) {
 	is(t, "")(svc.CheckAdd(ctx, "s1", "never started", "x", ""))
 	addReceipt := func(i int, leg string) { // receipts normally arrive from the drive stage
 		checks, _ := svc.store.Checks(run.ID)
-		checks[i].Receipts = []Receipt{{Seq: i + 1, Action: "click", Leg: leg}}
+		checks[i].Receipts = []Receipt{{Seq: i + 1, Action: "click", Leg: leg, AfterPath: evidenceFile(t)}}
 		is(t, "")(nil, svc.store.SaveChecks(run.ID, checks))
 	}
 	_, err = svc.Submit(ctx, "s1", "", "")
@@ -100,17 +112,17 @@ func TestTestingSubmitRequiresReceipts(t *testing.T) {
 	for i, result := range []CheckState{CheckPass, CheckPartial} {
 		id := fmt.Sprintf("c%d", i+1)
 		is(t, "")(svc.CheckStart(ctx, "s1", id))
-		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped"))
+		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
 		addReceipt(i, "base") // a receipt on the other leg does not count
-		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped"))
+		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
 		addReceipt(i, "")
-		is(t, "")(svc.CheckEnd(ctx, "s1", id, result, "clipped"))
+		is(t, "")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
 	}
 	is(t, "TESTING_CHECKS_INCOMPLETE")(svc.Submit(ctx, "s1", "", ""))
 	addReceipt(2, "head") // a receipt does not substitute for starting and ending a check
 	is(t, "TESTING_CHECKS_INCOMPLETE")(svc.Submit(ctx, "s1", "", ""))
 	is(t, "")(svc.CheckStart(ctx, "s1", "c3"))
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c3", CheckPass, ""))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c3", CheckPass, "", false))
 	var reported []string
 	svc.WithReporter(func(_ context.Context, id, note string) error { reported = append(reported, id+": "+note); return nil })
 	v, err := svc.Submit(ctx, "s1", "head only", "")
@@ -142,5 +154,18 @@ func TestTestingVerbsAndExpiry(t *testing.T) {
 	is(t, "")(svc.Cleanup(ctx, "s1")) // cleanup still works on a closed run, and keeps its state
 	if runs, _ := svc.store.List(); len(runs) != 1 || runs[0].State != RunExpired {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestCheckAddRefusesDuplicateNamesOnTheSameLeg(t *testing.T) {
+	svc, _ := newSvc(t)
+	is(t, "")(svc.Intake(ctx, "s1", prURL))
+	is(t, "")(svc.CheckAdd(ctx, "s1", " menu opens ", "list shown", ""))
+	is(t, "TESTING_CHECK_DUPLICATE")(svc.CheckAdd(ctx, "s1", "MENU opens", "list shown", "head"))
+	is(t, "")(svc.CheckAdd(ctx, "s1", "menu opens", "list shown", "base"))
+	is(t, "TESTING_CHECK_DUPLICATE")(svc.CheckAdd(ctx, "s1", "menu opens ", "list shown", "base"))
+	checks, err := svc.store.Checks("run_s1")
+	if err != nil || len(checks) != 2 || checks[0].Name != "menu opens" || checks[1].ID != "c2" {
+		t.Fatalf("checks %+v, %v", checks, err)
 	}
 }

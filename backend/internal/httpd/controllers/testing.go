@@ -21,13 +21,14 @@ type TestingService interface {
 	Status(ctx context.Context, sessionID string) (litmus.RunStatus, error)
 	CheckAdd(ctx context.Context, sessionID, name, expect, leg string) (litmus.Check, error)
 	CheckStart(ctx context.Context, sessionID, id string) (litmus.Check, error)
-	CheckEnd(ctx context.Context, sessionID, id string, result litmus.CheckState, note string) (litmus.Check, error)
+	CheckEnd(ctx context.Context, sessionID, id string, result litmus.CheckState, note string, sameFault bool) (litmus.Check, error)
 	Compare(ctx context.Context, sessionID, checkID string) (map[string]any, error)
+	Replay(ctx context.Context, sessionID, checkID, leg string) (map[string]any, error)
 	Submit(ctx context.Context, sessionID, summary, skipBase string) (litmus.Verdict, error)
 	SubmitBlocked(ctx context.Context, sessionID, reason string) (litmus.Verdict, error)
 	Cleanup(ctx context.Context, sessionID string) (litmus.Run, error)
 	Drive(ctx context.Context, sessionID, action string, args []string) (map[string]any, error)
-	Test(ctx context.Context, sessionID, leg, dir string, argv []string, withTestsFrom string) (litmus.TestResult, error)
+	Test(ctx context.Context, sessionID, leg, dir string, argv []string, withTestsFrom string, minutes int) (litmus.TestResult, error)
 	RecipeValidate(ctx context.Context, path string) (litmus.Recipe, error)
 	RefuseTester(sessionID, verb string) error
 	Prune(ctx context.Context, keepRuns, keepCheckouts int) (litmus.PruneReport, error)
@@ -75,7 +76,10 @@ func (c *TestingController) Register(r chi.Router) {
 		}
 		return s.Post(r.Context(), chi.URLParam(r, "id"))
 	}))
-	r.Post("/testing/runs/{id}/discard", testingPost(func(r *http.Request, _ TestingRequest) (litmus.Run, error) {
+	r.Post("/testing/runs/{id}/discard", testingPost(func(r *http.Request, in TestingRequest) (litmus.Run, error) {
+		if err := s.RefuseTester(in.SessionID, "discard"); err != nil {
+			return litmus.Run{}, err
+		}
 		return s.Discard(r.Context(), chi.URLParam(r, "id"))
 	}))
 	r.Post("/testing/rerun", testingPost(func(r *http.Request, in TestingRequest) (litmus.Rerun, error) {
@@ -85,15 +89,7 @@ func (c *TestingController) Register(r chi.Router) {
 		out, err := s.ProjectSettings(r.Context(), chi.URLParam(r, "id"))
 		writeTesting(w, r, out, err)
 	})
-	r.Put("/testing/projects/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
-		var in litmus.ProjectSettings
-		if err := decodeJSONStrict(r, &in); err != nil {
-			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
-			return
-		}
-		out, err := s.SetProjectSettings(r.Context(), chi.URLParam(r, "id"), in)
-		writeTesting(w, r, out, err)
-	})
+	r.Put("/testing/projects/{id}/settings", c.setProjectSettings)
 	r.Post("/testing/start", testingPost(func(r *http.Request, in TestingRequest) (litmus.Started, error) {
 		if err := s.RefuseTester(in.SessionID, "start"); err != nil {
 			return litmus.Started{}, err
@@ -116,10 +112,13 @@ func (c *TestingController) Register(r chi.Router) {
 		return s.CheckStart(r.Context(), in.SessionID, chi.URLParam(r, "id"))
 	}))
 	r.Post("/testing/checks/{id}/end", testingPost(func(r *http.Request, in TestingRequest) (litmus.Check, error) {
-		return s.CheckEnd(r.Context(), in.SessionID, chi.URLParam(r, "id"), litmus.CheckState(in.Result), in.Note)
+		return s.CheckEnd(r.Context(), in.SessionID, chi.URLParam(r, "id"), litmus.CheckState(in.Result), in.Note, in.SameFault)
 	}))
 	r.Post("/testing/checks/{id}/compare", testingPost(func(r *http.Request, in TestingRequest) (map[string]any, error) {
 		return s.Compare(r.Context(), in.SessionID, chi.URLParam(r, "id"))
+	}))
+	r.Post("/testing/checks/{id}/replay", testingPost(func(r *http.Request, in TestingRequest) (map[string]any, error) {
+		return s.Replay(r.Context(), in.SessionID, chi.URLParam(r, "id"), in.Leg)
 	}))
 	r.Post("/testing/submit", testingPost(func(r *http.Request, in TestingRequest) (litmus.Verdict, error) {
 		if in.Blocked {
@@ -134,7 +133,10 @@ func (c *TestingController) Register(r chi.Router) {
 		return s.Drive(r.Context(), in.SessionID, strings.ToLower(strings.TrimSpace(in.Action)), in.Args)
 	}))
 	r.Post("/testing/test", testingPost(func(r *http.Request, in TestingRequest) (litmus.TestResult, error) {
-		return s.Test(r.Context(), in.SessionID, in.Leg, in.Dir, in.Args, in.WithTestsFrom)
+		if err := s.RefuseTester(in.SessionID, "test"); err != nil {
+			return litmus.TestResult{}, err
+		}
+		return s.Test(r.Context(), in.SessionID, in.Leg, in.Dir, in.Args, in.WithTestsFrom, in.Minutes)
 	}))
 	r.Post("/testing/recipe/validate", testingPost(func(r *http.Request, in TestingRequest) (litmus.Recipe, error) {
 		return s.RecipeValidate(r.Context(), in.Path)
@@ -155,6 +157,30 @@ func (c *TestingController) Register(r chi.Router) {
 		}
 		return s.Prune(r.Context(), keepRuns, keepCheckouts)
 	}))
+}
+
+func (c *TestingController) setProjectSettings(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		return
+	}
+	var in UpdateTestingProjectSettingsRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	projectID := chi.URLParam(r, "id")
+	stored, err := c.Svc.ProjectSettings(r.Context(), projectID)
+	if err != nil {
+		writeTesting(w, r, stored, err)
+		return
+	}
+	stored.AskBeforePosting = in.AskBeforePosting
+	stored.Harness, stored.Model, stored.Effort = in.Harness, in.Model, in.Effort
+	if in.Review != nil {
+		stored.Review = *in.Review
+	}
+	out, err := c.Svc.SetProjectSettings(r.Context(), projectID, stored)
+	writeTesting(w, r, out, err)
 }
 
 // testingPost decodes a strict JSON body, calls the verb, and renders the result or error.

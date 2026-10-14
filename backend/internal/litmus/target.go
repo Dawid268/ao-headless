@@ -25,9 +25,19 @@ import (
 )
 
 const (
-	readyLimit  = 120 * time.Second
+	// A loaded Mac took 2m04s to answer /readyz (#5848, 2026-10-14).
+	readyLimit  = 300 * time.Second
 	seedTimeout = 60 * time.Second
+	// DefaultLaunchBudget matches the default recipe's two seed steps and
+	// Launch's extra seed timeout.
+	DefaultLaunchBudget = readyLimit + 3*seedTimeout
+	// RecipeValidateBudget caps validation that prepares and launches a commit.
+	RecipeValidateBudget = 10 * time.Minute
 )
+
+func launchBudget(seedSteps int) time.Duration {
+	return readyLimit + time.Duration(seedSteps+1)*seedTimeout
+}
 
 // Tests shorten these.
 var (
@@ -311,8 +321,10 @@ func runArgs(r Recipe, env []string, goos string) []string {
 }
 
 // startLeg runs the recipe's run command in its own process group, waits until the
-// target is ready, then seeds it. Any failure kills the leg again before returning.
-func (s *Service) startLeg(ctx context.Context, runID string, pr int, r Recipe, leg Leg, w *laps) (Leg, error) {
+// target is ready, then seeds it. Any failure kills the leg again before returning, except a failed seed step
+// when seedGap is given: the leg then stays up and usable, and *seedGap says what is missing so the caller can
+// record it as a gap.
+func (s *Service) startLeg(ctx context.Context, runID string, pr int, r Recipe, leg Leg, w *laps, seedGap *string) (Leg, error) {
 	m := readManifest(leg.Worktree)
 	if m.SHA == "" {
 		return leg, conflict("TESTING_NOT_PREPARED", "leg "+leg.Name+" has no build; run `ao testing prepare`")
@@ -380,7 +392,11 @@ func (s *Service) startLeg(ctx context.Context, runID string, pr int, r Recipe, 
 		return fail(err)
 	}
 	if err := s.seed(ctx, r.Seed, env, leg.Worktree, dir); err != nil {
-		return fail(err)
+		gap, ok := seedGapOf(ctx, exited, leg.Name, err)
+		if seedGap == nil || !ok {
+			return fail(err)
+		}
+		*seedGap = gap
 	}
 	w.lap("seed")
 	leg.State, leg.PID, leg.PIDStart = "running", o.PGID.PID, start
@@ -411,6 +427,34 @@ func (s *Service) electronProc(flag string) Proc {
 	return p
 }
 
+// seedError is a seed step that failed: which one, and what it said.
+type seedError struct {
+	step        int
+	cmd, reason string
+}
+
+func (e *seedError) Error() string {
+	return fmt.Sprintf("seed step %d (%s): %s", e.step, e.cmd, e.reason)
+}
+
+// seedGapOf turns a failed seed step into a gap only while the target is still running within its launch budget.
+func seedGapOf(ctx context.Context, exited <-chan struct{}, leg string, err error) (string, bool) {
+	if ctx.Err() != nil {
+		return "", false
+	}
+	select {
+	case <-exited:
+		return "", false
+	default:
+	}
+	var se *seedError
+	if !errors.As(err, &se) {
+		return "", false
+	}
+	build := map[string]string{"head": "PR", "base": "main"}[leg]
+	return fmt.Sprintf("The %s build started without its sample content (seed step %d failed: %s).", build, se.step, strings.Join(strings.Fields(se.reason), " ")), true
+}
+
 // seed runs the recipe's seed steps in order, each under its own timeout, waiting for its waitFor.
 func (s *Service) seed(ctx context.Context, steps []SeedStep, env []string, root, legDir string) error {
 	logf, err := os.OpenFile(filepath.Join(legDir, "logs", "seed.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -430,7 +474,7 @@ func (s *Service) seed(ctx context.Context, steps []SeedStep, env []string, root
 		}
 		cancel()
 		if err != nil {
-			return fmt.Errorf("seed step %d (%s): %s", i+1, clip(st.Cmd, 80), clip(cmp.Or(detail, err.Error()), 300))
+			return &seedError{step: i + 1, cmd: clip(st.Cmd, 80), reason: clip(cmp.Or(detail, err.Error()), 300)}
 		}
 	}
 	return nil
@@ -477,21 +521,26 @@ func (s *Service) Launch(ctx context.Context, sessionID, leg string) (Run, error
 	if err != nil {
 		return Run{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readyLimit+time.Duration(len(recipe.Seed)+1)*seedTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), launchBudget(len(recipe.Seed)))
 	defer cancel()
-	started, lerr := s.startLeg(ctx, run.ID, run.PRNumber, recipe, run.Legs[i], newLaps())
+	var seedGap string
+	started, lerr := s.startLeg(ctx, run.ID, run.PRNumber, recipe, run.Legs[i], newLaps(), &seedGap)
 	if lerr == nil {
 		started, lerr = s.attachEngine(ctx, run.ID, started)
 	}
 	if lerr == nil { // each leg records its own window, so a video never shows the other build
 		started = s.startRecording(ctx, run.ID, started)
 	}
+	seedGap = s.scrub(seedGap)
 	out, err := s.update(run.ID, func(cur *Run) {
 		if j := slices.IndexFunc(cur.Legs, func(l Leg) bool { return l.Name == leg }); j >= 0 {
 			cur.Legs[j] = started
 		}
 		if lerr == nil && !cur.State.Closed() {
 			cur.State = RunRunning
+		}
+		if seedGap != "" && !slices.Contains(cur.Gaps, seedGap) {
+			cur.Gaps = append(cur.Gaps, seedGap)
 		}
 	})
 	if lerr != nil {
@@ -577,6 +626,11 @@ func waitPortsFree(ctx context.Context, sys sysOps, ports ...int) error {
 // teardown stops a run's engines and targets, removes their private state (the worktrees their private AO
 // made go with it), prunes the shared clones those worktrees were registered in and checks the ports are free.
 func (s *Service) teardown(ctx context.Context, run Run) error {
+	defer func() {
+		if line := s.ownerLoginStatus(context.WithoutCancel(ctx), run); line != "" {
+			_ = s.store.WriteFile(run.ID, "run.log", []byte(line+"\n"))
+		}
+	}()
 	if s.closeEngine != nil {
 		s.closeEngine(run.ID)
 	}
@@ -671,13 +725,13 @@ func (s *Service) RecipeValidate(ctx context.Context, ref string) (Recipe, error
 	if sha == "" {
 		return r, nil
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), RecipeValidateBudget)
 	defer cancel()
 	id, w := fmt.Sprintf("validate_%d", time.Now().Unix()), newLaps()
 	leg, err := s.prepareLeg(ctx, cmp.Or(r.Repo, DefaultRepo), r, "head", sha)
 	w.lap("prepare")
 	if err == nil {
-		_, err = s.startLeg(ctx, id, 0, r, leg, w)
+		_, err = s.startLeg(ctx, id, 0, r, leg, w, nil)
 	}
 	if err == nil {
 		err = cleanLeg(ctx, s.sys, s.store.legDir(id, "head"), true)

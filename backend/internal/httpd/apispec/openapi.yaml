@@ -9638,6 +9638,58 @@ paths:
       summary: End a check with an outcome; refused without a receipt
       tags:
       - testing
+  /api/v1/testing/checks/{id}/replay:
+    post:
+      operationId: replayTestingCheck
+      parameters:
+      - description: Check id within the run, e.g. c1.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Check id within the run, e.g. c1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Repeat a PR check on the base build through fresh element matches
+      tags:
+      - testing
   /api/v1/testing/checks/{id}/start:
     post:
       operationId: startTestingCheck
@@ -9965,7 +10017,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TestingProjectSettings'
+              $ref: '#/components/schemas/UpdateTestingProjectSettingsRequest'
         required: true
       responses:
         "200":
@@ -17170,6 +17222,8 @@ components:
           items:
             $ref: '#/components/schemas/TestingReceipt'
           type: array
+        sameFault:
+          type: boolean
         state:
           type: string
       required:
@@ -17177,6 +17231,32 @@ components:
       - name
       - expect
       - state
+      type: object
+    TestingElementBox:
+      properties:
+        h:
+          format: double
+          type: number
+        viewportHeight:
+          format: double
+          type: number
+        viewportWidth:
+          format: double
+          type: number
+        w:
+          format: double
+          type: number
+        x:
+          format: double
+          type: number
+        "y":
+          format: double
+          type: number
+      required:
+      - x
+      - "y"
+      - w
+      - h
       type: object
     TestingEngineInfo:
       properties:
@@ -17241,6 +17321,22 @@ components:
       - recordStartedAt
       - recordStoppedAt
       type: object
+    TestingPostedComment:
+      properties:
+        fixed:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        name:
+          type: string
+        number:
+          type: integer
+        url:
+          type: string
+      required:
+      - name
+      type: object
     TestingProjectSettings:
       properties:
         askBeforePosting:
@@ -17262,8 +17358,13 @@ components:
           description: Model the project's testers run on. Empty uses the project's
             worker model, then the Litmus default.
           type: string
+        review:
+          description: When on, a failing verdict also submits a REQUEST_CHANGES review
+            beside its comment. Off by default.
+          type: boolean
       required:
       - askBeforePosting
+      - review
       type: object
     TestingReady:
       properties:
@@ -17289,6 +17390,8 @@ components:
           type: string
         beforePath:
           type: string
+        box:
+          $ref: '#/components/schemas/TestingElementBox'
         consoleTail:
           type: string
         exit:
@@ -17299,20 +17402,33 @@ components:
           type: boolean
         leg:
           type: string
+        ms:
+          format: int64
+          type: integer
         notBuilt:
           type: boolean
         outputPath:
+          type: string
+        pageErrors:
           type: string
         ran:
           type:
           - "null"
           - integer
+        reason:
+          type: string
         seq:
           type: integer
         targetName:
           type: string
         targetRole:
           type: string
+        themeNote:
+          type: string
+        themeShots:
+          items:
+            $ref: '#/components/schemas/TestingThemeShot'
+          type: array
       required:
       - seq
       - action
@@ -17368,7 +17484,8 @@ components:
             type: string
           type: array
         blocked:
-          description: 'submit only: close the run as blocked instead of judging checks.'
+          description: 'submit only: stop early with a reason; a recorded failure
+            keeps the overall result fail.'
           type: boolean
         dir:
           description: 'test only: folder inside the leg''s checkout to run in, like
@@ -17400,6 +17517,12 @@ components:
           - base
           - head
           type: string
+        minutes:
+          description: 'test only: how long this command may run, in minutes (default
+            3).'
+          maximum: 10
+          minimum: 1
+          type: integer
         name:
           type: string
         noComment:
@@ -17434,6 +17557,10 @@ components:
         runId:
           description: 'rerun only: the run whose pull request is tested again.'
           type: string
+        sameFault:
+          description: 'check end only, base leg: the failure or partial is the same
+            fault as on the PR build.'
+          type: boolean
         sessionId:
           description: the calling session; start, post and prune refuse it when it
             is a Litmus tester's own session.
@@ -17481,6 +17608,10 @@ components:
           type: string
         commentUrl:
           type: string
+        comments:
+          items:
+            $ref: '#/components/schemas/TestingPostedComment'
+          type: array
         createdAt:
           format: date-time
           type: string
@@ -17649,6 +17780,8 @@ components:
           items:
             $ref: '#/components/schemas/LitmusInFlight'
           type: array
+        ownerLogins:
+          type: string
         run:
           $ref: '#/components/schemas/TestingRun'
       required:
@@ -17742,6 +17875,16 @@ components:
         dir:
           type: string
       type: object
+    TestingThemeShot:
+      properties:
+        path:
+          type: string
+        theme:
+          type: string
+      required:
+      - theme
+      - path
+      type: object
     TestingToolchain:
       properties:
         node:
@@ -17768,6 +17911,8 @@ components:
             type: string
           type: array
         skipBase:
+          type: string
+        stoppedEarly:
           type: string
         summary:
           type: string
@@ -17965,6 +18110,36 @@ components:
           type: string
       required:
       - title
+      type: object
+    UpdateTestingProjectSettingsRequest:
+      properties:
+        askBeforePosting:
+          description: When on, a finished run writes its comment and waits for approval
+            instead of posting it.
+          type: boolean
+        effort:
+          description: Reasoning effort the project's testers run at. Empty uses the
+            project's worker effort, then the Litmus default.
+          type: string
+        harness:
+          description: 'Agent the project''s testers run on: claude-code or codex.
+            Empty uses the project''s worker agent, then claude-code.'
+          enum:
+          - claude-code
+          - codex
+          type: string
+        model:
+          description: Model the project's testers run on. Empty uses the project's
+            worker model, then the Litmus default.
+          type: string
+        review:
+          description: When on, a failing verdict also submits a REQUEST_CHANGES review
+            beside its comment. Omit to keep the stored value.
+          type:
+          - "null"
+          - boolean
+      required:
+      - askBeforePosting
       type: object
     UpdateWorkspaceFileRequest:
       properties:

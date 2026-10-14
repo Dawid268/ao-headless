@@ -45,6 +45,8 @@ type ProjectSettings struct {
 	// AskBeforePosting makes a run stop at awaiting-approval with its comment written, until the comment is posted or
 	// discarded.
 	AskBeforePosting bool `json:"askBeforePosting" description:"When on, a finished run writes its comment and waits for approval instead of posting it."`
+	// Review adds a REQUEST_CHANGES review to the comment of a failing verdict. Off by default: the comment alone.
+	Review bool `json:"review" description:"When on, a failing verdict also submits a REQUEST_CHANGES review beside its comment. Off by default."`
 	// Harness is the agent the project's testers run on. Empty falls back to the project's worker harness when testers
 	// can run on it, then to claude-code.
 	Harness string `json:"harness,omitempty" description:"Agent the project's testers run on: claude-code or codex. Empty uses the project's worker agent, then claude-code." enum:"claude-code,codex"`
@@ -219,6 +221,15 @@ func (s *Service) mustAsk(run Run, v Verdict) bool {
 	}
 	ps, err := s.store.projectSettings(run.ProjectID)
 	return err == nil && ps.AskBeforePosting
+}
+
+// reviewOn reports whether the run's project asked for a REQUEST_CHANGES review on a failing verdict.
+func (s *Service) reviewOn(run Run) bool {
+	if run.ProjectID == "" {
+		return false
+	}
+	ps, err := s.store.projectSettings(run.ProjectID)
+	return err == nil && ps.Review
 }
 
 var verdictHead = regexp.MustCompile(`^# Verdict: (pass|fail|partial|blocked)\b`)
@@ -423,6 +434,9 @@ func (s *Service) Post(ctx context.Context, id string) (Run, error) {
 		return Run{}, err
 	}
 	defer done()
+	if run.Comment != CommentPost {
+		return Run{}, conflict("TESTING_COMMENT_OFF", "this run was started with --no-comment; it cannot be posted")
+	}
 	var v Verdict
 	if err := s.store.read(run.ID, verdictFile, &v); err != nil {
 		return Run{}, fmt.Errorf("read the verdict of %s: %w", run.ID, err)
@@ -443,6 +457,14 @@ func (s *Service) Post(ctx context.Context, id string) (Run, error) {
 		}
 	})
 }
+
+const (
+	oneVideoPostBudget = uploadTimeout + 2*time.Minute + 15*time.Second
+	// PostBudget bounds login, image staging, the evidence push and repo lookup, two videos with one retry each, and the PR comment.
+	PostBudget = commentTimeout + stageTimeout + pushTimeout + time.Minute + 2*oneVideoPostBudget + commentTimeout
+	// SubmitBudget adds the time to stop two recordings and finish their video before publication.
+	SubmitBudget = PostBudget + 2*stopTimeout + videoTimeout
+)
 
 // Discard closes a run awaiting approval without posting: its targets are cleaned up and its comment is kept in the
 // run folder, unposted.

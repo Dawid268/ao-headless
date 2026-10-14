@@ -3150,6 +3150,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/testing/checks/{id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Repeat a PR check on the base build through fresh element matches */
+        post: operations["replayTestingCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/testing/checks/{id}/start": {
         parameters: {
             query?: never;
@@ -6008,7 +6025,22 @@ export interface components {
             name: string;
             note?: string;
             receipts?: components["schemas"]["TestingReceipt"][];
+            sameFault?: boolean;
             state: string;
+        };
+        TestingElementBox: {
+            /** Format: double */
+            h: number;
+            /** Format: double */
+            viewportHeight?: number;
+            /** Format: double */
+            viewportWidth?: number;
+            /** Format: double */
+            w: number;
+            /** Format: double */
+            x: number;
+            /** Format: double */
+            y: number;
         };
         TestingEngineInfo: {
             binary?: string;
@@ -6038,6 +6070,14 @@ export interface components {
             state: string;
             worktree?: string;
         };
+        TestingPostedComment: {
+            fixed?: boolean;
+            /** Format: int64 */
+            id?: number;
+            name: string;
+            number?: number;
+            url?: string;
+        };
         TestingProjectSettings: {
             /** @description When on, a finished run writes its comment and waits for approval instead of posting it. */
             askBeforePosting: boolean;
@@ -6050,6 +6090,8 @@ export interface components {
             harness?: "claude-code" | "codex";
             /** @description Model the project's testers run on. Empty uses the project's worker model, then the Litmus default. */
             model?: string;
+            /** @description When on, a failing verdict also submits a REQUEST_CHANGES review beside its comment. Off by default. */
+            review: boolean;
         };
         TestingReady: {
             daemonPath?: string;
@@ -6063,16 +6105,23 @@ export interface components {
             /** Format: date-time */
             at: string;
             beforePath?: string;
+            box?: components["schemas"]["TestingElementBox"];
             consoleTail?: string;
             exit?: null | number;
             failing?: boolean;
             leg?: string;
+            /** Format: int64 */
+            ms?: number;
             notBuilt?: boolean;
             outputPath?: string;
+            pageErrors?: string;
             ran?: null | number;
+            reason?: string;
             seq: number;
             targetName?: string;
             targetRole?: string;
+            themeNote?: string;
+            themeShots?: components["schemas"]["TestingThemeShot"][];
         };
         TestingRecipe: {
             build: components["schemas"]["TestingStep"];
@@ -6093,7 +6142,7 @@ export interface components {
             action?: string;
             /** @description drive: the action's arguments; test: the command and its arguments. */
             args?: string[];
-            /** @description submit only: close the run as blocked instead of judging checks. */
+            /** @description submit only: stop early with a reason; a recorded failure keeps the overall result fail. */
             blocked?: boolean;
             /** @description test only: folder inside the leg's checkout to run in, like backend. */
             dir?: string;
@@ -6107,6 +6156,8 @@ export interface components {
             keepRuns?: null | number;
             /** @enum {string} */
             leg?: "base" | "head";
+            /** @description test only: how long this command may run, in minutes (default 3). */
+            minutes?: number;
             name?: string;
             /** @description start only: the run's verdict is written to comment.md but not posted to the pull request. */
             noComment?: boolean;
@@ -6123,6 +6174,8 @@ export interface components {
             result?: "pass" | "fail" | "partial" | "absent" | "skipped";
             /** @description rerun only: the run whose pull request is tested again. */
             runId?: string;
+            /** @description check end only, base leg: the failure or partial is the same fault as on the PR build. */
+            sameFault?: boolean;
             /** @description the calling session; start, post and prune refuse it when it is a Litmus tester's own session. */
             sessionId?: string;
             /** @description submit only: why the base was not run; lets a submit through while a prepared base is unlaunched. */
@@ -6146,6 +6199,7 @@ export interface components {
             comment?: string;
             commentState?: string;
             commentUrl?: string;
+            comments?: components["schemas"]["TestingPostedComment"][];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -6212,6 +6266,7 @@ export interface components {
         TestingRunStatus: {
             checks: components["schemas"]["TestingCheck"][];
             inFlight?: components["schemas"]["LitmusInFlight"][];
+            ownerLogins?: string;
             run: components["schemas"]["TestingRun"];
         };
         TestingRunSummary: {
@@ -6249,6 +6304,10 @@ export interface components {
             cmd?: string;
             dir?: string;
         };
+        TestingThemeShot: {
+            path: string;
+            theme: string;
+        };
         TestingToolchain: {
             node?: string;
         };
@@ -6261,6 +6320,7 @@ export interface components {
             overall: string;
             reasons?: string[];
             skipBase?: string;
+            stoppedEarly?: string;
             summary?: string;
         };
         TrackerIntakeConfig: {
@@ -6329,6 +6389,21 @@ export interface components {
         UpdateShellTerminalRequest: {
             /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
             title: string;
+        };
+        UpdateTestingProjectSettingsRequest: {
+            /** @description When on, a finished run writes its comment and waits for approval instead of posting it. */
+            askBeforePosting: boolean;
+            /** @description Reasoning effort the project's testers run at. Empty uses the project's worker effort, then the Litmus default. */
+            effort?: string;
+            /**
+             * @description Agent the project's testers run on: claude-code or codex. Empty uses the project's worker agent, then claude-code.
+             * @enum {string}
+             */
+            harness?: "claude-code" | "codex";
+            /** @description Model the project's testers run on. Empty uses the project's worker model, then the Litmus default. */
+            model?: string;
+            /** @description When on, a failing verdict also submits a REQUEST_CHANGES review beside its comment. Omit to keep the stored value. */
+            review?: null | boolean;
         };
         UpdateWorkspaceFileRequest: {
             content: string;
@@ -18608,6 +18683,71 @@ export interface operations {
             };
         };
     };
+    replayTestingCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Check id within the run, e.g. c1. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     startTestingCheck: {
         parameters: {
             query?: never;
@@ -19044,7 +19184,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TestingProjectSettings"];
+                "application/json": components["schemas"]["UpdateTestingProjectSettingsRequest"];
             };
         };
         responses: {

@@ -29,6 +29,9 @@ type evGit struct {
 }
 
 func (g *evGit) Run(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
+	if filepath.Base(name) == "ffprobe" {
+		return []byte("120\n"), nil
+	}
 	if name != "git" {
 		g.t.Fatalf("unexpected command %s", name)
 	}
@@ -272,35 +275,50 @@ func evSubmit(t *testing.T, mode, private string) (*Service, *evGit, *commentGH,
 	return svc, g, gh, runDir
 }
 
+// evidenceBug turns the menu comparison into a PR regression and supplies real
+// PNGs so the crop is exercised without ffmpeg or a browser.
+func evidenceBug(t *testing.T, svc *Service) {
+	t.Helper()
+	checks, err := svc.store.Checks("run_s1")
+	is(t, "")(nil, err)
+	checks[0].State, checks[0].Note = CheckFail, "The menu closed after the click."
+	checks[1].State, checks[1].Note = CheckPass, "The menu stayed open."
+	for _, check := range checks {
+		for _, receipt := range check.Receipts {
+			if receipt.AfterPath != "" {
+				whitePNG(t, receipt.AfterPath, 800, 600)
+			}
+		}
+	}
+	is(t, "")(nil, svc.store.SaveChecks("run_s1", checks))
+}
+
 func TestSubmitPublishesEvidenceAndEmbedsIt(t *testing.T) {
-	for _, c := range []struct{ private, prefix string }{
-		{"false", "https://raw.githubusercontent.com/o/r/" + fakeSHA + "/runs/7/20261011-090000/"},
-		{"true", "https://github.com/o/r/blob/" + fakeSHA + "/runs/7/20261011-090000/"},
-	} {
-		t.Run("private="+c.private, func(t *testing.T) {
-			svc, g, gh, runDir := evSubmit(t, EvidencePost, c.private)
+	for _, private := range []string{"false", "true"} {
+		t.Run("private="+private, func(t *testing.T) {
+			svc, g, gh, runDir := evSubmit(t, EvidencePost, private)
+			evidenceBug(t, svc)
 			v, err := svc.Submit(ctx, "s1", "", "")
 			run, _ := svc.store.Get("run_s1")
-			if err != nil || v.CommentState != "posted" || v.EvidenceState != "published" || v.EvidenceCommit != fakeSHA || run.EvidenceState != "published" || run.EvidenceCommit != fakeSHA {
+			if err != nil || v.Overall != CheckFail || v.CommentState != "posted" || v.EvidenceState != "published" || v.EvidenceCommit != fakeSHA || run.EvidenceState != "published" {
 				t.Fatalf("verdict %+v run %+v err %v", v, run, err)
 			}
-			wantVis := map[string]string{"false": "public", "true": "private"}[c.private]
+			wantVis := map[string]string{"false": "public", "true": "private"}[private]
 			if run.RepoVisibility != wantVis || !gh.has("repo view o/r --json isPrivate") {
-				t.Fatalf("visibility %q, gh %q", run.RepoVisibility, gh.calls)
+				t.Fatalf("visibility %q gh %q", run.RepoVisibility, gh.calls)
 			}
 			body, _ := os.ReadFile(filepath.Join(runDir, "comment.md"))
-			if gh.field(0, "body") != string(body) {
-				t.Fatalf("comment.md is not the posted body")
-			}
-			suffix := map[bool]string{false: "", true: "?raw=true"}[c.private == "true"]
-			for _, want := range []string{"![base branch on the left, PR build on the right](" + c.prefix + "list-shown-main-vs-pr.png" + suffix + ")", "![PR build](" + c.prefix + "scrolls-pr.png" + suffix + ")",
-				"<details><summary>Recordings and every screenshot</summary>", "![PR build recording](" + c.prefix + "pr.gif" + suffix + ")", "![base branch recording](" + c.prefix + "main.gif" + suffix + ")", "(builds under a minute, testing under a minute)."} {
+			imageURL := evidenceURL(run.Repo, fakeSHA, evidencePath(run)+"/bug-1.png", private == "true")
+			for _, want := range []string{"Bug 1 of 1:", "The menu closed after the click.", "(" + imageURL + ")", "<details><summary>Recording for menu opens</summary>", vid1, litmusCommentMarker()} {
 				if !strings.Contains(string(body), want) {
 					t.Errorf("comment lacks %q:\n%s", want, body)
 				}
 			}
-			if !slices.Contains(g.added, "list-shown-main-vs-pr.png") || len(g.added) != 4 { // the composite replaces the two shots it is made of
-				t.Fatalf("files committed: %q", g.added)
+			if gh.field(0, "body") != string(body) || strings.Count(string(body), "![") != 1 || gh.uploads != 1 {
+				t.Fatalf("comment or clip count wrong: %s, uploads %d", body, gh.uploads)
+			}
+			if !slices.Contains(g.added, "bug-1.png") {
+				t.Fatalf("crop not published: %q", g.added)
 			}
 			for _, f := range g.added {
 				exists(t, filepath.Join(runDir, "evidence", f))
@@ -314,30 +332,33 @@ func TestSubmitPublishesEvidenceAndEmbedsIt(t *testing.T) {
 
 func TestSubmitPostsWithoutImagesWhenPublishingFails(t *testing.T) {
 	svc, g, gh, runDir := evSubmit(t, EvidencePost, "false")
+	evidenceBug(t, svc)
 	clone := filepath.Join(filepath.Dir(svc.store.root), "evidence", "o__r")
 	g.fail = map[string]error{"push": errors.New("git push origin litmus/evidence: exit status 128\nremote: Permission to o/r.git denied to bot.\nfatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403")}
 	v, err := svc.Submit(ctx, "s1", "", "")
 	run, _ := svc.store.Get("run_s1")
 	const reason = "git push: fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403"
-	if err != nil || v.CommentState != "posted" || v.EvidenceState != "failed:"+reason || v.EvidenceCommit != "" || run.EvidenceState != v.EvidenceState || run.State != RunSubmitted {
-		t.Fatalf("a push failure must not fail the submit: verdict %+v run %+v err %v", v, run, err)
+	if err != nil || v.CommentState != "posted" || v.EvidenceState != "failed:"+reason || v.EvidenceCommit != "" || run.State != RunSubmitted {
+		t.Fatalf("a push failure failed the submit: %+v, %v", v, err)
 	}
 	body := gh.field(0, "body")
-	if strings.Contains(body, "![") || strings.Contains(body, "**Evidence**") || !strings.Contains(body, "\nI could not publish the screenshots and recordings. The error was "+reason+".\n") {
-		t.Fatalf("comment:\n%s", body)
+	if strings.Contains(body, "![") || strings.Contains(body, "(bug-1.png)") || !strings.Contains(body, "The comparison image was not available in the published evidence.") {
+		t.Fatalf("comment: %s", body)
 	}
 	if log, _ := os.ReadFile(filepath.Join(runDir, "comment.log")); !strings.Contains(string(log), "Permission to o/r.git denied") {
 		t.Fatalf("comment.log = %q", log)
 	}
 	if _, err := os.Stat(clone); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a failed publish must drop the dedicated clone so the next run starts clean: %v", err)
+		t.Fatalf("failed publish retained its clone: %v", err)
 	}
 
-	svc, g, _, _ = evSubmit(t, EvidencePost, "false") // ffmpeg missing: nothing to publish, so git is never reached
+	// Crops use Go image processing, so they remain useful when ffmpeg is absent.
+	svc, _, gh, _ = evSubmit(t, EvidencePost, "false")
+	evidenceBug(t, svc)
 	svc.media = &sizedMedia{err: errors.New("ffmpeg: not found")}
 	v, err = svc.Submit(ctx, "s1", "", "")
-	if err != nil || v.CommentState != "posted" || v.EvidenceState != "failed:ffmpeg: not found" || len(g.calls) != 0 {
-		t.Fatalf("verdict %+v err %v git %q", v, err, g.calls)
+	if err != nil || v.CommentState != "posted" || v.EvidenceState != "published" || gh.uploads != 0 || !strings.Contains(gh.field(0, "body"), "The check recording was not available.") {
+		t.Fatalf("verdict %+v err %v uploads %d", v, err, gh.uploads)
 	}
 }
 
@@ -431,7 +452,7 @@ func TestRenderCommentWithImagesGolden(t *testing.T) {
 	got := renderComment(run, v, evidence{state: "published", commit: fakeSHA, items: items, videos: videos}, now)
 	want := strings.ReplaceAll(`Litmus tried #7 on the PR build and on main (2 minutes).
 
-**Result: the fix works; fine to merge from my side. One check only ran on the PR build.**
+**Result: the PR does what it says in the 2 checks I finished. One check only ran on the PR build.**
 
 I compared 1 check on main; 1 was not run there: last model.
 
@@ -736,7 +757,7 @@ func TestALostRecordingUploadsTheSlideshowAndSaysSo(t *testing.T) {
 	if got, want := strings.Join(videoParts(run, evidence{videos: items}), "|"), "PR build, 3 s, "+note+"\n\n"+vid1+"|Main, 15 s\n\n"+vid2; got != want {
 		t.Fatalf("the slideshow says what it is:\n%q\nwant %q", got, want)
 	}
-	body := renderComment(run, commentVerdict(commentChecks()), evidence{state: "published", videos: items}, run.CreatedAt)
+	body := renderComment(run, commentVerdict(commentChecks(t)), evidence{state: "published", videos: items}, run.CreatedAt)
 	noSlop(t, body)
 	if !strings.Contains(body, "<details><summary>Recordings and every screenshot</summary>\n\nPR build, 3 s, "+note+"\n\n"+vid1+"\n\nMain, 15 s\n\n"+vid2) {
 		t.Fatalf("comment:\n%s", body)
@@ -771,13 +792,13 @@ func TestSpanText(t *testing.T) {
 func TestUnattachedVideoSaysSoAndPointsAtTheGIFWhenThereIsOne(t *testing.T) {
 	gif := evItem{file: "pr.gif", kind: kindGIF, alt: "PR build recording", caption: "PR build, the moments around each step", url: "https://raw.githubusercontent.com/o/r/" + fakeSHA + "/runs/7/20261011-090000/pr.gif"}
 	videos := []vidItem{{leg: "head"}, {leg: "base"}}
-	got := renderComment(commentRun, commentVerdict(commentChecks()), evidence{state: "published", items: []evItem{gif}, videos: videos}, commentRun.CreatedAt)
+	got := renderComment(commentRun, commentVerdict(commentChecks(t)), evidence{state: "published", items: []evItem{gif}, videos: videos}, commentRun.CreatedAt)
 	const want = "<details><summary>Recordings and every screenshot</summary>\n\nPR build video could not be attached; the GIF below shows the steps.\n\nMain video could not be attached.\n\nPR build, the moments around each step\n![PR build recording]("
 	if !strings.Contains(got, want) {
 		t.Fatalf("comment:\n%s", got)
 	}
 	noSlop(t, got)
-	if got = renderComment(commentRun, commentVerdict(commentChecks()), evidence{videos: videos[:1]}, commentRun.CreatedAt); !strings.Contains(got, "PR build video could not be attached.\n\n</details>") || strings.Contains(got, "GIF") {
+	if got = renderComment(commentRun, commentVerdict(commentChecks(t)), evidence{videos: videos[:1]}, commentRun.CreatedAt); !strings.Contains(got, "PR build video could not be attached.\n\n</details>") || strings.Contains(got, "GIF") {
 		t.Fatalf("no GIF to point at:\n%s", got)
 	}
 }
@@ -793,39 +814,52 @@ func recSubmit(t *testing.T) (*Service, *commentGH, string) {
 	return svc, gh, runDir
 }
 
-func TestSubmitShowsTheUploadedVideosAheadOfTheGIFs(t *testing.T) {
-	svc, gh, runDir := recSubmit(t)
+func TestSubmitUploadsOnlyBugClipsAndKeepsPassingSummaryShort(t *testing.T) {
+	svc, gh, _ := recSubmit(t)
 	v, err := svc.Submit(ctx, "s1", "", "")
 	run, _ := svc.store.Get("run_s1")
 	body := gh.field(0, "body")
-	if err != nil || v.CommentState != "posted" || run.VideoState != "attached" || !reflect.DeepEqual(run.VideoURLs, map[string]string{"head": vid1, "base": vid2}) || run.RepoID != 1234 {
-		t.Fatalf("verdict %+v run %+v err %v", v, run, err)
-	}
-	const videos = "<details><summary>Recordings and every screenshot</summary>\n\nPR build, 1 min 19 s\n\n" + vid1 + "\n\nMain, 15 s\n\n" + vid2 + "\n\nPR build, the moments around each step\n![PR build recording]("
-	if !strings.Contains(body, videos) || strings.Contains(body, "AO session") || !strings.HasSuffix(body, "\n\n</details>\n\n"+commentMarker("o/r", 7)) {
-		t.Fatalf("comment:\n%s", body)
-	}
-	if b, _ := os.ReadFile(filepath.Join(runDir, "comment.md")); string(b) != body {
-		t.Fatalf("comment.md is not the posted body")
+	if err != nil || v.CommentState != "posted" || run.VideoState != "off" || gh.uploads != 0 || strings.Contains(body, "<details>") || strings.Contains(body, "![") {
+		t.Fatalf("passing run uploaded evidence: %+v err %v body %s", run, err, body)
 	}
 
-	svc, gh, runDir = recSubmit(t)
-	gh.fail = "uploads.github.com" // the upload is refused: the comment still goes up, with the sentence and the GIFs
+	svc, gh, runDir := recSubmit(t)
+	evidenceBug(t, svc)
 	v, err = svc.Submit(ctx, "s1", "", "")
 	run, _ = svc.store.Get("run_s1")
 	body = gh.field(0, "body")
-	log, _ := os.ReadFile(filepath.Join(runDir, "comment.log"))
-	if err != nil || v.CommentState != "posted" || run.VideoState != "failed:HTTP 403: Resource not accessible" || len(run.VideoURLs) != 0 || !strings.Contains(string(log), "video of pr: HTTP 403") ||
-		!strings.Contains(body, "\n\nPR build video could not be attached; the GIF below shows the steps.\n\nMain video could not be attached; the GIF below shows the steps.\n\nPR build, the moments around each step\n") {
-		t.Fatalf("verdict %+v run %+v err %v\n%s", v, run, err, body)
+	if err != nil || v.CommentState != "posted" || run.VideoState != "attached" || !reflect.DeepEqual(run.VideoURLs, map[string]string{"menu opens": vid1}) || gh.uploads != 1 {
+		t.Fatalf("verdict %+v run %+v err %v", v, run, err)
+	}
+	if !strings.Contains(body, vid1) || strings.Contains(body, vid2) || strings.Contains(body, ".gif") {
+		t.Fatalf("comment includes another check's video: %s", body)
+	}
+	for _, args := range gh.argv {
+		if strings.HasPrefix(strings.Join(args, " "), upload) {
+			if i := slices.Index(args, "--input"); i < 0 || args[i+1] != checkClipPath(runDir, "c1") {
+				t.Fatalf("uploaded the full recording instead of the check clip: %q", args)
+			}
+		}
 	}
 
-	svc, gh, _ = recSubmit(t) // --no-evidence turns the videos off with the images
+	svc, gh, _ = recSubmit(t)
+	evidenceBug(t, svc)
+	gh.fail = "uploads.github.com"
+	_, err = svc.Submit(ctx, "s1", "", "")
+	run, _ = svc.store.Get("run_s1")
+	body = gh.field(0, "body")
+	if err != nil || run.CommentState != "posted" || run.VideoState != "failed:HTTP 403: Resource not accessible" || len(run.VideoURLs) != 0 || !strings.Contains(body, "The check recording was not available.") || strings.Contains(body, "../clips/") {
+		t.Fatalf("run %+v err %v body %s", run, err, body)
+	}
+
+	svc, gh, _ = recSubmit(t)
+	evidenceBug(t, svc)
 	_, err = svc.update("run_s1", func(r *Run) { r.Evidence = EvidenceOff })
 	is(t, "")(nil, err)
 	_, err = svc.Submit(ctx, "s1", "", "")
 	run, _ = svc.store.Get("run_s1")
-	if err != nil || run.VideoState != "off" || gh.uploads != 0 || strings.Contains(gh.field(0, "body"), "user-attachments") {
-		t.Fatalf("run %+v err %v uploads %d", run, err, gh.uploads)
+	body = gh.field(0, "body")
+	if err != nil || run.VideoState != "off" || gh.uploads != 0 || strings.Contains(body, "user-attachments") || strings.Contains(body, "../clips/") || strings.Contains(body, "![") {
+		t.Fatalf("run %+v err %v uploads %d body %s", run, err, gh.uploads, body)
 	}
 }

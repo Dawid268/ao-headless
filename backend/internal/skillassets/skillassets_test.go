@@ -247,10 +247,18 @@ func TestLitmusSkillFrontmatterWordCapAndInstall(t *testing.T) {
 	if n := len(strings.Fields(string(body))); n > 900 {
 		t.Fatalf("litmus SKILL.md is %d words, want at most 900", n)
 	}
-	for _, verb := range []string{"intake", "prepare", "launch", "check add", "snapshot", "compare", "submit", "ao testing test --leg head --dir backend --", "--leg base", "only through `ao testing`", "never push or post to GitHub", "You have 25 minutes", "gate notes",
-		"at most 4 for a PR over 30 files, 6 otherwise", "Litmus accepts at most 6 checks; a main twin is free", "split a check that mixes two things", "it is done only when it has a result on both",
-		"end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken", "--result pass|fail|partial|absent|skipped", "add another pair", "never a check on the PR build alone", "Never open another run's folder; it is not evidence.",
-		"Never import, export, sign in to or read the owner's real browser profiles, cookies, passwords, keychain or accounts; check such a feature only with data created in the test window, or end it as `skipped` with that reason."} {
+	for _, verb := range []string{"intake", "prepare", "launch", "check add", "snapshot", "compare", "replay <headCheckId> --leg base", "submit", "--leg base", "only through `ao testing`", "never push or post to GitHub", "You have 25 minutes", "gate notes",
+		"You test one pull request. Litmus builds the PR and its base commit in private app windows. Check the PR's claim and likely nearby breakage.",
+		"Notes go to the PR author. Say what you saw in plain words: buttons present, what happened after a click, what was missing. Omit check ids, build names and comparisons; Litmus adds those.",
+		"at most 4 for a PR over 30 files, 6 otherwise", "(a guide, not a limit)", "split a check that mixes two things", "it is done only when it has a result on both",
+		"Litmus saves unfinished work at the deadline", "Verify a broken claim or new failure first", "record a proved failure even when main cannot be compared",
+		"end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken", "--result pass|fail|partial|absent|skipped",
+		"Use spare time to pin down a suspected bug, not to add breadth", "never on the PR build alone", "do the UI checks in the pack's suggested order",
+		"Never run the PR's tests or any package tests; Litmus judges what a user sees.", "If the PR has nothing to click, add one check, end it `skipped --note \"nothing to click; not tested by Litmus\"`, and submit.",
+		"At check end, Litmus saves light and dark shots to the receipt and comment.", "Inspect both on each changed screen.", "theme pair not taken: the app ignored the system theme", "Add differences between similar items (row summaries, list order, mixed names) to the check's `--note` as `Worth a look: <what differs>` at its start or end.", "Litmus moves that text to a `Worth a look` comment line; it does not change the verdict.",
+		"`absent` is for main only", "Use `--same-fault` on a base `fail` or `partial` only after proving it has the same cause as the head failure",
+		"If a `fail` is recorded, never submit `--blocked`", "Never open another run's folder; it is not evidence.",
+		"Never import, export, sign in to or read the owner's real browser profiles, cookies, passwords, keychain or accounts; use test-window data or skip and say why.", "Accounts marked Device, Active, In use, ChatGPT or Claude are the owner's real logins, and a harness tab's Login, Logout or Refresh login acts on them too: look, never click Use, Switch, Log out, Sign out, Remove, Renew, Sign in again, Login, Logout, Refresh login or Use reset on them.", "End such a check `skipped` with 'would touch the owner's login'.", "Accounts you add yourself (API key) are fully testable.", `Billing and plan links are off limits, including a "Billing" tab.`} {
 		if !strings.Contains(string(body), verb) {
 			t.Fatalf("litmus SKILL.md does not mention %q", verb)
 		}

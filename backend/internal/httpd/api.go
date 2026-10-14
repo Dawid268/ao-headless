@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/litmus"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
@@ -229,10 +230,15 @@ func (a *API) Register(root chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
 				ordinary := middleware.Timeout(timeout)(next)
 				upload := middleware.Timeout(max(timeout, 10*time.Minute))(next)
-				long := middleware.Timeout(max(timeout, 4*time.Minute))(next)
+				long := middleware.Timeout(max(timeout, 11*time.Minute))(next)
+				replay := middleware.Timeout(max(timeout, litmus.RunBudget+time.Minute))(next)
 				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					if attachmentUploadRoute(req) {
 						upload.ServeHTTP(w, req)
+						return
+					}
+					if req.Method == http.MethodPost && chi.RouteContext(req.Context()).RoutePattern() == "/api/v1/testing/checks/{id}/replay" {
+						replay.ServeHTTP(w, req)
 						return
 					}
 					if testingTestRoute(req) {
@@ -283,7 +289,7 @@ func (a *API) Register(root chi.Router) {
 	})
 }
 
-// testingTestRoute is the Litmus verb that runs a package's tests inside a checkout. Its own cap is 3 minutes,
+// testingTestRoute is the Litmus verb that runs a package's tests inside a checkout. Its own cap is 3 minutes (10 with --minutes),
 // so the ordinary 60 s request budget would answer 504 while the tests were still running.
 func testingTestRoute(req *http.Request) bool {
 	return req.Method == http.MethodPost && chi.RouteContext(req.Context()).RoutePattern() == "/api/v1/testing/test"

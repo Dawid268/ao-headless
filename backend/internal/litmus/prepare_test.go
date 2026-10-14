@@ -265,6 +265,9 @@ func TestRecipeParsingAndRefs(t *testing.T) {
 		!strings.Contains(strings.Join(r.Run.Args, " "), "$LITMUS_DEBUG_PORT") || len(r.Seed) != 2 || !strings.Contains(r.Seed[1].Cmd, "--harness claude-code --mode chat") || strings.Contains(strings.ToLower(string(defaultRecipe)), "fake") || !strings.Contains(r.Seed[1].WaitFor, "session ls") || r.Ready.PageTargets != 1 {
 		t.Fatalf("default recipe %+v err %v", r, err)
 	}
+	if r.Run.Cmd != "./node_modules/.bin/electron-forge" || len(r.Run.Args) < 3 || r.Run.Args[0] != "start" || r.Run.Args[1] != "--" {
+		t.Fatalf("default recipe must launch Electron Forge directly without npm's predev hook: %+v", r.Run)
+	}
 	for src, want := range map[string]string{
 		"": "empty", "kind: cli\nbogus: 1\nrun: {cmd: x}": "bogus", "kind: gui\nrun: {cmd: x}": "kind", "kind: cli": "run.cmd",
 		"kind: cli\nrun: {cmd: x, dir: ../up}": "relative", "kind: cli\nrun: {cmd: x}\ntoolchain: {node: '2*'}": "toolchain.node", "kind: cli\nrun: {cmd: x}\ninstall: {cmd: npm ci}": "cacheKey",
