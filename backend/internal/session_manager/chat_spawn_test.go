@@ -316,6 +316,9 @@ func TestRunBackgroundTaskRunsOnTheSessionsAccount(t *testing.T) {
 		if err == nil && (launcher.background[0].Env["ANTHROPIC_AUTH_TOKEN"] == "ticket") != accounts.managed {
 			t.Fatalf("%s: env=%v", name, launcher.background[0].Env)
 		}
+		if want := []string{"mer-1 " + string(rec.Harness) + " related"}; !reflect.DeepEqual(accounts.launched, want) {
+			t.Fatalf("%s: launched=%v, want %v", name, accounts.launched, want)
+		}
 	}
 }
 

@@ -130,7 +130,8 @@ func (m *Manager) runBackgroundTask(ctx context.Context, id domain.SessionID, sy
 			m.augmentAgentRuntimeEnv(agent, env)
 		}
 	}
-	if err := m.applyAccountEnv(ctx, rec.ID, rec.Harness, env); err != nil {
+	// Related work: a task that runs while the session switches agent must not move its route.
+	if err := m.RelatedAccountEnv(ctx, rec.ID, rec.Harness, env); err != nil {
 		return "", fmt.Errorf("background task account: %w", err)
 	}
 	// This provider call is not the worker session. Suppress session-scoped hooks
