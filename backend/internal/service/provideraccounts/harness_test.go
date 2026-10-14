@@ -57,13 +57,6 @@ func (m *memoryStore) get() domain.ProviderAccountState {
 	return state
 }
 
-type nativeSource struct {
-	fingerprint string
-	unnamed     bool // a sign-in that cannot say whose it is until it has been copied
-	login       ports.VerifiedProviderLogin
-	err         error
-}
-
 // fakeHelper is the account helper: it holds the route table it was last
 // given and refuses one that drops an account with a request in flight.
 type fakeHelper struct {
@@ -96,9 +89,8 @@ type fakeHelper struct {
 	resultErr error
 	cancelled []string
 	cancelErr error
-	native    map[string]nativeSource
+	devices   map[string]string // whose login the computer's own agent holds, by provider
 	reads     int
-	imports   []string
 }
 
 func (f *fakeHelper) Endpoint() string           { return "http://127.0.0.1:1234" }
@@ -199,24 +191,11 @@ func (f *fakeHelper) LoginResult(_ context.Context, id string) (ports.VerifiedPr
 	return result, nil
 }
 
-func (f *fakeHelper) ImportNative(_ context.Context, provider string, apiKey bool, known func(string) bool) (ports.VerifiedProviderLogin, string, error) {
+func (f *fakeHelper) DeviceEmail(_ context.Context, provider string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	key := provider
-	if apiKey {
-		key += " key"
-	}
-	source, signedIn := f.native[key]
 	f.reads++
-	if !signedIn || source.fingerprint == "" && !source.unnamed || known(source.fingerprint) {
-		return ports.VerifiedProviderLogin{}, source.fingerprint, nil
-	}
-	f.imports = append(f.imports, key)
-	identity := source.fingerprint
-	if source.unnamed {
-		identity = "id:" + strings.ToLower(source.login.Email)
-	}
-	return source.login, identity, source.err
+	return f.devices[provider]
 }
 
 func (f *fakeHelper) complete(id string, result ports.VerifiedProviderLogin) {
@@ -239,7 +218,7 @@ type harness struct {
 func setup(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, ctx: context.Background(), store: &memoryStore{}, now: time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)}
-	h.helper = &fakeHelper{inFlight: map[string]bool{}, status: "waiting", results: map[string]ports.VerifiedProviderLogin{}, native: map[string]nativeSource{},
+	h.helper = &fakeHelper{inFlight: map[string]bool{}, status: "waiting", results: map[string]ports.VerifiedProviderLogin{}, devices: map[string]string{},
 		usage: domain.ProviderAccountUsage{Status: "available", Plan: "Pro"}}
 	h.svc = New(h.store, h.helper, func() string {
 		h.mu.Lock()

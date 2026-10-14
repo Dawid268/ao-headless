@@ -288,7 +288,12 @@ function LocalHarnessContent({ focusAgentId, hostId, search, startLogin = false 
 	const authPlans = useAgentAuthPlans(hostId);
 	const startAgentAuth = useStartAgentAuth(hostId);
 	const providerAccounts = useProviderAccounts(!hostId, false);
-	const managedProviderFor = (agentId: string) => (hostId ? "" : accountProvider(agentId));
+	// An agent is managed once AO holds an account for it; until then it keeps its own login, as before Account Manager.
+	const managedProviderFor = (agentId: string) => {
+		const provider = hostId ? "" : accountProvider(agentId);
+		const unknown = providerAccounts.isPending || providerAccounts.isError; // shown as managed, with the reason
+		return provider && (unknown || providerAccounts.data?.accounts?.some((account) => account.provider === provider)) ? provider : "";
+	};
 	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 	const [authStates, setAuthStates] = useState<AgentAuthStates>({});
 	const [actionErrors, setActionErrors] = useState<Partial<Record<AgentId, string>>>({});

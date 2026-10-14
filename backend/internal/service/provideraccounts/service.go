@@ -39,6 +39,7 @@ type Service struct {
 	failed   map[string]bool
 	stamps   map[string]time.Time
 	logins   map[string]*attempt
+	devices  map[string]string // whose login each provider's own agent on this computer holds
 }
 
 type attempt struct {
@@ -58,7 +59,6 @@ func (s *Service) OnChange(fn func()) { s.changed = fn }
 
 // Run keeps the helper and the accounts current until ctx ends; migrate reports the sessions left to move.
 func (s *Service) Run(ctx context.Context, log *slog.Logger, migrate func(context.Context) (int, error)) {
-	s.importNative(ctx, false)
 	ticker := time.NewTicker(s.tick)
 	defer ticker.Stop()
 	for n, left, failing := 0, 1, false; ; n++ {
@@ -100,7 +100,7 @@ func (s *Service) change(ctx context.Context, fn func(*domain.ProviderAccountSta
 	if err != nil {
 		return err
 	}
-	st := domain.ProviderAccountState{Defaults: map[string]string{}, NativeImports: map[string]domain.NativeProviderImport{}, NativeKeyImports: map[string]domain.NativeProviderImport{}}
+	st := domain.ProviderAccountState{Defaults: map[string]string{}}
 	was := encode(stored)
 	_ = json.Unmarshal([]byte(was), &st)
 	had := encode(st.Accounts)
@@ -277,6 +277,12 @@ func (s *Service) pick(ctx context.Context, provider, chosen string) (domain.Pro
 	return st.Accounts[index(st, id)], nil
 }
 
+// managed reports a provider AO holds an account for, signed in or not; the
+// agents of any other keep their own setup, as before Account Manager.
+func managed(st domain.ProviderAccountState, provider string) bool {
+	return slices.ContainsFunc(st.Accounts, func(a domain.ProviderAccount) bool { return a.Provider == provider })
+}
+
 // makeDefault also gives the provider's waiting sessions the account.
 func makeDefault(st *domain.ProviderAccountState, provider, id string) {
 	st.Defaults[provider] = id
@@ -290,8 +296,11 @@ func makeDefault(st *domain.ProviderAccountState, provider, id string) {
 // ResolveAccount picks the explicit account, or the provider's default, for a new session.
 func (s *Service) ResolveAccount(ctx context.Context, harness domain.AgentHarness, explicit string) (string, bool, error) {
 	provider := domain.AccountProvider(harness)
-	if provider == "" && explicit == "" {
-		return "", false, nil
+	if explicit == "" {
+		// No account in AO: Bedrock, Vertex, apiKeyHelper, or none added yet. The agent keeps its own setup.
+		if st, err := s.store.LoadProviderAccounts(ctx); err != nil || !managed(st, provider) {
+			return "", false, err
+		}
 	}
 	a, err := s.pick(ctx, provider, explicit)
 	return a.ID, provider != "", err
@@ -342,17 +351,22 @@ func (s *Service) ForgetAccount(ctx context.Context, id domain.SessionID) error 
 	})
 }
 
-// AdoptSession routes an older session to its provider's default, or leaves it waiting for a sign-in.
+// AdoptSession routes an older session to its provider's default; with no default it keeps its own setup.
 func (s *Service) AdoptSession(ctx context.Context, id domain.SessionID, harness domain.AgentHarness) (bool, error) {
 	provider, adopted := domain.AccountProvider(harness), false
-	s.importNative(ctx, false)
 	err := s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
-		if adopted = provider != "" && routed(*st, id) < 0; adopted {
+		if adopted = st.Defaults[provider] != "" && routed(*st, id) < 0; adopted {
 			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: st.Defaults[provider]})
 		}
 		return "", nil
 	})
 	return adopted && err == nil, err
+}
+
+// HasDefault reports a default account an older session of the harness would move onto.
+func (s *Service) HasDefault(ctx context.Context, harness domain.AgentHarness) (bool, error) {
+	st, err := s.store.LoadProviderAccounts(ctx)
+	return err == nil && st.Defaults[domain.AccountProvider(harness)] != "", err
 }
 
 // Act applies one account action and returns a reset's outcome.
@@ -552,97 +566,24 @@ func (s *Service) discard(ctx context.Context, ref string) error {
 	return s.change(ctx, func(*domain.ProviderAccountState) (string, error) { return ref, nil })
 }
 
-// importNative makes this computer's own logins and API keys accounts, once each.
-func (s *Service) importNative(ctx context.Context, force bool) {
-	s.starting.Lock() // two imports at once would each take the other's key for one added by hand
-	defer s.starting.Unlock()
-	if !s.due("native", 5*time.Minute, force) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	// Keys last: a key beside a login becomes the default, as the agent uses it first.
-	for _, key := range []bool{false, true} {
-		for _, provider := range domain.AccountProviders {
-			s.importOne(ctx, provider, key)
+// deviceEmails are whose logins this computer's own agents hold, read again at most every five minutes.
+// AO copies none of them: a copy the helper renews signs the computer's own agent out.
+func (s *Service) deviceEmails(ctx context.Context, force bool) map[string]string {
+	if !s.due("device", 5*time.Minute, force) {
+		s.memo.Lock()
+		defer s.memo.Unlock()
+		if s.devices != nil {
+			return s.devices
 		}
 	}
-}
-func receipts(st *domain.ProviderAccountState, key bool) map[string]domain.NativeProviderImport {
-	return map[bool]map[string]domain.NativeProviderImport{false: st.NativeImports, true: st.NativeKeyImports}[key]
-}
-func (s *Service) importOne(ctx context.Context, provider string, key bool) {
-	stored, err := s.store.LoadProviderAccounts(ctx)
-	if err != nil {
-		return
+	devices := map[string]string{}
+	for _, provider := range domain.AccountProviders {
+		devices[provider] = s.helper.DeviceEmail(ctx, provider)
 	}
-	receipt := receipts(&stored, key)[provider]
-	// A copied sign-in is renewed by the helper, which signs the computer's own agent out once.
-	// So one AO has copied before, or whose account it already holds, is never copied again.
-	known := func(identity string) bool {
-		email, signIn := strings.CutPrefix(identity, "id:")
-		if !signIn { // A key, or a sign-in that cannot say whose it is: that one is copied the first time only.
-			return receipt.Fingerprint != "" && (identity == "" || identity == receipt.Fingerprint)
-		}
-		return strings.EqualFold(receipt.Email, email) || slices.ContainsFunc(stored.Accounts, func(a domain.ProviderAccount) bool {
-			return a.Provider == provider && !a.APIKey() && strings.EqualFold(a.Email, email)
-		})
-	}
-	v, found, err := s.helper.ImportNative(ctx, provider, key, known)
-	byHand := errors.Is(err, ports.ErrProviderAccountConflict)
-	// A login AO already holds is not copied; the Device mark still follows it.
-	if email, signIn := strings.CutPrefix(found, "id:"); signIn && err == nil && v.AuthID == "" {
-		if strings.EqualFold(email, receipt.Email) {
-			email = ""
-		}
-		if !strings.EqualFold(email, receipt.Device) {
-			_ = s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
-				now := st.NativeImports[provider]
-				now.Device = email
-				st.NativeImports[provider] = now
-				return "", nil
-			})
-		}
-	}
-	if found == "" || !byHand && (err != nil || v.AuthID == "") {
-		return // Nothing new, or nothing readable: the accounts stay as they are.
-	}
-	v.Provider, v.Kind = provider, map[bool]string{false: "oauth", true: "api_key"}[key]
-	_ = s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
-		receipt, id, drop := receipts(st, key)[provider], "", v.CredentialRef
-		i := slices.IndexFunc(st.Accounts, func(a domain.ProviderAccount) bool {
-			return a.Provider == provider && a.APIKey() == key && (key && a.ID == receipt.AccountID || !key && strings.EqualFold(a.Email, v.Email))
-		})
-		switch {
-		case receipt.Fingerprint == found:
-			return drop, nil
-		case byHand: // A key added by hand stays that account; it is only not looked at again.
-			receipt = domain.NativeProviderImport{}
-		case !key && receipt.Email != "" && strings.EqualFold(receipt.Email, v.Email):
-			// The same login with renewed tokens: a removal or sign-out stands.
-		case i < 0:
-			if slices.ContainsFunc(st.Accounts, func(a domain.ProviderAccount) bool {
-				return a.Provider == provider && strings.EqualFold(a.Email, v.Email)
-			}) {
-				return "", ports.ErrProviderAccountConflict
-			}
-			id, drop = s.add(st, v), ""
-		case key || !st.Accounts[i].SignedIn(): // A changed key takes the place of the one before it.
-			a := &st.Accounts[i]
-			id, drop, a.CredentialRef, a.AuthID = a.ID, a.CredentialRef, v.CredentialRef, v.AuthID
-		default: // Its saved sign-in may hold a newer refresh token: keep it.
-			id = st.Accounts[i].ID
-		}
-		if id != "" {
-			receipt.AccountID, receipt.Email, receipt.Device = id, v.Email, ""
-			if st.Defaults[provider] == "" || key && i < 0 {
-				makeDefault(st, provider, id)
-			}
-		}
-		receipt.Fingerprint = found
-		receipts(st, key)[provider] = receipt
-		return drop, nil
-	})
+	s.memo.Lock()
+	defer s.memo.Unlock()
+	s.devices = devices
+	return devices
 }
 
 // usages reads each signed-in account's usage; a failed reading is retried sooner.
@@ -697,7 +638,7 @@ func (s *Service) usages(ctx context.Context, accounts []domain.ProviderAccount)
 
 // Accounts lists every account as the API shows it.
 func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.ProviderAccountView, error) {
-	s.importNative(ctx, refresh)
+	devices := s.deviceEmails(ctx, refresh)
 	st, err := s.store.LoadProviderAccounts(ctx)
 	if err != nil {
 		return nil, err
@@ -710,9 +651,8 @@ func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.P
 	s.check(ctx, st, refresh)
 	views := make([]domain.ProviderAccountView, 0, len(st.Accounts))
 	for _, a := range st.Accounts {
-		own := st.NativeImports[a.Provider] // This computer's own login, if it has one: the account it became, or one under the same email.
 		view := domain.ProviderAccountView{ID: a.ID, Provider: a.Provider, DisplayName: a.DisplayName, Email: a.Email, Kind: a.Kind,
-			Global:   st.NativeKeyImports[a.Provider].AccountID == a.ID || !a.APIKey() && (own.Device == "" && own.AccountID == a.ID || strings.EqualFold(a.Email, cmp.Or(own.Device, own.Email, "\x00"))),
+			Global:   !a.APIKey() && a.Email != "" && strings.EqualFold(a.Email, devices[a.Provider]), // the login the computer's own agent has
 			SignedIn: a.SignedIn() && !s.dead(a.AuthID, false), Primary: st.Defaults[a.Provider] == a.ID, Sessions: []string{},
 			Reserved: a.Reserved, OnLimit: a.OnLimit, WarnAt: a.WarnAt}
 		s.memo.Lock()
@@ -750,6 +690,9 @@ func (s *Service) AuthenticationReadiness(ctx context.Context, harness domain.Ag
 		return domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown, Freshness: domain.AgentReadinessStale, AttemptedAt: &now,
 			ReasonCode: domain.AgentReadinessReasonAuthCheckFailed, Reason: "Managed account status could not be read."}, true
 	}
+	if !managed(st, provider) { // the agent's own sign-in check answers
+		return domain.AgentAuthenticationObservation{}, false
+	}
 	result := domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized, Freshness: domain.AgentReadinessFresh, CheckedAt: &now, AttemptedAt: &now,
 		ReasonCode: domain.AgentReadinessReasonUnauthorized, Reason: "Sign in through Account Manager to use this provider."}
 	s.check(ctx, st, false)
@@ -773,6 +716,11 @@ func (s *Service) scoped(ctx context.Context, harness domain.AgentHarness, scope
 		return domain.ProviderAccount{}, false, nil
 	}
 	chosen, ok := ports.AccountFromModelCatalogScope(scope)
+	if !ok { // with no account in AO the agent's own catalogue answers, as for its own setup
+		if st, err := s.store.LoadProviderAccounts(ctx); err != nil || !managed(st, provider) {
+			return domain.ProviderAccount{}, err != nil, err
+		}
+	}
 	a, err := s.pick(ctx, provider, map[bool]string{true: chosen}[ok])
 	return a, true, err
 }

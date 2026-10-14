@@ -117,8 +117,9 @@ func TestSyncDoesNotStartTheHelperOnADeviceWithoutAccounts(t *testing.T) {
 	if views, err := h.svc.Accounts(h.ctx, true, true); err != nil || len(views) != 0 || h.helper.heldCalls != 0 || len(h.helper.usageFor) != 0 {
 		t.Fatalf("listing an empty device asked the helper: views=%v err=%v", views, err)
 	}
-	if _, handled := h.svc.AuthenticationReadiness(h.ctx, domain.HarnessCodex, ""); !handled || h.helper.heldCalls != 0 {
-		t.Fatal("a readiness check asked the helper")
+	// Not managed: the agent's own check answers, and the helper is not asked.
+	if _, handled := h.svc.AuthenticationReadiness(h.ctx, domain.HarnessCodex, ""); handled || h.helper.heldCalls != 0 {
+		t.Fatalf("a readiness check on a device without accounts: handled=%t listings=%d", handled, h.helper.heldCalls)
 	}
 }
 
@@ -216,7 +217,7 @@ func TestSyncSweepsSignInsNoAccountNames(t *testing.T) {
 func TestRunSyncsReadsAndMovesOldChatsUntilNoneAreLeft(t *testing.T) {
 	h := setup(t)
 	h.svc.tick = time.Millisecond
-	h.helper.native["codex"] = nativeSource{fingerprint: "f1", login: signIn("codex", "native@example.com")}
+	h.signIn("codex", "native@example.com")
 	ctx, stop := context.WithCancel(h.ctx)
 	// One failed pass, then two chats left, one, none.
 	answers, calls := []int{0, 2, 1, 0}, make(chan int, 16)

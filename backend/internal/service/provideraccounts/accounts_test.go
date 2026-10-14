@@ -14,8 +14,9 @@ import (
 
 func TestFirstSignInBecomesTheDefaultAndProvidersAreIndependent(t *testing.T) {
 	h := setup(t)
+	// Before any account in AO the agents keep their own setup.
 	for _, agent := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode} {
-		if id, managed, err := h.svc.ResolveAccount(h.ctx, agent, ""); id != "" || !managed || !errors.Is(err, ports.ErrProviderLoginRequired) {
+		if id, managed, err := h.svc.ResolveAccount(h.ctx, agent, ""); id != "" || managed || err != nil {
 			t.Fatalf("before any sign-in: id=%q managed=%t err=%v", id, managed, err)
 		}
 	}
@@ -409,13 +410,19 @@ func TestAdoptSession(t *testing.T) {
 			t.Fatalf("an agent AO does not manage: adopted=%t err=%v", adopted, err)
 		}
 	})
-	t.Run("waits when the provider has no account", func(t *testing.T) {
+	t.Run("leaves the computer's own setup when the provider has no default", func(t *testing.T) {
 		h := setup(t)
-		if adopted, err := h.svc.AdoptSession(h.ctx, "old", domain.HarnessClaudeCode); !adopted || err != nil {
+		if adopted, err := h.svc.AdoptSession(h.ctx, "old", domain.HarnessClaudeCode); adopted || err != nil {
 			t.Fatalf("adopted=%t err=%v", adopted, err)
 		}
-		h.route("old", "")
-		h.route("old", h.signIn("claude", "alice@example.com"))
+		if routes := h.store.get().Routes; len(routes) != 0 {
+			t.Fatalf("a session of a provider AO has no account for was routed: %+v", routes)
+		}
+		alice := h.signIn("claude", "alice@example.com")
+		if adopted, err := h.svc.AdoptSession(h.ctx, "old", domain.HarnessClaudeCode); !adopted || err != nil {
+			t.Fatalf("after the first sign-in: adopted=%t err=%v", adopted, err)
+		}
+		h.route("old", alice)
 	})
 	t.Run("leaves a routed session as it is", func(t *testing.T) {
 		h := setup(t)
@@ -427,17 +434,6 @@ func TestAdoptSession(t *testing.T) {
 		}
 		h.route("s1", bob)
 		_ = alice
-	})
-	t.Run("imports this computer's login first", func(t *testing.T) {
-		h := setup(t)
-		h.helper.native["codex"] = nativeSource{fingerprint: "f1", login: signIn("codex", "native@example.com")}
-		if adopted, err := h.svc.AdoptSession(h.ctx, "old", domain.HarnessCodex); !adopted || err != nil {
-			t.Fatalf("adopted=%t err=%v", adopted, err)
-		}
-		h.route("old", h.defaultOf("codex"))
-		if h.defaultOf("codex") == "" {
-			t.Fatal("the session waits although this computer is signed in")
-		}
 	})
 	t.Run("changes nothing when the helper refuses", func(t *testing.T) {
 		h := setup(t)

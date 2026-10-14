@@ -20,6 +20,7 @@ type accountRoutingFake struct {
 	id                                     string
 	err                                    error
 	has                                    map[domain.SessionID]bool
+	noDefault                              bool // no default account for an older session to move onto
 	assigned, forgotten, launches, adopted []domain.SessionID
 	resolved                               []string
 }
@@ -51,8 +52,12 @@ func (f *accountRoutingFake) ForgetAccount(_ context.Context, id domain.SessionI
 	return nil
 }
 
+func (f *accountRoutingFake) HasDefault(context.Context, domain.AgentHarness) (bool, error) {
+	return !f.noDefault, nil
+}
+
 func (f *accountRoutingFake) AdoptSession(_ context.Context, id domain.SessionID, _ domain.AgentHarness) (bool, error) {
-	if f.err != nil || f.managed || f.has[id] {
+	if f.err != nil || f.managed || f.has[id] || f.noDefault {
 		return false, f.err
 	}
 	if f.has == nil {

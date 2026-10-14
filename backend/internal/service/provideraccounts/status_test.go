@@ -237,8 +237,9 @@ func TestReadinessFollowsTheAccountsAndIsInvalidatedWhenTheyChange(t *testing.T)
 	if _, handled := h.svc.AuthenticationReadiness(h.ctx, domain.AgentHarness("opencode"), ""); handled {
 		t.Fatal("an agent AO does not manage was answered")
 	}
-	if state, reason := ready(domain.HarnessCodex); state != domain.AgentAuthenticationUnauthorized || reason != "Sign in through Account Manager to use this provider." {
-		t.Fatalf("state=%s reason=%q", state, reason)
+	// With no account in AO the agent keeps its own setup, and its own check answers.
+	if _, handled := h.svc.AuthenticationReadiness(h.ctx, domain.HarnessCodex, ""); handled {
+		t.Fatal("a provider with no account in AO was answered")
 	}
 	alice := h.signIn("codex", "alice@example.com")
 	if n := changed(); n != 1 {
@@ -247,8 +248,8 @@ func TestReadinessFollowsTheAccountsAndIsInvalidatedWhenTheyChange(t *testing.T)
 	if state, _ := ready(domain.HarnessCodex); state != domain.AgentAuthenticationAuthorized {
 		t.Fatalf("state=%s", state)
 	}
-	if state, _ := ready(domain.HarnessClaudeCode); state != domain.AgentAuthenticationUnauthorized {
-		t.Fatalf("claude state=%s", state)
+	if _, handled := h.svc.AuthenticationReadiness(h.ctx, domain.HarnessClaudeCode, ""); handled {
+		t.Fatal("claude has no account in AO but was answered")
 	}
 	h.assign("s1", domain.HarnessCodex, alice)
 	if err := h.act(alice, "primary"); err != nil || changed(20*time.Millisecond) != 0 {
@@ -268,10 +269,9 @@ func TestReadinessFollowsTheAccountsAndIsInvalidatedWhenTheyChange(t *testing.T)
 	if err := h.act(alice, "sign-out", "id-2"); err != nil || changed() == 0 {
 		t.Fatalf("a sign-out did not invalidate readiness (err=%v)", err)
 	}
-	h.helper.native["claude"] = nativeSource{fingerprint: "f1", login: signIn("claude", "me@example.com")}
-	h.svc.importNative(h.ctx, true)
+	h.signIn("claude", "me@example.com")
 	if state, _ := ready(domain.HarnessClaudeCode); state != domain.AgentAuthenticationAuthorized || changed() == 0 {
-		t.Fatalf("after importing this computer's login: state=%s", state)
+		t.Fatalf("after a Claude sign-in: state=%s", state)
 	}
 	h.store.loadErr = errInjected
 	if observation, handled := h.svc.AuthenticationReadiness(h.ctx, domain.HarnessCodex, ""); !handled || observation.State != domain.AgentAuthenticationUnknown || observation.Freshness != domain.AgentReadinessStale || observation.CheckedAt != nil {
@@ -282,8 +282,8 @@ func TestReadinessFollowsTheAccountsAndIsInvalidatedWhenTheyChange(t *testing.T)
 func TestModelsComeFromTheDefaultOrTheScopedAccount(t *testing.T) {
 	h := setup(t)
 	h.helper.models = []ports.AgentModelInfo{{ID: "gpt-5", Label: "GPT-5", Efforts: []string{"low", "high"}}}
-	if _, handled, err := h.svc.DiscoverModels(h.ctx, domain.HarnessCodex, ""); !handled || !errors.Is(err, ports.ErrProviderLoginRequired) {
-		t.Fatalf("no account: handled=%t err=%v", handled, err)
+	if _, handled, err := h.svc.DiscoverModels(h.ctx, domain.HarnessCodex, ""); handled || err != nil {
+		t.Fatalf("no account in AO: the agent's own catalogue must answer, handled=%t err=%v", handled, err)
 	}
 	alice := h.signIn("codex", "alice@example.com")
 	bob := h.signIn("codex", "bob@example.com")

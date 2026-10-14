@@ -54,25 +54,13 @@ type ProviderSessionRoute struct {
 	AccountID string    `json:"account_id"`
 }
 
-// NativeProviderImport remembers which of this computer's own logins or keys
-// was imported, so a later removal is not undone by the next check.
-type NativeProviderImport struct {
-	Fingerprint string `json:"fingerprint"`
-	AccountID   string `json:"account_id"`
-	Email       string `json:"email,omitempty"`
-	// Device is the login this computer has now, when that is another account AO already holds.
-	Device string `json:"device,omitempty"`
-}
-
 // ProviderAccountState is everything Account Manager stores. Defaults maps a
 // provider to its default account; a provider present with an empty value has
 // had every account signed out.
 type ProviderAccountState struct {
-	Accounts         []ProviderAccount               `json:"accounts"`
-	Defaults         map[string]string               `json:"defaults,omitempty"`
-	Routes           []ProviderSessionRoute          `json:"routes"`
-	NativeImports    map[string]NativeProviderImport `json:"native_imports,omitempty"`
-	NativeKeyImports map[string]NativeProviderImport `json:"native_key_imports,omitempty"`
+	Accounts []ProviderAccount      `json:"accounts"`
+	Defaults map[string]string      `json:"defaults,omitempty"`
+	Routes   []ProviderSessionRoute `json:"routes"`
 }
 
 // ProviderAccountView is one account as the API shows it.

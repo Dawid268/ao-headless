@@ -544,9 +544,11 @@ export function TaskComposer({
 		!settings.chatHarnesses.includes(selectedAgent);
 	const providerAccounts = useProviderAccounts(Boolean(accountProviderId), false);
 	const accountChoices = providerAccounts.data?.accounts?.filter((account) => account.provider === accountProviderId && account.signedIn && !account.reserved) ?? [];
+	// Until AO holds an account for the provider, the agent keeps this computer's own login.
+	const providerManaged = Boolean(accountProviderId) && Boolean(providerAccounts.data?.accounts?.some((account) => account.provider === accountProviderId));
 	// The default is left to the daemon, so it only has to exist; an explicit choice has to be usable still.
-	const managedAccountReady = !accountProviderId || (!providerAccounts.isError && accountChoices.some((account) => (chosenAccountId ? account.id === chosenAccountId : account.primary)));
-	const showAccountControl = Boolean(accountProviderId) && Boolean(providerAccounts.data);
+	const managedAccountReady = !providerManaged || (!providerAccounts.isError && accountChoices.some((account) => (chosenAccountId ? account.id === chosenAccountId : account.primary)));
+	const showAccountControl = providerManaged;
 	const needsAccountSignIn = showAccountControl && accountChoices.length === 0;
 	// With no provider default for the reported levels AO picks one, shows it as
 	// selected, and sends it, so the picker matches what the task runs with.

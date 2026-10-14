@@ -2233,8 +2233,16 @@ describe("new task provider account selection", () => {
 		expect(sentBody()).toEqual(expect.objectContaining({ harness: "claude-code" }));
 		expect(sentBody()).not.toHaveProperty("providerAccountId");
 	});
-	it("blocks Start and offers sign-in until an account of the provider is signed in", async () => {
+	it("runs on this computer's own login while AO holds no account of the provider", async () => {
 		h.providerInventory.accounts = h.providerInventory.accounts.filter(entry => entry.provider !== "codex");
+		const { cache } = show();
+		await waitFor(() => expect(cache.getQueryData(["provider-accounts", "catalogue"])).toBeDefined());
+		await waitForTaskReady();
+		expect(screen.queryByText("No signed-in Codex account.")).toBeNull();
+		expect(screen.queryByRole("button", { name: accountName })).toBeNull();
+	});
+	it("blocks Start and offers sign-in until an account of the provider is signed in", async () => {
+		h.providerInventory.accounts = h.providerInventory.accounts.map(entry => entry.provider === "codex" ? { ...entry, signedIn: false } : entry);
 		const { cache } = show();
 		expect(await screen.findByText("No signed-in Codex account.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "No signed-in Codex account." })).toBeInTheDocument();

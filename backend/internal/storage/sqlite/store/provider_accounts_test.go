@@ -21,10 +21,8 @@ func TestProviderAccountStorageStartsEmptyAndReturnsWhatWasSaved(t *testing.T) {
 			{ID: "alice", Provider: "codex", DisplayName: "Cedar Codex", Email: "alice@example.com", Kind: "oauth", CredentialRef: "alice.json", AuthID: "auth-alice"},
 			{ID: "key", Provider: "claude", DisplayName: "Pine Claude", Email: "work key", Kind: "api_key"},
 		},
-		Defaults:         map[string]string{"codex": "alice", "claude": ""},
-		Routes:           []domain.ProviderSessionRoute{{SessionID: "s1", Provider: "codex", AccountID: "alice"}, {SessionID: "s2", Provider: "claude"}},
-		NativeImports:    map[string]domain.NativeProviderImport{"codex": {Fingerprint: "f1", AccountID: "alice", Email: "alice@example.com"}},
-		NativeKeyImports: map[string]domain.NativeProviderImport{"claude": {Fingerprint: "f2"}},
+		Defaults: map[string]string{"codex": "alice", "claude": ""},
+		Routes:   []domain.ProviderSessionRoute{{SessionID: "s1", Provider: "codex", AccountID: "alice"}, {SessionID: "s2", Provider: "claude"}},
 	}
 	if err = s.SaveProviderAccounts(ctx, want); err != nil {
 		t.Fatal(err)

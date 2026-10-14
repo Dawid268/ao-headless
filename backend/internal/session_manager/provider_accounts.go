@@ -177,6 +177,10 @@ func (m *Manager) moveLegacySession(ctx context.Context, id domain.SessionID) (b
 	if _, managed, err := m.sessionAccount(ctx, id); err != nil || managed {
 		return err != nil, err
 	}
+	// With no default to move onto it keeps the computer's own setup; a restart would change nothing.
+	if ready, err := m.accounts.HasDefault(ctx, rec.Harness); err != nil || !ready {
+		return err != nil, err
+	}
 	if chatMode {
 		chat, ok := m.chat.(interface {
 			HibernateChatForRestart(context.Context, domain.SessionID) (bool, error)
@@ -221,8 +225,14 @@ func (m *Manager) exitLegacyTerminal(ctx context.Context, rec domain.SessionReco
 		current.Metadata.RuntimeLaunchID != rec.Metadata.RuntimeLaunchID {
 		return false, err
 	}
-	if _, err = m.accounts.AdoptSession(ctx, rec.ID, rec.Harness); err != nil {
+	adopted, err := m.accounts.AdoptSession(ctx, rec.ID, rec.Harness)
+	if err != nil {
 		return false, err
+	}
+	if !adopted { // no default after all: the agent keeps its own setup and keeps running
+		if _, managed, err := m.sessionAccount(ctx, rec.ID); err != nil || !managed {
+			return false, err
+		}
 	}
 	if err = m.stopAgentController(ctx, current); err == nil {
 		err = m.recordAgentExited(ctx, current)

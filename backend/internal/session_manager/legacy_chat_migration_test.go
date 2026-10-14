@@ -447,3 +447,27 @@ func TestNoMoreThanFourLegacySessionsAreMovedAtOnce(t *testing.T) {
 		t.Fatalf("remaining=%d most=%d restarted=%d", remaining, launcher.most, launcher.restarted)
 	}
 }
+
+// With no default account a restart would put the session back on the
+// computer's own setup, so nothing is stopped and nothing is tried again.
+func TestALegacySessionIsNotRestartedWhenThereIsNoDefaultToMoveOnto(t *testing.T) {
+	t.Run("chat", func(t *testing.T) {
+		accounts := &accountRoutingFake{noDefault: true}
+		launcher := &restartingLauncher{recordingLauncher: &recordingLauncher{}, accounts: accounts, running: map[domain.SessionID]bool{"quiet": true}}
+		m, st, _ := newChatManager(launcher)
+		launcher.store, m.accounts = st, accounts
+		rec := legacyChat("quiet")
+		rec.Activity.State = domain.ActivityIdle
+		st.sessions["quiet"] = rec
+		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || len(launcher.restarts) != 0 {
+			t.Fatalf("remaining=%d err=%v restarts=%v", remaining, err, launcher.restarts)
+		}
+	})
+	t.Run("terminal", func(t *testing.T) {
+		m, _, rt, accounts, _ := newLegacyTerminalManager(t)
+		accounts.noDefault = true
+		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || rt.destroyed != 0 || rt.created != 0 {
+			t.Fatalf("remaining=%d err=%v destroyed=%d created=%d", remaining, err, rt.destroyed, rt.created)
+		}
+	})
+}

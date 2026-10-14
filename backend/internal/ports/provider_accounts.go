@@ -108,12 +108,9 @@ type AccountHelper interface {
 	LoginStatus(context.Context, ProviderLogin) (string, error)
 	CancelLogin(context.Context, ProviderLogin) error
 	LoginResult(ctx context.Context, id string) (VerifiedProviderLogin, error)
-	// ImportNative copies this computer's own login, or its API key, unless known
-	// says to leave it alone. known is asked before anything is copied, with the
-	// login's identity: "id:" and its email for a sign-in (empty when it cannot
-	// be told), a fingerprint for a key. It returns the identity (empty when
-	// there is no login) and the sign-in only when it copied one.
-	ImportNative(ctx context.Context, provider string, apiKey bool, known func(identity string) bool) (VerifiedProviderLogin, string, error)
+	// DeviceEmail names whose login this computer's own agent holds, read from
+	// its files without its tokens; empty when it has none.
+	DeviceEmail(ctx context.Context, provider string) string
 }
 
 // ProviderAccountRouting is what launching a session needs from Account Manager.
@@ -125,6 +122,9 @@ type ProviderAccountRouting interface {
 	ForgetAccount(context.Context, domain.SessionID) error
 	// AdoptSession gives a session that predates Account Manager a route.
 	AdoptSession(context.Context, domain.SessionID, domain.AgentHarness) (bool, error)
+	// HasDefault reports a default account an older session of the harness
+	// would move onto; with none it keeps the computer's own setup.
+	HasDefault(context.Context, domain.AgentHarness) (bool, error)
 }
 
 // ManagedProvider answers sign-in state and model lists for the providers

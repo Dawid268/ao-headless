@@ -1454,7 +1454,15 @@ describe("HarnessSettingsSection", () => {
 			await userEvent.click(within(row).getByRole("button", { name: "Accounts" }));
 			expect(useUiStore.getState().settingsModal).toEqual(expect.objectContaining({ scope: "global", section: "accountManager" }));
 		});
+		it("keeps its own login while AO holds no account for it", async () => {
+			renderSection();
+			const row = await codexRow();
+			expect(await within(row).findByRole("button", { name: "Login" })).toBeInTheDocument();
+			expect(within(row).queryByText("Managed sessions need you to sign in again.")).toBeNull();
+			expect(within(row).queryByRole("button", { name: "Open sign-in" })).toBeNull();
+		});
 		it("offers sign-in when no account is signed in, focused from a login shortcut without starting the agent's own login", async () => {
+			managed.accounts = [{ id: "c", provider: "codex", displayName: "Aspen Codex", signedIn: false, primary: false }];
 			const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 			render(<QueryClientProvider client={client}><TooltipProvider><HarnessSettingsSection focusAgentId="codex" startLogin /></TooltipProvider></QueryClientProvider>);
 			const row = await codexRow();
