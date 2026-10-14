@@ -6229,6 +6229,12 @@ html[data-window-translucent="true"] .app-shell-root::before {
 	background-color: color-mix(in srgb, var(--sidebar) 70%, transparent);
 }
 
+/* The startup screen covers the window above (or before) the shell, so it
+ * carries the same single tint instead of the clear canvas. */
+html[data-window-translucent="true"] .ao-startup-screen {
+	background-color: color-mix(in srgb, var(--sidebar) 70%, transparent);
+}
+
 /* The live page is a native view below the shell. Cut the tint out over its
  * rect (published by useBrowserView) so the page is not tinted. */
 html[data-window-translucent="true"][data-browser-hole="true"]:has(.browser-panel[data-browser-native-page="live"]) .app-shell-root::before {

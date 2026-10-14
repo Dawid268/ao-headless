@@ -49,6 +49,7 @@ import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
+import { applyWindowTranslucency } from "../lib/window-translucency";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { recordProjectOpened } from "../lib/project-history";
@@ -1151,9 +1152,7 @@ function ShellLayout() {
 	const windowTranslucent = isMac && developerMode && windowTranslucency;
 	useEffect(() => {
 		if (!isMac) return;
-		if (windowTranslucent) document.documentElement.dataset.windowTranslucent = "true";
-		else delete document.documentElement.dataset.windowTranslucent;
-		void aoBridge.theme?.setWindowTranslucent(windowTranslucent);
+		applyWindowTranslucency(windowTranslucent);
 	}, [windowTranslucent]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
