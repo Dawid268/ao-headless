@@ -227,18 +227,12 @@ func (b Boundary) Configure(engine *gin.Engine, h *handlers.BaseAPIHandler, cfg 
 		}
 		return http.StatusNoContent, nil
 	}))
-	engine.GET("/ao/login-result/:id", call(func(ctx context.Context, body request) (int, any) {
+	engine.GET("/ao/login-result/:id", call(func(_ context.Context, body request) (int, any) {
 		for _, a := range m.List() {
 			if a.Metadata["ao_login_id"] != body.ID && a.FileName != "ao-"+body.ID+".json" {
 				continue
 			}
 			email := text(a.Metadata["email"])
-			// This computer's own Claude login does not say whose it is; the provider does.
-			if email == "" && a.Provider == "claude" && strings.HasPrefix(body.ID, "native-") {
-				if email = claudeEmail(ctx, m, a); email == "" {
-					return http.StatusBadGateway, nil
-				}
-			}
 			if a.Attributes["api_key"] != "" {
 				return http.StatusOK, gin.H{"provider": a.Provider, "email": email, "kind": "api_key", "credential_ref": "config-index:" + a.Provider + ":" + a.EnsureIndex(), "auth_id": a.ID}
 			}

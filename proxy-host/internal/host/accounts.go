@@ -49,14 +49,6 @@ func providerCall(ctx context.Context, m *coreauth.Manager, auth *coreauth.Auth,
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return resp.StatusCode, data, err
 }
-func claudeEmail(ctx context.Context, m *coreauth.Manager, auth *coreauth.Auth) string {
-	var profile struct{ Account map[string]any }
-	status, data, err := providerCall(ctx, m, auth, http.MethodGet, providerOrigins["claude"]+"api/oauth/profile", nil)
-	if err != nil || status != http.StatusOK || json.Unmarshal(data, &profile) != nil {
-		return ""
-	}
-	return cmp.Or(text(profile.Account["email"]), text(profile.Account["email_address"]))
-}
 
 // accountState is what only the helper knows about an account, under the names of AO's usage type.
 func accountState(auth *coreauth.Auth, now time.Time) gin.H {

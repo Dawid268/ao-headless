@@ -295,40 +295,6 @@ func TestLoginTagComesOnlyFromThePrivateHeaderAndSurvivesPersistence(t *testing.
 	}
 }
 
-func TestLoginResultAsksTheProviderWhoseThisComputersClaudeLoginIs(t *testing.T) {
-	profile := `{"account":{"email":" native@example.test ","has_claude_max":true},"organization":{"name":"Org"}}`
-	provider := &fakeProvider{name: "claude", answer: func(r *http.Request, _ string) (int, string) {
-		if r.Method != http.MethodGet || r.URL.String() != "https://api.anthropic.com/api/oauth/profile" || r.Header.Get("anthropic-beta") == "" {
-			return http.StatusNotFound, ""
-		}
-		return http.StatusOK, profile
-	}}
-	f, _ := bareFixture(t, provider)
-	f.account(&coreauth.Auth{ID: "native", FileName: "ao-native-1.json", Provider: "claude"})
-	f.account(&coreauth.Auth{ID: "pasted", FileName: "ao-pasted.json", Provider: "claude"})
-	result := func(id string) (int, string) {
-		response := f.send(http.MethodGet, "/ao/login-result/"+id, control, "")
-		return response.Code, strings.TrimSpace(response.Body.String())
-	}
-	if code, body := result("native-1"); code != http.StatusOK || body != `{"auth_id":"native","credential_ref":"ao-native-1.json","email":"native@example.test","kind":"oauth","provider":"claude"}` {
-		t.Fatalf("native login: %d %s", code, body)
-	}
-	// Only this computer's own login is looked up; a pasted credential must name its owner itself.
-	if code, body := result("pasted"); code != http.StatusOK || !strings.Contains(body, `"email":""`) || len(provider.requests) != 1 {
-		t.Fatalf("pasted login: %d %s after %d calls", code, body, len(provider.requests))
-	}
-	for _, unusable := range []string{`{"account":{}}`, `not json`, `{"account":{"email_address":"  "}}`} {
-		profile = unusable
-		if code, body := result("native-1"); code != http.StatusBadGateway || body != "" {
-			t.Fatalf("profile %s: %d %s", unusable, code, body)
-		}
-	}
-	profile = `{"account":{"email_address":"other@example.test"}}`
-	if _, body := result("native-1"); !strings.Contains(body, `"email":"other@example.test"`) {
-		t.Fatalf("email_address: %s", body)
-	}
-}
-
 // The daemon asks for the login result as soon as a sign-in reports done; the SDK's file watcher registers a saved one a moment later.
 func TestASavedSignInIsReportedDoneOnlyOnceTheSDKHoldsIt(t *testing.T) {
 	f, _ := bareFixture(t)
