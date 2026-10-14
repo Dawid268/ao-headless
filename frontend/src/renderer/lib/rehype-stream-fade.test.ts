@@ -46,6 +46,15 @@ describe("rehypeStreamFade", () => {
 		expect(spans(html("x".repeat(4001)))).toBe(0);
 	});
 
+	it("leaves source text before the settled offset plain", () => {
+		const settled = (text: string, settledOffset: number) =>
+			renderToStaticMarkup(createElement(Markdown, { rehypePlugins: [[rehypeStreamFade, { settledOffset }]] }, text));
+		expect(spans(settled("hello world", 5))).toBe(" world".length);
+		expect(settled("hello world", 5)).toContain("<p>hello<span");
+		expect(spans(settled("hello", 5))).toBe(0);
+		expect(spans(settled("first\n\nsecond", 10))).toBe(3);
+	});
+
 	it("never throws on a tree it does not expect", () => {
 		const transform = rehypeStreamFade();
 		expect(() => transform({ type: "root", children: [] })).not.toThrow();

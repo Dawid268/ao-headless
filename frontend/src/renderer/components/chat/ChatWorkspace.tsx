@@ -2697,6 +2697,15 @@ export function Timeline({
 	// widens chat; shorter histories (common on non-Codex harnesses) often
 	// stop overflowing and used to lose the minimap exactly then.
 	const minimapEnabled = scrollbar.markers.length > 0;
+	// The minimap appears once the opened chat is measured. That first reveal is
+	// part of opening the chat, so it is instant; only later changes (the inspector
+	// covering it) fade.
+	const [minimapRevealed, setMinimapRevealed] = useState(false);
+	useEffect(() => {
+		if (!minimapEnabled || minimapRevealed) return;
+		const frame = window.requestAnimationFrame(() => setMinimapRevealed(true));
+		return () => window.cancelAnimationFrame(frame);
+	}, [minimapEnabled, minimapRevealed]);
 	const { t } = useTranslation();
 	const openingTurnId = startup?.openingTurnId;
 	// The checklist holds the working slot until the agent is up and its first
@@ -3955,7 +3964,8 @@ export function Timeline({
 				onBlur={() => setHoveredMarker(null)}
 				onPointerLeave={() => setHoveredMarker(null)}
 					className={cn(
-						"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+						"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+						minimapRevealed && "transition-opacity",
 						minimapEnabled && !inspectorOpenRef.current
 							? "cursor-pointer opacity-100"
 							: "pointer-events-none opacity-0",

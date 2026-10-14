@@ -818,9 +818,20 @@ describe("ChatMarkdown streaming fade", () => {
 		expect(fading(container)).toBe(0);
 	});
 
+	it("does not fade text already on screen when a streaming reply mounts", () => {
+		const { container, rerender } = render(<ChatMarkdown text="already shown" streaming />);
+		expect(fading(container)).toBe(0);
+		expect(container.textContent).toBe("already shown");
+
+		rerender(<ChatMarkdown text="already shown and more" streaming />);
+		expect(fading(container)).toBe(" and more".length);
+		expect(container.textContent).toBe("already shown and more");
+	});
+
 	it("fades while streaming and sheds the spans shortly after it settles", () => {
 		vi.useFakeTimers();
-		const { container, rerender } = render(<ChatMarkdown text="live text" streaming />);
+		const { container, rerender } = render(<ChatMarkdown text="" streaming />);
+		rerender(<ChatMarkdown text="live text" streaming />);
 		expect(fading(container)).toBeGreaterThan(0);
 		expect(container.textContent).toBe("live text");
 

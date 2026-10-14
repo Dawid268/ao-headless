@@ -37,7 +37,7 @@ import {
 	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 } from "react";
-import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
+import Markdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -84,7 +84,6 @@ export const ActivityTitle = memo(function ActivityTitle({ text }: { text: strin
 
 /** GitHub-flavoured markdown: tables, strikethrough, task lists, autolinks. */
 const PLUGINS = [remarkGfm, remarkSessionLinks];
-const STREAMING_REHYPE = [rehypeStreamFade];
 // Reduced motion gets plain text, not a span per character that never animates.
 const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 // How long a settled reply keeps its fade spans, so the last characters (and the final
@@ -182,6 +181,10 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	// beat past the end of the stream.
 	const [fading, setFading] = useState(streaming);
 	if (streaming && !fading) setFading(true);
+	// Text already on screen when the reply mounts (opening or switching to a chat
+	// mid-stream) is not new; only characters that arrive afterwards fade in.
+	const [settledOffset] = useState(() => text.length);
+	const streamingRehype = useMemo<Options["rehypePlugins"]>(() => [[rehypeStreamFade, { settledOffset }]], [settledOffset]);
 	useEffect(() => {
 		if (streaming) return;
 		const timer = setTimeout(() => setFading(false), FADE_SHED_MS);
@@ -200,7 +203,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 			>
 				<Markdown
 					remarkPlugins={PLUGINS}
-					rehypePlugins={fading && !prefersReducedMotion() ? STREAMING_REHYPE : undefined}
+					rehypePlugins={fading && !prefersReducedMotion() ? streamingRehype : undefined}
 					components={COMPONENTS}
 					urlTransform={chatUrlTransform}
 				>

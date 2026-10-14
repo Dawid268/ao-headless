@@ -41,25 +41,38 @@ function textLength(parent: Parent): number {
 	return length;
 }
 
-function wrap(parent: Parent) {
+function wrap(parent: Parent, settledOffset: number) {
 	parent.children = parent.children.flatMap((child): ElementContent[] => {
 		// Whitespace-only text is structural (between table rows, list items).
 		if (child.type === "text") {
 			if (child.value.trim() === "") return [child];
-			return Array.from(SEGMENTER.segment(child.value), ({ segment }): ElementContent =>
+			// Source text that was already on screen stays plain, so it never fades in again.
+			const start = child.position?.start.offset;
+			const kept = start === undefined ? 0 : Math.min(child.value.length, Math.max(0, settledOffset - start));
+			if (kept === child.value.length) return [child];
+			const plain: ElementContent[] = kept > 0 ? [{ type: "text", value: child.value.slice(0, kept) }] : [];
+			return plain.concat(Array.from(SEGMENTER.segment(child.value.slice(kept)), ({ segment }): ElementContent =>
 				EMOJI_GRAPHEME.test(segment) ? { type: "text", value: segment } : charSpan(segment),
-			);
+			));
 		}
-		if (child.type === "element" && !SKIP.has(child.tagName)) wrap(child);
+		if (child.type === "element" && !SKIP.has(child.tagName)) wrap(child, settledOffset);
 		return [child];
 	});
 }
 
-export function rehypeStreamFade() {
+export type StreamFadeOptions = {
+	/**
+	 * Markdown source length already shown before streaming resumed (a chat opened
+	 * mid-reply). Characters before it render plain; only later ones fade in.
+	 */
+	settledOffset?: number;
+};
+
+export function rehypeStreamFade({ settledOffset = 0 }: StreamFadeOptions = {}) {
 	return (tree: Root) => {
 		try {
 			const tail = tree.children.findLast((child) => child.type === "element") as Element | undefined;
-			if (tail && !SKIP.has(tail.tagName) && textLength(tail) <= MAX_BLOCK_CHARS) wrap(tail);
+			if (tail && !SKIP.has(tail.tagName) && textLength(tail) <= MAX_BLOCK_CHARS) wrap(tail, settledOffset);
 		} catch {
 			// Leave the reply readable rather than fail the render.
 		}
