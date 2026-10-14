@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -200,31 +198,4 @@ func waitUntil(t *testing.T, timeout time.Duration, done func() bool, message st
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal(message)
-}
-
-// On Linux the launch identity is clock ticks since boot, which a wall-clock
-// step (a VM resumed from a pause) does not move; ps's lstart moves with it.
-func TestPreviewProcessStartTimeUsesBootTicksOnLinux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("boot ticks come from /proc")
-	}
-	cmd := startSleeper(t, "sleep", "60")
-	if got := previewProcessStartTime(cmd.Process.Pid); !strings.HasPrefix(got, bootTicksPrefix) {
-		t.Fatalf("start time = %q, want %s<ticks>", got, bootTicksPrefix)
-	}
-}
-
-// A preview recorded with ps's lstart (macOS, or Linux before boot ticks)
-// can still be stopped.
-func TestSignalPreviewGroupAcceptsLstartRecord(t *testing.T) {
-	cmd := startSleeper(t, "sleep", "60")
-	recorded := psStartTime(cmd.Process.Pid)
-	if recorded == "" {
-		t.Fatal("ps reported no start time")
-	}
-	if err := signalPreviewGroup(cmd.Process.Pid, recorded, syscall.SIGKILL); err != nil {
-		t.Fatalf("signalPreviewGroup: %v", err)
-	}
-	waitUntil(t, 2*time.Second, func() bool { return !sleeperRunning(t, cmd.Process.Pid) },
-		"preview recorded with lstart was not killed")
 }

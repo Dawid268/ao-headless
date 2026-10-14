@@ -3,7 +3,6 @@
 package previewserver
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -24,39 +23,17 @@ func previewCommand(name string, args ...string) *exec.Cmd {
 // re-verified as the process AO launched, so no signal was sent.
 var errStalePreviewPID = errors.New("preview pid is stale or recycled; refusing to signal")
 
-// bootTicksPrefix marks a start time read as clock ticks since boot.
-const bootTicksPrefix = "boot+"
-
 // previewProcessStartTime returns the kernel-reported start time of pid as an
-// opaque string, or "" when the process does not exist. It is captured at
-// launch and compared verbatim before any group signal: a bare PID stops
-// identifying anything the moment the child is reaped, and a group kill on a
-// recycled number destroys an unrelated process family — a tmux server is its
-// own group leader, so one stale group kill took out every tmux session at
-// once (issue #3475).
-//
-// On Linux it is the start in clock ticks since boot (/proc/<pid>/stat field
-// 22). ps derives lstart from the boot time, which moves whenever the wall
-// clock steps (a VM resumed from a pause, an NTP step): a preview launched
-// before the step stopped matching its own record, and AO refused to stop it.
+// opaque string (`ps -o lstart=`), or "" when the process does not exist or ps
+// fails. It is captured at launch and compared verbatim before any group
+// signal: a bare PID stops identifying anything the moment the child is
+// reaped, and a group kill on a recycled number destroys an unrelated process
+// family — a tmux server is its own group leader, so one stale group kill
+// took out every tmux session at once (issue #3475).
 func previewProcessStartTime(pid int) string {
 	if pid <= 0 {
 		return ""
 	}
-	if stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); err == nil {
-		// Fields after the command name, which may itself contain ") ".
-		fields := strings.Fields(string(stat[bytes.LastIndexByte(stat, ')')+1:]))
-		if len(fields) > 19 {
-			return bootTicksPrefix + fields[19]
-		}
-		return ""
-	}
-	return psStartTime(pid)
-}
-
-// psStartTime is ps's lstart: stable on macOS, where the kernel keeps the
-// wall-clock start, and what AO recorded on Linux before boot ticks.
-func psStartTime(pid int) string {
 	out, err := aoprocess.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return ""
@@ -87,10 +64,7 @@ func signalPreviewGroup(pid int, recordedStart string, sig syscall.Signal) error
 	if recordedStart == "" {
 		return errStalePreviewPID
 	}
-	current := psStartTime(pid) // macOS, or a Linux record from before boot ticks
-	if strings.HasPrefix(recordedStart, bootTicksPrefix) {
-		current = previewProcessStartTime(pid)
-	}
+	current := previewProcessStartTime(pid)
 	if current == "" {
 		return nil // leader gone: nothing provably AO's remains
 	}
