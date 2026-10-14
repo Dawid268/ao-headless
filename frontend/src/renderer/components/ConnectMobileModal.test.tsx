@@ -112,6 +112,7 @@ beforeEach(() => {
 		reason: "",
 	};
 	mobileStatus.keepAwake = undefined;
+	vi.mocked(apiClient.POST).mockClear();
 });
 
 test("QR payload carries host, port, and password for one-scan connect", () => {
@@ -778,13 +779,19 @@ test("warns laptops that closing the lid still sleeps them", async () => {
 	expect(screen.getByTestId("mobile-keep-awake-laptop")).toBeInTheDocument();
 });
 
-test("opts into closed-lid operation without changing the idle-wake choice", async () => {
-	mobileStatus.keepAwake = { supported: true, enabled: true, active: true, hasBattery: true, lidSupported: true, lidClosed: false };
+test("turning on closed-lid mode also enables idle wake in one request", async () => {
+	mobileStatus.keepAwake = { supported: true, enabled: false, active: false, hasBattery: true, lidSupported: true, lidClosed: false };
+	vi.mocked(apiClient.POST).mockImplementationOnce(async () => {
+		Object.assign(mobileStatus.keepAwake!, { enabled: true, lidClosed: true });
+		return { data: {}, error: undefined };
+	});
 	renderMobileSettings();
 	const toggle = await screen.findByRole("switch", { name: "Keep awake with lid closed" });
 	expect(toggle).not.toBeChecked();
 	await userEvent.click(toggle);
 	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true, lidClosed: true } });
+	await waitFor(() => expect(screen.getByRole("switch", { name: "Keep this Mac awake" })).toBeChecked());
+	expect(toggle).toBeChecked();
 });
 
 test("shows a latched low-battery stop without claiming native activation", async () => {
@@ -829,4 +836,34 @@ test.each([false, true])("shows helper upgrade recovery with lid preference %s",
 		"turn closed-lid wake off in every AO instance and wait for recovery to finish",
 	);
 	expect(screen.queryByText("Closed-lid keep awake is armed.")).not.toBeInTheDocument();
+});
+
+test("turning off Keep awake clears closed-lid mode in the same request", async () => {
+	mobileStatus.keepAwake = { supported: true, enabled: true, active: true, hasBattery: true, lidSupported: true, lidClosed: true };
+	vi.mocked(apiClient.POST).mockImplementationOnce(async () => {
+		Object.assign(mobileStatus.keepAwake!, { enabled: false, active: false, lidClosed: false, lidActive: false });
+		return { data: {}, error: undefined };
+	});
+	renderMobileSettings();
+	await userEvent.click(await screen.findByRole("switch", { name: "Keep this Mac awake" }));
+	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: false, lidClosed: false } });
+	await waitFor(() => expect(screen.getByRole("switch", { name: "Keep awake with lid closed" })).not.toBeChecked());
+	expect(screen.getByRole("switch", { name: "Keep this Mac awake" })).not.toBeChecked();
+});
+
+test("turning off closed-lid mode keeps idle wake enabled", async () => {
+	mobileStatus.keepAwake = { supported: true, enabled: true, active: true, hasBattery: true, lidSupported: true, lidClosed: true };
+	renderMobileSettings();
+	await userEvent.click(await screen.findByRole("switch", { name: "Keep awake with lid closed" }));
+	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true, lidClosed: false } });
+});
+
+test("an inactive remembered lid choice is unchecked and can enable both modes", async () => {
+	mobileStatus.keepAwake = { supported: true, enabled: false, active: false, hasBattery: true, lidSupported: true, lidClosed: true };
+	renderMobileSettings();
+	const toggle = await screen.findByRole("switch", { name: "Keep awake with lid closed" });
+	expect(toggle).not.toBeChecked();
+	expect(screen.queryByText("Closed-lid keep awake is armed.")).not.toBeInTheDocument();
+	await userEvent.click(toggle);
+	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true, lidClosed: true } });
 });

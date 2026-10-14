@@ -1,12 +1,12 @@
 # ADR 0005: a local coordinator for mobile closed-lid wakefulness
 
-Status: proposed; physical compatibility validation pending.
+Status: proposed; basic macOS 26 lid-close path verified; full physical validation pending.
 
 ## Context
 
 Connect Mobile uses `caffeinate -i -w <daemon PID>` for idle sleep. Normal lid
 sleep remains allowed. The new opt-in targets Apple Silicon MacBooks on macOS
-13–26 without raising the desktop application's minimum OS. That range is a
+13–27 without raising the desktop application's minimum OS. That range is a
 capability gate, not a claim of completed physical testing.
 
 Apple's process-owned lid-close assertion modifier requires a private Apple
@@ -42,7 +42,8 @@ utilities do not participate in this protocol.
 
 A registered protocol-compatible coordinator is reused regardless of the calling
 build's digest. Setup never boots out a registered job or copies another version
-while that job is registered. Incompatible protocol registration fails explicitly.
+while that job is registered. Incompatible protocol registration, or an older registered helper that cannot
+pass the current host capability probe, fails with explicit upgrade instructions.
 To upgrade the native helper, open the lid, disable the option in every instance,
 wait for cleanup, and boot out the registration before opting in again. A fresh
 registration cleans obsolete content-addressed helper copies. New jobs use
@@ -99,7 +100,29 @@ Local mechanism evidence: native arm64/x64 compilation with an 11.0 deployment
 target, policy/recovery tests, and a read-only probe on a macOS 26.4 Apple Silicon
 MacBook. This is not physical lid-close verification.
 
-Before acceptance, verify interactive mobile agent work on macOS 13/14/15/26
+Reviewer-reported physical evidence (14 October 2026): Prasad tested a MacBook
+on macOS 26. With the lid closed, the Mac stayed awake and the phone stayed
+connected. The report does not identify the MacBook model, power source, or
+whether interactive agent work was exercised. See the
+[manual test report](https://github.com/OrchestratorInc/agent-orchestrator/pull/6589#issuecomment-6173318260).
+
+| Scenario | Physical evidence |
+| --- | --- |
+| Basic lid close and continued phone connection | Passed on one macOS 26 MacBook, per reviewer |
+| Interactive agent work; panel darkness and locking | Not yet reported |
+| Battery operation and charger transitions | Not yet reported |
+| Multiple daemons; disable and full quit | Not yet reported |
+| Daemon/helper SIGKILL and recovery | Not yet reported; highest-priority acceptance check |
+| Login/reboot and update/removal | Not yet reported |
+| macOS 13/14/15/27 hardware coverage | Not yet reported |
+
+macOS 27 is included in the capability range to permit validation on current
+hardware. The reviewer confirmed selector 12 remains in the macOS 27 SDK and
+reported that the former upper bound rejected a Mac16,7 running macOS 27.0.1.
+This gate change is not a claim of completed macOS 27 physical testing. See the
+[compatibility review](https://github.com/OrchestratorInc/agent-orchestrator/pull/6589#issuecomment-6172817303).
+
+Before acceptance, verify interactive mobile agent work on macOS 13/14/15/26/27
 MacBooks: lid closed on AC/battery, charger transitions, panel darkness, locking,
 multiple daemons, disable/full quit, daemon/helper SIGKILL, login/reboot and
 update/removal. Keep the PR draft until that gate passes or an explicit product

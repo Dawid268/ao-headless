@@ -24,7 +24,7 @@ import (
 const lidHelperVersion = 2
 const lidHelperLabel = "com.aoagents.mobile-wake"
 
-var errLidHelperUpgrade = errors.New("registered wake helper protocol is incompatible; open the lid, turn closed-lid wake off in every AO instance and wait for recovery to finish, then run in Terminal: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake; turn closed-lid wake on again")
+var errLidHelperUpgrade = errors.New("registered wake helper is incompatible; open the lid, turn closed-lid wake off in every AO instance and wait for recovery to finish, then run in Terminal: launchctl bootout gui/$(id -u)/com.aoagents.mobile-wake; turn closed-lid wake on again")
 
 // LidAwake is a lease client for the independent, launchd-owned coordinator.
 // Default-data AO instances for this login share ~/.ao/data/wake. Custom data
@@ -430,12 +430,13 @@ func (l *LidAwake) checkRegisteredHelper(ctx context.Context) error {
 		return err
 	}
 	var probe struct {
-		Version int `json:"version"`
+		Version   int  `json:"version"`
+		Supported bool `json:"supported"`
 	}
 	if err := json.Unmarshal(out, &probe); err != nil {
 		return err
 	}
-	if probe.Version != lidHelperVersion {
+	if probe.Version != lidHelperVersion || !probe.Supported {
 		return errLidHelperUpgrade
 	}
 	return nil

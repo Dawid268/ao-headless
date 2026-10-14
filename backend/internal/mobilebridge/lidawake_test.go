@@ -114,6 +114,7 @@ func TestWakeSetupAcceptsDaemonParentAndReusesRegisteredBuild(t *testing.T) {
 	}
 	registered, bootstraps := false, 0
 	protocol := lidHelperVersion
+	probeSupported := true
 	execute := func(_ context.Context, command string, args ...string) ([]byte, error) {
 		if command == "/bin/launchctl" {
 			switch args[0] {
@@ -131,7 +132,7 @@ func TestWakeSetupAcceptsDaemonParentAndReusesRegisteredBuild(t *testing.T) {
 				return nil, errors.New("unexpected command")
 			}
 		}
-		return json.Marshal(map[string]int{"version": protocol})
+		return json.Marshal(map[string]any{"version": protocol, "supported": probeSupported})
 	}
 	for i, build := range []string{"packaged", "development"} {
 		source := filepath.Join(root, build)
@@ -143,8 +144,16 @@ func TestWakeSetupAcceptsDaemonParentAndReusesRegisteredBuild(t *testing.T) {
 			t.Fatal(err)
 		}
 		if i == 1 {
-			for _, incompatible := range []int{1, lidHelperVersion + 1} {
-				protocol = incompatible
+			for _, incompatible := range []struct {
+				version   int
+				supported bool
+			}{
+				{1, true},
+				{lidHelperVersion + 1, true},
+				// A protocol-compatible older helper may still reject macOS 27.
+				{lidHelperVersion, false},
+			} {
+				protocol, probeSupported = incompatible.version, incompatible.supported
 				// A leftover client lease must not hide upgrade guidance behind
 				// an unavailable or old-protocol status file.
 				l.id = "previous-lease"

@@ -221,7 +221,7 @@ func serve() throws {
 
 let platformSupported: Bool = {
 #if arch(arm64)
-    return (13...26).contains(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    return WakePolicy.supportsOS(majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
 #else
     return false
 #endif

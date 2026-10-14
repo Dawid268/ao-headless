@@ -6,6 +6,9 @@ import Foundation
                    sequence: UInt64 = 1, wall: Double = 100) -> WakeLease {
             WakeLease(id: id, pid: pid, started: start, sequence: sequence, writtenAt: wall)
         }
+        assert(!WakePolicy.supportsOS(majorVersion: 12))
+        for version in 13...27 { assert(WakePolicy.supportsOS(majorVersion: version)) }
+        assert(!WakePolicy.supportsOS(majorVersion: 28))
         let a = "2b49c35b-e73e-4f28-908a-4f927ce9d322"
         let b = "53696c01-210c-4687-9f45-f7e3dcd6f91e"
         let identity: (Int32) -> UInt64? = { $0 == 42 ? 99 : nil }

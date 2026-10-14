@@ -554,7 +554,7 @@ func (b *BridgeService) SetKeepAwakeLid(on, lidClosed bool) (MobileStatusRespons
 			if reason == "isolated_data_dir" {
 				return MobileStatusResponse{}, errors.New("closed-lid wakefulness is disabled for custom or isolated AO_DATA_DIR directories; use the default ~/.ao/data directory to enable it")
 			}
-			return MobileStatusResponse{}, errors.New("closed-lid wakefulness requires a supported Apple Silicon MacBook (macOS 13–26) and the desktop helper")
+			return MobileStatusResponse{}, errors.New("closed-lid wakefulness requires a supported Apple Silicon MacBook (macOS 13–27) and the desktop helper")
 		}
 	}
 	st, err := mobilebridge.Load(b.ConfigPath)

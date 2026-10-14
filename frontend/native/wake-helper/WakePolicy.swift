@@ -24,6 +24,11 @@ struct WakeStatus: Codable {
 }
 
 struct WakePolicy {
+    // This is a capability range, not evidence of physical lid testing.
+    static func supportsOS(majorVersion: Int) -> Bool {
+        (13...27).contains(majorVersion)
+    }
+
     // Renewals extend monotonic deadlines only when their sequence advances.
     // Old files cannot keep a hung daemon awake after their deadline.
     private var observed: [String: (UInt64, Double)] = [:]
