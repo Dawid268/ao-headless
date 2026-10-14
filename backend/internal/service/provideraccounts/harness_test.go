@@ -291,13 +291,13 @@ func (h *harness) route(session, wantAccount string) {
 	if i := index(h.store.get(), wantAccount); i >= 0 {
 		wantAuth = h.store.get().Accounts[i].AuthID
 	}
-	if auth, found := h.helperAuth(session); !found || auth != wantAuth {
+	if auth, found := h.helperAuth(session, got.Provider); !found || auth != wantAuth {
 		h.t.Fatalf("session %s: helper uses %q (found=%t), want %q", session, auth, found, wantAuth)
 	}
 }
 
-func (h *harness) helperAuth(session string) (string, bool) {
-	token, _ := h.svc.ticket(domain.SessionID(session))
+func (h *harness) helperAuth(session, provider string) (string, bool) {
+	token, _ := h.svc.ticket(domain.SessionID(session), provider)
 	sum := sha256.Sum256([]byte(token))
 	h.helper.mu.Lock()
 	defer h.helper.mu.Unlock()

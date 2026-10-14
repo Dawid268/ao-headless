@@ -19,7 +19,9 @@ func (h *harness) launch(session string, agent domain.AgentHarness, related bool
 }
 
 // A switch moves the session's route to the target's provider, onto its account
-// there, and a switch back finds the account it had before.
+// there, and a switch back finds the account it had before. Each provider keeps
+// its ticket throughout, so an agent still running on the one the session left,
+// such as a reviewer or a side chat, keeps its account.
 func TestASwitchMovesTheRouteAndASwitchBackRestoresTheAccount(t *testing.T) {
 	h := setup(t)
 	h.signIn("claude", "max@example.com")
@@ -28,7 +30,7 @@ func TestASwitchMovesTheRouteAndASwitchBackRestoresTheAccount(t *testing.T) {
 	h.assign("s1", domain.HarnessClaudeCode, work)
 	claudeEnv := h.launch("s1", domain.HarnessClaudeCode, false)
 	planned, err := h.svc.PlannedAccountEnv(h.ctx, "s1", domain.HarnessCodex)
-	if err != nil || planned["AO_PROXY_TICKET"] != claudeEnv["ANTHROPIC_AUTH_TOKEN"] {
+	if err != nil || len(planned["AO_PROXY_TICKET"]) != 64 || planned["AO_PROXY_TICKET"] == claudeEnv["ANTHROPIC_AUTH_TOKEN"] {
 		t.Fatalf("planned=%v err=%v", planned, err)
 	}
 	h.route("s1", work) // planning moved nothing
@@ -39,10 +41,20 @@ func TestASwitchMovesTheRouteAndASwitchBackRestoresTheAccount(t *testing.T) {
 	if route, _, _ := h.svc.SessionAccount(h.ctx, "s1"); route.Provider != "codex" {
 		t.Fatalf("route=%+v", route)
 	}
+	if auth, _ := h.helperAuth("s1", "claude"); auth != "work@example.com-auth" {
+		t.Fatalf("the Claude ticket now reaches %q", auth)
+	}
+	if env := h.launch("s1", domain.HarnessClaudeCode, true); !reflect.DeepEqual(env, claudeEnv) {
+		t.Fatalf("a side chat on the provider the session left got %v", env)
+	}
+	h.route("s1", codex) // and moved nothing
 	if env := h.launch("s1", domain.HarnessClaudeCode, false); !reflect.DeepEqual(env, claudeEnv) {
 		t.Fatalf("switch back env=%v", env)
 	}
 	h.route("s1", work)
+	if auth, _ := h.helperAuth("s1", "codex"); auth != "pro@example.com-auth" {
+		t.Fatalf("the Codex ticket now reaches %q", auth)
+	}
 	// The account page lists the session once under each account it has a route on.
 	views, _ := h.svc.Accounts(h.ctx, false, false)
 	for _, view := range views {

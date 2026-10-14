@@ -172,7 +172,7 @@ func (s *Service) push(ctx context.Context, st domain.ProviderAccountState) erro
 	}
 	routes := make([]ports.ProviderRoute, 0, len(st.Routes))
 	for _, r := range st.Routes {
-		hash, err := s.ticketHash(r.SessionID)
+		hash, err := s.ticketHash(r.SessionID, r.Provider)
 		if err != nil {
 			return err
 		}
@@ -181,16 +181,21 @@ func (s *Service) push(ctx context.Context, st domain.ProviderAccountState) erro
 	return s.helper.ApplyRoutes(ctx, routes, ids)
 }
 
-// ticketHash is the name the helper knows a session by.
-func (s *Service) ticketHash(id domain.SessionID) (string, error) {
-	token, err := s.ticket(id)
+// ticketHash is the name the helper knows a session's route for provider by.
+func (s *Service) ticketHash(id domain.SessionID, provider string) (string, error) {
+	token, err := s.ticket(id, provider)
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:]), err
 }
-func (s *Service) ticket(id domain.SessionID) (string, error) {
+
+// ticket is one per session and provider, for life. A switch renames the
+// session's routes but moves no ticket, so its agents still running on the
+// provider it left, such as a reviewer, keep their account.
+func (s *Service) ticket(id domain.SessionID, provider string) (string, error) {
+	session, _, _ := strings.Cut(string(id), "/")
 	key, err := s.helper.TicketKey()
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("ao-provider-session\x00" + string(id)))
+	mac.Write([]byte("ao-provider-session\x00" + session + "\x00" + provider))
 	return hex.EncodeToString(mac.Sum(nil)), err
 }
 func encode(v any) string {
@@ -293,18 +298,26 @@ func movable(st domain.ProviderAccountState, from, to string) bool {
 	return a.Provider == b.Provider && (a.Provider != "codex" || a.APIKey() == b.APIKey())
 }
 
+// takes reports whether a session on route r can continue on account to.
+func takes(st domain.ProviderAccountState, r domain.ProviderSessionRoute, to string) bool {
+	if j := index(st, to); r.Kind != "" {
+		return j >= 0 && st.Accounts[j].Provider == r.Provider && st.Accounts[j].Kind == r.Kind
+	}
+	return movable(st, r.AccountID, to)
+}
+
 // managed reports a provider AO holds an account for, signed in or not; the
 // agents of any other keep their own setup, as before Account Manager.
 func managed(st domain.ProviderAccountState, provider string) bool {
 	return slices.ContainsFunc(st.Accounts, func(a domain.ProviderAccount) bool { return a.Provider == provider })
 }
 
-// makeDefault also gives the provider's waiting sessions the account.
+// makeDefault also gives the account to the provider's waiting sessions that can move to it.
 func makeDefault(st *domain.ProviderAccountState, provider, id string) {
 	st.Defaults[provider] = id
 	for i, r := range st.Routes {
-		if r.Provider == provider && r.AccountID == "" {
-			st.Routes[i].AccountID = id
+		if r.Provider == provider && waits(*st, r) && takes(*st, r, id) {
+			st.Routes[i].AccountID, st.Routes[i].Kind = id, ""
 		}
 	}
 }
@@ -351,11 +364,12 @@ func otherRoute(id domain.SessionID, provider string) domain.SessionID {
 
 // launchRoute settles which of the session's routes a launch of harness runs on,
 // and returns its name. A session keeps one route for each provider it uses, each
-// with a ticket for life. Its own agent runs on its route; after a switch to
-// another provider that route moves there, and the old one is kept for a switch
-// back. Related work, such as a reviewer, runs on the session's route for its own
-// provider. A session with no route is adopted onto the default; with no default
-// the agent keeps its own setup and the name is empty.
+// with its own ticket. Its own agent runs on the route named by the session's id;
+// after a switch to another provider the route for that one takes the name, and
+// the old one is kept for a switch back. Related work, such as a reviewer, runs on
+// the session's route for its own provider. A session with no route is adopted
+// onto the default, or the route its related work has; with neither the agent
+// keeps its own setup and the name is empty.
 func launchRoute(st *domain.ProviderAccountState, id domain.SessionID, provider string, related bool) (key domain.SessionID, waiting bool) {
 	key = id
 	own, kept := routed(*st, id), routed(*st, otherRoute(id, provider))
@@ -365,26 +379,27 @@ func launchRoute(st *domain.ProviderAccountState, id domain.SessionID, provider 
 		if key = otherRoute(id, provider); kept < 0 && st.Defaults[provider] != "" {
 			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: key, Provider: provider, AccountID: st.Defaults[provider]})
 		}
-	case own < 0:
-		if st.Defaults[provider] != "" {
-			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: st.Defaults[provider]})
+	default: // its own agent runs another provider now, or for the first time on an account
+		if own >= 0 {
+			st.Routes[own].SessionID = otherRoute(id, st.Routes[own].Provider)
 		}
-	default: // its own agent now runs another provider
-		left, account := st.Routes[own], st.Defaults[provider]
 		if kept >= 0 {
-			account = st.Routes[kept].AccountID // the account it had there before
-		}
-		back := otherRoute(id, left.Provider)
-		st.Routes = slices.DeleteFunc(st.Routes, func(r domain.ProviderSessionRoute) bool { return r.SessionID == id || r.SessionID == back })
-		st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: back, Provider: left.Provider, AccountID: left.AccountID})
-		if managed(*st, provider) { // else the agent keeps its own setup
-			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: account})
+			st.Routes[kept].SessionID = id // the account it had there before
+		} else if managed(*st, provider) && (own >= 0 || st.Defaults[provider] != "") { // else the agent keeps its own setup
+			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: st.Defaults[provider]})
 		}
 	}
 	if i := routed(*st, key); i >= 0 {
-		return key, st.Routes[i].AccountID == ""
+		return key, waits(*st, st.Routes[i])
 	}
 	return "", false
+}
+
+// waits reports a route whose account is gone or signed out: its agent is
+// refused until a sign-in.
+func waits(st domain.ProviderAccountState, r domain.ProviderSessionRoute) bool {
+	i := index(st, r.AccountID)
+	return i < 0 || !st.Accounts[i].SignedIn()
 }
 
 // LaunchAccountEnv is the helper address and ticket for an agent of harness that
@@ -427,7 +442,7 @@ func (s *Service) PlannedAccountEnv(ctx context.Context, id domain.SessionID, ha
 }
 
 func (s *Service) accountEnv(key domain.SessionID, provider string) (map[string]string, error) {
-	token, err := s.ticket(key)
+	token, err := s.ticket(key, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +467,7 @@ func (s *Service) AdoptSession(ctx context.Context, id domain.SessionID, harness
 	provider, adopted := domain.AccountProvider(harness), false
 	err := s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
 		if adopted = st.Defaults[provider] != "" && routed(*st, id) < 0; adopted {
-			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: st.Defaults[provider]})
+			launchRoute(st, id, provider, false)
 		}
 		return "", nil
 	})
@@ -503,10 +518,10 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 			return "", nil
 		case "assign-session":
 			j := routed(*st, domain.SessionID(in.SessionID))
-			if j < 0 || st.Routes[j].AccountID != "" && !movable(*st, st.Routes[j].AccountID, id) {
+			if j < 0 || !takes(*st, st.Routes[j], id) {
 				return "", ports.ErrProviderAccountIncompatible
 			}
-			st.Routes[j].AccountID = id
+			st.Routes[j].AccountID, st.Routes[j].Kind = id, ""
 			return "", s.usable(ctx, *st, id, st.Routes[j].Provider)
 		case "sign-out", "remove":
 			return s.remove(ctx, st, i, in.ReplacementPrimaryID, in.Action == "sign-out")
@@ -532,9 +547,13 @@ func (s *Service) remove(ctx context.Context, st *domain.ProviderAccountState, i
 		st.Defaults[a.Provider] = next
 	}
 	for j, r := range st.Routes {
-		if r.AccountID == a.ID {
-			st.Routes[j].AccountID = map[bool]string{true: next}[movable(*st, a.ID, next)] // else it waits for a sign-in
-		}
+		switch {
+		case r.AccountID != a.ID:
+		case movable(*st, a.ID, next):
+			st.Routes[j].AccountID = next
+		case !signOut: // it waits for an account it can move to
+			st.Routes[j].AccountID, st.Routes[j].Kind = "", map[bool]string{true: a.Kind}[a.Provider == "codex"]
+		} // else it waits for this account to sign in again
 	}
 	if signOut {
 		st.Accounts[i].CredentialRef, st.Accounts[i].AuthID = "", ""
@@ -782,7 +801,7 @@ func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.P
 			if !slices.Contains(view.Sessions, session) {
 				view.Sessions = append(view.Sessions, session)
 			}
-			if hash, err := s.ticketHash(r.SessionID); err == nil && byHash[hash] > 0 {
+			if hash, err := s.ticketHash(r.SessionID, r.Provider); err == nil && byHash[hash] > 0 {
 				view.Usage.Activity.Sessions[session] += byHash[hash]
 			}
 		}

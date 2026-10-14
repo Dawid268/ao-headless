@@ -114,7 +114,7 @@ func TestTheAccountViewNamesTodaysTokensBySessionAndListsTheModels(t *testing.T)
 	// The helper knows a session by the hash of its ticket.
 	byTicket := map[string]int64{"a-session-since-deleted": 5}
 	for session, tokens := range map[domain.SessionID]int64{"s1": 10, "s2": 20, "s3": 7} {
-		hash, err := h.svc.ticketHash(session)
+		hash, err := h.svc.ticketHash(session, "codex")
 		if err != nil {
 			t.Fatal(err)
 		}

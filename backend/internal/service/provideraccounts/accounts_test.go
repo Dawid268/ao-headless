@@ -211,8 +211,9 @@ func TestLastSignOutLeavesSessionsWaitingAndTheNextSignInPicksThemUp(t *testing.
 	if err = h.act(alice, "sign-out"); err != nil {
 		t.Fatal(err)
 	}
-	h.route("c1", "")
-	h.route("c2", "")
+	// They wait on alice, whose sign-in the helper no longer has.
+	h.route("c1", alice)
+	h.route("c2", alice)
 	h.route("a1", claude)
 	if _, managed, err := h.svc.ResolveAccount(h.ctx, domain.HarnessCodex, ""); !managed || !errors.Is(err, ports.ErrProviderLoginRequired) {
 		t.Fatalf("managed=%t err=%v", managed, err)
@@ -349,7 +350,7 @@ func TestSessionsKeepOneRouteTicketAndEnvironmentThroughEveryAccountChange(t *te
 			}
 		}
 	}
-	h.route("c1", "")
+	h.route("c1", bob) // waiting for bob to sign in again
 	h.route("a1", claude)
 }
 
@@ -388,7 +389,7 @@ func TestForgetDropsOnlyThatSessionsRoute(t *testing.T) {
 	if _, managed, _ := h.svc.SessionAccount(h.ctx, "s1"); managed {
 		t.Fatal("the route was kept")
 	}
-	if _, found := h.helperAuth("s1"); found {
+	if _, found := h.helperAuth("s1", "codex"); found {
 		t.Fatal("the helper still accepts the forgotten session's ticket")
 	}
 	h.route("s2", alice)

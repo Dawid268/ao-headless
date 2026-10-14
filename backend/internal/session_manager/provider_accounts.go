@@ -32,11 +32,6 @@ func (m *Manager) plannedAccountEnv(ctx context.Context, id domain.SessionID, ha
 	return m.accounts.PlannedAccountEnv(ctx, id, harness)
 }
 
-// ApplyAccountEnv is applyAccountEnv for launches the chat service makes, such as side chats.
-func (m *Manager) ApplyAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, env map[string]string) error {
-	return m.applyAccountEnv(ctx, id, harness, env)
-}
-
 // sessionManaged reports a session whose sign-in Account Manager supplies.
 func (m *Manager) sessionManaged(ctx context.Context, id domain.SessionID) (bool, error) {
 	if m.accounts == nil {
@@ -53,9 +48,10 @@ func (m *Manager) forgetAccount(ctx context.Context, id domain.SessionID) error 
 	return m.accounts.ForgetAccount(ctx, id)
 }
 
-// RelatedAccountEnv adds its owning worker's account for harness to a reviewer's
-// environment: the worker's own on the same provider, else its account for the
-// reviewer's provider, which starts as that provider's default.
+// RelatedAccountEnv adds its owning session's account for harness to the
+// environment of work it starts, a reviewer or a side chat: the session's own on
+// the same provider, else its account for that provider, which starts as the
+// provider's default. It never moves the session's own agent.
 func (m *Manager) RelatedAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, env map[string]string) error {
 	if m.accounts == nil {
 		return nil

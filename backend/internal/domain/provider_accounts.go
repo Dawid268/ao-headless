@@ -46,12 +46,15 @@ func GeneratedProviderAccountName(provider, id string) string {
 	return words[int(h.Sum32())%len(words)] + " " + map[string]string{"codex": "Codex", "claude": "Claude"}[provider]
 }
 
-// ProviderSessionRoute sends one session's requests to one account. An empty
-// AccountID is a session waiting for its provider's first sign-in.
+// ProviderSessionRoute sends one session's requests to one account. A session
+// whose account is signed out, or has none, waits for a sign-in. Kind is the
+// kind of account a waiting Codex session needs once its own was removed: its
+// history can be read on that kind only.
 type ProviderSessionRoute struct {
 	SessionID SessionID `json:"session_id"`
 	Provider  string    `json:"provider"`
 	AccountID string    `json:"account_id"`
+	Kind      string    `json:"kind,omitempty"`
 }
 
 // ProviderAccountState is everything Account Manager stores. Defaults maps a

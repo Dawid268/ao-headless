@@ -50,6 +50,30 @@ func TestACodexSessionMovesOnlyBetweenAccountsOfOneKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.route("s2", "")
+	// Nor does a later default of the other kind pick them up.
+	if err := h.act(plus, "primary"); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s2", "")
+	key = h.addKey("codex", "Second key", "1")
+	if err := h.act(key, "primary"); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s2", key)
+	// A key signed out keeps its sessions until it signs in again; a plan does not take them meanwhile.
+	h.assign("s3", domain.HarnessCodex, key)
+	if err := h.act(key, "sign-out", plus); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s3", key)
+	if err := h.act(pro, "primary"); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s3", key)
+	if _, err := h.svc.record(h.ctx, "codex", ports.VerifiedProviderLogin{Provider: "codex", Email: "Second key", Kind: "api_key", CredentialRef: "config-index:codex:2", AuthID: "codex-key-2"}, key); err != nil {
+		t.Fatal(err)
+	}
+	h.route("s3", key)
 	// Claude has no such binding.
 	subscription := h.signIn("claude", "max@example.com")
 	claudeKey := h.addKey("claude", "Console key", "0")

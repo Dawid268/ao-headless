@@ -106,7 +106,7 @@ func TestSyncRefillsAHelperThatLostItsTable(t *testing.T) {
 		t.Fatalf("routes=%+v accounts=%v", h.helper.routes, h.helper.authIDs)
 	}
 	h.route("s1", alice)
-	h.route("s2", "")
+	h.route("s2", claude)
 }
 
 func TestSyncDoesNotStartTheHelperOnADeviceWithoutAccounts(t *testing.T) {
@@ -154,7 +154,7 @@ func TestAFailedSaveAfterTheHelperAcceptedIsHealedByTheNextSync(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	h.unchanged(before, "a change that could not be saved")
-	if auth, _ := h.helperAuth("s1"); auth != "alice@example.com-auth" {
+	if auth, _ := h.helperAuth("s1", "codex"); auth != "alice@example.com-auth" {
 		t.Fatalf("the helper did not take the change first: %q", auth)
 	}
 	h.store.saveErr = nil
@@ -322,11 +322,11 @@ func TestRandomAccountJourneysKeepTheHelperAndTheStoreInStep(t *testing.T) {
 			}
 			for _, r := range after.Routes {
 				i := index(after, r.AccountID)
-				if r.AccountID != "" && (i < 0 || after.Accounts[i].Provider != r.Provider || !after.Accounts[i].SignedIn()) {
-					t.Fatalf("seed %d step %d: route %+v names no signed-in account of its provider", seed, step, r)
+				if r.AccountID != "" && (i < 0 || after.Accounts[i].Provider != r.Provider) || r.Kind != "" && (r.AccountID != "" || r.Provider != "codex") {
+					t.Fatalf("seed %d step %d: route %+v names no account of its provider", seed, step, r)
 				}
 				// A Codex session waits rather than move onto a default of the other kind.
-				if r.AccountID == "" && after.Defaults[r.Provider] != "" && r.Provider != "codex" {
+				if waits(after, r) && after.Defaults[r.Provider] != "" && r.Provider != "codex" {
 					t.Fatalf("seed %d step %d: session %s waits although %s has a default", seed, step, r.SessionID, r.Provider)
 				}
 				h.route(string(r.SessionID), r.AccountID)

@@ -589,11 +589,11 @@ func Run() error {
 			return runner.RunPromptSuggestionTask(taskCtx, id, turnID, systemPrompt, prompt)
 		})
 	}
-	// Side chats take the session's account at their own launch, as the main chat does.
+	// Side chats take the session's account at their own launch, as its reviewers do.
 	if accounts, ok := sessMgr.(interface {
-		ApplyAccountEnv(context.Context, domain.SessionID, domain.AgentHarness, map[string]string) error
+		RelatedAccountEnv(context.Context, domain.SessionID, domain.AgentHarness, map[string]string) error
 	}); ok {
-		chatSvc.SetAccountEnv(accounts.ApplyAccountEnv)
+		chatSvc.SetAccountEnv(accounts.RelatedAccountEnv)
 	}
 	if fenced, ok := sessMgr.(interface{ SetPersistentHostReconcileDone(<-chan struct{}) }); ok {
 		fenced.SetPersistentHostReconcileDone(persistentHostsReconciled)
