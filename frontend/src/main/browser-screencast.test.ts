@@ -65,17 +65,21 @@ describe("BrowserScreencast", () => {
 		vi.useFakeTimers();
 		try {
 			const emit = vi.fn();
+			let listener: ((event: unknown, method: string, params: Record<string, unknown>) => void) | undefined;
 			let image = jpeg().toString("base64");
 			const captureTimes: number[] = [];
 			const sendCommand = vi.fn(async (method: string) => {
 				if (method === "Page.captureScreenshot") { captureTimes.push(Date.now()); return { data: image }; }
 				return undefined;
 			});
-			const cast = new BrowserScreencast({ on: vi.fn(), off: vi.fn(), sendCommand }, emit, vi.fn());
+			const cast = new BrowserScreencast({ on: (_event, next) => { listener = next; }, off: vi.fn(), sendCommand }, emit, vi.fn());
 			await cast.start();
 			await vi.advanceTimersByTimeAsync(13000);
 			expect(emit).toHaveBeenCalledTimes(1);
 			expect(captureTimes.slice(1).map((time, i) => time - captureTimes[i])).toEqual([500, 1000, 2000, 4000, 5000]);
+			listener?.({}, "Page.screencastFrame", { sessionId: 7, data: image });
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(captureTimes).toHaveLength(6);
 			image = jpeg(800, 600).toString("base64");
 			cast.requestFrame();
 			await vi.advanceTimersByTimeAsync(500);

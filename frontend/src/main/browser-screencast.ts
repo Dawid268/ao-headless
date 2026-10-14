@@ -138,11 +138,9 @@ export class BrowserScreencast {
 		const sessionId = typeof params.sessionId === "number" ? params.sessionId : undefined;
 		if (sessionId === undefined) return;
 		try {
-			const changed = this.emitJPEG(typeof params.data === "string" ? params.data : "");
-			if (changed || !this.fallbackPending) {
-				this.fallbackDelay = 500;
-				this.lastFrameAt = Date.now();
-			}
+			// Only a changed frame resets backoff. Screenshot-triggered repaints
+			// can arrive after the screenshot promise settles with identical data.
+			this.emitJPEG(typeof params.data === "string" ? params.data : "");
 		} catch (error) {
 			this.fail("BROWSER_CAPTURE_INVALID_FRAME", error instanceof Error ? error.message : "Browser frame was invalid");
 		} finally {
