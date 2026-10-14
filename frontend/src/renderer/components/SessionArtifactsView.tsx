@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronLeft, Copy, FileText, FolderOpen, Globe, SquareTerminal } from "lucide-react";
+import { ChevronDown, ChevronLeft, Copy, FileText, FolderOpen, Globe, SquareTerminal, Trash2 } from "lucide-react";
 import type { OpenArtifactsTargetId } from "../../shared/editor-handoff";
 import { useOpenSessionArtifacts } from "../hooks/useEditorHandoff";
 import { useOpenArtifactPreview } from "../hooks/useOpenArtifactPreview";
-import { sessionArtifactFileQueryOptions } from "../hooks/useSessionWorkspaceFiles";
+import { deleteSessionArtifactFile, sessionArtifactFileQueryOptions } from "../hooks/useSessionWorkspaceFiles";
+import { workspaceQueryKeyForHost } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { formatTimeTerse } from "../lib/format-time";
 import { sessionUiKey } from "../lib/hosts";
 import type { SessionArtifact, WorkspaceSession } from "../types/workspace";
 import { ArtifactFileView } from "./ArtifactFileView";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -72,15 +74,24 @@ function OpenArtifactsFolderButtons({ sessionId }: { sessionId: string }) {
 
 /**
  * The open artifact's name, as a menu: show it in the file manager or a
- * terminal (local sessions only), or copy its contents.
+ * terminal (local sessions only), copy its contents, or delete it.
  */
 function ArtifactMenu({ artifact, hostId, session }: { artifact: SessionArtifact; hostId?: string; session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const open = useOpenSessionArtifacts();
 	const [copyError, setCopyError] = useState("");
+	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	// The artifact directory is on this machine only for a local session.
 	const local = !hostId && !session.cloud;
+	// The deleted file leaves the session's artifact list on the next read.
+	const remove = useMutation({
+		mutationFn: () => deleteSessionArtifactFile({ path: artifact.path, sessionId: session.id, hostId }),
+		onSuccess: async () => {
+			setConfirmingDelete(false);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKeyForHost(hostId) });
+		},
+	});
 	const markdown = /\.(md|markdown)$/i.test(artifact.path);
 	const reveal = (targetId: OpenArtifactsTargetId) => {
 		setCopyError("");
@@ -124,8 +135,35 @@ function ArtifactMenu({ artifact, hostId, session }: { artifact: SessionArtifact
 						<Copy aria-hidden="true" />
 						{t(markdown ? "artifacts.copyMarkdown" : "artifacts.copyContents")}
 					</DropdownMenuItem>
+					{/* Cloud sessions keep their artifacts behind the cloud control plane. */}
+					{session.cloud ? null : (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								className="text-destructive focus:text-destructive [&_svg]:text-destructive focus:[&_svg]:text-destructive"
+								onSelect={() => {
+									remove.reset();
+									setConfirmingDelete(true);
+								}}
+							>
+								<Trash2 aria-hidden="true" />
+								{t("artifacts.delete")}
+							</DropdownMenuItem>
+						</>
+					)}
 				</DropdownMenuContent>
 			</DropdownMenu>
+			<ConfirmDialog
+				busy={remove.isPending}
+				confirmLabel={t("artifacts.delete")}
+				description={t("artifacts.deleteDescription", { name: artifact.name })}
+				destructive
+				error={remove.error?.message ?? null}
+				onConfirm={() => remove.mutate()}
+				onOpenChange={setConfirmingDelete}
+				open={confirmingDelete}
+				title={t("artifacts.deleteTitle")}
+			/>
 			{error ? (
 				<span className="min-w-0 truncate text-caption text-destructive" role="alert" title={error}>
 					{error}

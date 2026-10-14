@@ -4518,6 +4518,54 @@ paths:
       summary: Retry safe source restoration for an agent switch
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/artifact-files:
+    delete:
+      operationId: deleteSessionArtifactFile
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Artifact-directory-relative file path, as listed in the session's
+          artifactFiles.
+        in: query
+        name: path
+        schema:
+          description: Artifact-directory-relative file path, as listed in the session's
+            artifactFiles.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Delete one file from a session's artifact directory and return the
+        session with its refreshed artifact list
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/artifact-files/*:
     get:
       operationId: getSessionArtifactFile

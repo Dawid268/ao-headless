@@ -8,10 +8,11 @@ import type { SessionArtifact, WorkspaceSession } from "../types/workspace";
 import { SessionArtifactsView } from "./SessionArtifactsView";
 import { TooltipProvider } from "./ui/tooltip";
 
-const { openPreviewMock } = vi.hoisted(() => ({ openPreviewMock: vi.fn() }));
+const { deleteArtifactMock, openPreviewMock } = vi.hoisted(() => ({ deleteArtifactMock: vi.fn(), openPreviewMock: vi.fn() }));
 
 vi.mock("../hooks/useOpenArtifactPreview", () => ({ useOpenArtifactPreview: () => openPreviewMock }));
 vi.mock("../hooks/useSessionWorkspaceFiles", () => ({
+	deleteSessionArtifactFile: deleteArtifactMock,
 	sessionArtifactFileQueryOptions: (sessionId: string, path: string) => ({
 		queryKey: ["artifact-file", sessionId, path],
 		queryFn: async () => ({ content: `contents of ${path}` }),
@@ -43,7 +44,10 @@ function renderView(ui: ReactNode) {
 }
 
 describe("SessionArtifactsView", () => {
-	beforeEach(() => openPreviewMock.mockReset());
+	beforeEach(() => {
+		openPreviewMock.mockReset();
+		deleteArtifactMock.mockReset().mockResolvedValue(undefined);
+	});
 
 	it("lists every artifact newest first", () => {
 		renderView(<SessionArtifactsView session={session()} />);
@@ -121,7 +125,7 @@ describe("SessionArtifactsView", () => {
 		expect(screen.getAllByText("plan.md")).toHaveLength(1);
 		await userEvent.click(screen.getByRole("button", { name: "plan.md" }));
 		const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
-		expect(items).toEqual([expect.stringMatching(/^Show in /), expect.stringMatching(/^Show in /), "Copy as Markdown"]);
+		expect(items).toEqual([expect.stringMatching(/^Show in /), expect.stringMatching(/^Show in /), "Copy as Markdown", "Delete artifact"]);
 		await userEvent.click(screen.getAllByRole("menuitem")[0]);
 		await userEvent.click(screen.getByRole("button", { name: "plan.md" }));
 		await userEvent.click(screen.getAllByRole("menuitem")[1]);
@@ -148,11 +152,44 @@ describe("SessionArtifactsView", () => {
 		renderView(<SessionArtifactsView hostId="remote-1" request={{ key: 1, path: "data.json" }} session={session([other])} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "data.json" }));
-		expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy contents"]);
+		expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy contents", "Delete artifact"]);
 		await userEvent.click(screen.getByRole("menuitem", { name: "Copy contents" }));
 
 		await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("contents of data.json"));
 		writeText.mockRestore();
+	});
+
+	it("deletes the open artifact after confirming", async () => {
+		renderView(<SessionArtifactsView request={{ key: 1, path: "reports/plan.md" }} session={session()} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "plan.md" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "Delete artifact" }));
+		const dialog = await screen.findByRole("dialog");
+		expect(dialog).toHaveTextContent("This permanently deletes plan.md");
+		expect(deleteArtifactMock).not.toHaveBeenCalled();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Delete artifact" }));
+
+		await vi.waitFor(() => expect(deleteArtifactMock).toHaveBeenCalledWith({ path: "reports/plan.md", sessionId: "sess-1", hostId: undefined }));
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+	});
+
+	it("keeps the confirm open with the reason when the delete fails", async () => {
+		deleteArtifactMock.mockRejectedValue(new Error("artifact file not found"));
+		renderView(<SessionArtifactsView request={{ key: 1, path: "notes.md" }} session={session()} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "notes.md" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "Delete artifact" }));
+		const dialog = await screen.findByRole("dialog");
+		await userEvent.click(within(dialog).getByRole("button", { name: "Delete artifact" }));
+
+		expect(await within(dialog).findByText("artifact file not found")).toBeInTheDocument();
+	});
+
+	it("does not offer delete for a cloud session", async () => {
+		renderView(<SessionArtifactsView request={{ key: 1, path: "notes.md" }} session={{ ...session(), cloud: { orgId: "org-1" } } as WorkspaceSession} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "notes.md" }));
+		expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy as Markdown"]);
 	});
 
 	it("opens a requested artifact and passes its feedback request through", () => {
