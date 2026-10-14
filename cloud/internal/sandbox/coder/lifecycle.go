@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -195,7 +196,24 @@ func (c *Client) runCleanup(ctx context.Context, ptyURL *url.URL, wait time.Dura
 	query.Set("command", "sh -c "+shellQuote(cleanupHookCommand(c.durableRoot, wait, override)))
 	query.Set("backend_type", "buffered")
 	attemptURL.RawQuery = query.Encode()
-	result, status, err := c.runMarkedCommandOnce(runCtx, &attemptURL, cleanupMarker, wait+cleanupMargin)
+	// Opening the agent's terminal now and then ends at once with no output.
+	// A quick failure like that is retried a few times; the hook's run-once
+	// lock keeps a retry from running the commands twice.
+	var result readyProbeResult
+	var status string
+	var err error
+	for attempt := 1; ; attempt++ {
+		started := time.Now()
+		result, status, err = c.runMarkedCommandOnce(runCtx, &attemptURL, cleanupMarker, wait+cleanupMargin)
+		if err == nil || !errors.Is(err, errTerminalNotReady) || attempt == cleanupTerminalAttempts ||
+			time.Since(started) > cleanupQuickFailure || runCtx.Err() != nil {
+			break
+		}
+		select {
+		case <-runCtx.Done():
+		case <-time.After(cleanupTerminalRetryDelay):
+		}
+	}
 	switch {
 	case err != nil:
 		finish(fmt.Errorf("coder: project cleanup did not report: %w", err), attrs)
@@ -209,6 +227,14 @@ func (c *Client) runCleanup(ctx context.Context, ptyURL *url.URL, wait time.Dura
 		finish(nil, attrs)
 	}
 }
+
+// A Cleanup whose terminal fails within cleanupQuickFailure is retried, up to
+// cleanupTerminalAttempts in all, cleanupTerminalRetryDelay apart.
+const (
+	cleanupTerminalAttempts   = 3
+	cleanupQuickFailure       = 5 * time.Second
+	cleanupTerminalRetryDelay = 2 * time.Second
+)
 
 func pruneCleanupRuns() {
 	cleanupRuns.Range(func(key, value any) bool {
