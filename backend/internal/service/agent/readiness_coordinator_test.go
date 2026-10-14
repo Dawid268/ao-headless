@@ -161,6 +161,29 @@ func TestReadinessCoordinatorStartsWithDeterministicUnknownSnapshots(t *testing.
 	}
 }
 
+func TestCachedAgentReadinessUsesRequestedFreshnessHorizon(t *testing.T) {
+	now := time.Now().UTC()
+	checkedAt := now.Add(-time.Minute)
+	coordinator := newReadinessCoordinator(readinessCoordinatorConfig{
+		Now: func() time.Time { return now },
+		Agents: []agentregistry.HarnessAgent{
+			readinessHarness("codex", "Codex", &readinessTestAgent{}),
+		},
+	})
+	coordinator.entries["codex"].snapshot.Installation = domain.AgentInstallationObservation{
+		State: domain.AgentInstallationNotInstalled, Freshness: domain.AgentReadinessFresh, CheckedAt: &checkedAt,
+	}
+
+	display, ok := coordinator.SnapshotAgent("codex", domain.AgentReadinessPurposeDisplay)
+	if !ok || display.Installation.Freshness != domain.AgentReadinessFresh {
+		t.Fatalf("display snapshot = %#v, found %t; want fresh", display, ok)
+	}
+	launch, ok := coordinator.SnapshotAgent("codex", domain.AgentReadinessPurposeLaunch)
+	if !ok || launch.Installation.Freshness != domain.AgentReadinessStale {
+		t.Fatalf("launch snapshot = %#v, found %t; want stale", launch, ok)
+	}
+}
+
 func TestReadinessCoordinatorEnsureNormalizesInstalledAndAuthorized(t *testing.T) {
 	t.Parallel()
 	agent := &readinessTestAgent{

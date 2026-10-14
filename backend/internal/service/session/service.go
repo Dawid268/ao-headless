@@ -320,14 +320,18 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if s.agentReadiness != nil && cfg.Harness != "" {
 		// Use the readiness already collected on boot or explicit refresh. A
 		// stale or unknown observation must not block a launch attempt.
-		if readiness, ok := s.agentReadiness.CachedAgentReadiness(string(cfg.Harness)); ok {
+		if readiness, ok := s.agentReadiness.CachedAgentReadiness(string(cfg.Harness), domain.AgentReadinessPurposeLaunch); ok {
 			if readiness.Installation.State == domain.AgentInstallationNotInstalled &&
 				readiness.Installation.Freshness == domain.AgentReadinessFresh {
+				s.agentReadiness.InvalidateAgentInstallation(string(cfg.Harness))
+				s.agentReadiness.RecheckAgent(string(cfg.Harness))
 				return domain.Session{}, 0, 0, apierr.Invalid("AGENT_BINARY_NOT_FOUND", "The selected agent harness is not installed", map[string]any{"agentId": cfg.Harness})
 			}
 			if cfg.Harness == domain.HarnessCodex &&
 				readiness.Authentication.State == domain.AgentAuthenticationUnauthorized &&
 				readiness.Authentication.Freshness == domain.AgentReadinessFresh {
+				s.agentReadiness.InvalidateAgentAuthentication(string(cfg.Harness))
+				s.agentReadiness.RecheckAgent(string(cfg.Harness))
 				return domain.Session{}, 0, 0, apierr.Conflict("CODEX_ACCOUNT_AUTH_UNVERIFIED", "Add or sign in to a Codex account in Settings before starting a Codex session", nil)
 			}
 		}

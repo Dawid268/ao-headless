@@ -36,6 +36,7 @@ type fakeAgentReadiness struct {
 	calls                   int
 	agentID                 string
 	purpose                 domain.AgentReadinessPurpose
+	cachedPurpose           domain.AgentReadinessPurpose
 	installationInvalidated []string
 	authInvalidated         []string
 	rechecks                []string
@@ -48,7 +49,8 @@ func (f *fakeAgentReadiness) EnsureAgentReadiness(_ context.Context, agentID str
 	return f.snapshot, f.err
 }
 
-func (f *fakeAgentReadiness) CachedAgentReadiness(string) (domain.AgentReadinessSnapshot, bool) {
+func (f *fakeAgentReadiness) CachedAgentReadiness(_ string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, bool) {
+	f.cachedPurpose = purpose
 	return f.snapshot, true
 }
 
@@ -3010,6 +3012,9 @@ func TestSpawnAllowsStaleMissingHarnessWithoutPreflightReadiness(t *testing.T) {
 	if readiness.calls != 0 {
 		t.Fatalf("preflight readiness calls = %d, want 0", readiness.calls)
 	}
+	if readiness.cachedPurpose != domain.AgentReadinessPurposeLaunch {
+		t.Fatalf("cached readiness purpose = %q, want launch", readiness.cachedPurpose)
+	}
 }
 
 func TestSpawnBlocksFreshMissingHarnessFromCachedReadiness(t *testing.T) {
@@ -3028,6 +3033,11 @@ func TestSpawnBlocksFreshMissingHarnessFromCachedReadiness(t *testing.T) {
 	}
 	if fc.spawnCalls != 0 || readiness.calls != 0 {
 		t.Fatalf("manager.Spawn calls = %d, readiness probes = %d; want both 0", fc.spawnCalls, readiness.calls)
+	}
+	if readiness.cachedPurpose != domain.AgentReadinessPurposeLaunch ||
+		len(readiness.installationInvalidated) != 1 || readiness.installationInvalidated[0] != "codex" ||
+		len(readiness.rechecks) != 1 || readiness.rechecks[0] != "codex" {
+		t.Fatalf("cached purpose = %q, installation invalidations = %#v, rechecks = %#v", readiness.cachedPurpose, readiness.installationInvalidated, readiness.rechecks)
 	}
 }
 func TestSpawnProjectClaudeGatewayTreatsGlobalUnauthorizedAsAdvisory(t *testing.T) {
@@ -3078,6 +3088,11 @@ func TestSpawnBlocksFreshUnauthorizedCodexAccountFromCachedReadiness(t *testing.
 	}
 	if fc.spawnCalls != 0 || readiness.calls != 0 {
 		t.Fatalf("manager.Spawn calls = %d, readiness probes = %d; want both 0", fc.spawnCalls, readiness.calls)
+	}
+	if readiness.cachedPurpose != domain.AgentReadinessPurposeLaunch ||
+		len(readiness.authInvalidated) != 1 || readiness.authInvalidated[0] != "codex" ||
+		len(readiness.rechecks) != 1 || readiness.rechecks[0] != "codex" {
+		t.Fatalf("cached purpose = %q, auth invalidations = %#v, rechecks = %#v", readiness.cachedPurpose, readiness.authInvalidated, readiness.rechecks)
 	}
 }
 

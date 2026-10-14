@@ -54,8 +54,8 @@ func (s *Service) CachedReadiness(ctx context.Context) (Readiness, error) {
 }
 
 // CachedAgentReadiness reads one in-memory observation without probing the agent.
-func (s *Service) CachedAgentReadiness(agentID string) (domain.AgentReadinessSnapshot, bool) {
-	return s.readiness.SnapshotAgent(agentID)
+func (s *Service) CachedAgentReadiness(agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, bool) {
+	return s.readiness.SnapshotAgent(agentID, purpose)
 }
 
 // EnsureReadiness waits for the checks required by purpose. Empty agentIDs

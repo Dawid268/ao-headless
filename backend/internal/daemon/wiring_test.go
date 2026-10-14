@@ -40,7 +40,7 @@ func (p *wiringReadinessProvider) EnsureAgentReadiness(_ context.Context, agentI
 	return p.snapshot, p.err
 }
 
-func (p *wiringReadinessProvider) CachedAgentReadiness(string) (domain.AgentReadinessSnapshot, bool) {
+func (p *wiringReadinessProvider) CachedAgentReadiness(string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, bool) {
 	return p.snapshot, true
 }
 

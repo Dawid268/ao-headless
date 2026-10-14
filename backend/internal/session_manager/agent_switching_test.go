@@ -35,7 +35,7 @@ func (p *switchReadinessProvider) EnsureAgentReadiness(context.Context, string, 
 	return p.snapshot, p.err
 }
 
-func (p *switchReadinessProvider) CachedAgentReadiness(string) (domain.AgentReadinessSnapshot, bool) {
+func (p *switchReadinessProvider) CachedAgentReadiness(string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, bool) {
 	return p.snapshot, true
 }
 
