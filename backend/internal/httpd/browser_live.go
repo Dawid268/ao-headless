@@ -199,7 +199,7 @@ func (h *BrowserLiveHub) serve(w http.ResponseWriter, r *http.Request) {
 	go h.watchPreview(ctx, sessionID)
 
 	writeDone := make(chan error, 1)
-	go func() { writeDone <- h.writeBrowserEvents(ctx, c, sub.Events) }()
+	go func() { writeDone <- h.writeBrowserEvents(ctx, c, sub.Events, sub.Frames) }()
 	readDone := make(chan error, 1)
 	go func() { readDone <- h.readBrowserCommands(ctx, c, sessionID) }()
 	select {
@@ -241,55 +241,65 @@ func (h *BrowserLiveHub) watchPreview(ctx context.Context, sessionID string) {
 	}
 }
 
-func (h *BrowserLiveHub) writeBrowserEvents(ctx context.Context, c *websocket.Conn, events <-chan browserstream.Event) error {
+func (h *BrowserLiveHub) writeBrowserEvents(ctx context.Context, c *websocket.Conn, events, frames <-chan browserstream.Event) error {
 	heartbeat := time.NewTicker(browserLiveHeartbeat)
 	defer heartbeat.Stop()
 	for {
+		var event browserstream.Event
+		var ok bool
+		// Drain queued controls before another frame so navigation state is
+		// delivered promptly even while JPEG traffic is under backpressure.
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-heartbeat.C:
-			pingCtx, cancel := context.WithTimeout(ctx, browserLiveHeartbeat/2)
-			err := c.Ping(pingCtx)
-			cancel()
-			if err != nil {
-				return err
-			}
-		case event, ok := <-events:
-			if !ok {
-				return nil
-			}
-			if event.Frame != nil {
-				frame := event.Frame
-				packet := make([]byte, 22+len(frame.JPEG))
-				packet[0], packet[1] = browserFrameVersion, browserFrameJPEG
-				binary.BigEndian.PutUint64(packet[2:10], frame.Sequence)
-				binary.BigEndian.PutUint64(packet[10:18], uint64(frame.Captured.UnixMilli()))
-				binary.BigEndian.PutUint16(packet[18:20], frame.Width)
-				binary.BigEndian.PutUint16(packet[20:22], frame.Height)
-				copy(packet[22:], frame.JPEG)
-				if err := writeBrowserMessage(ctx, c, websocket.MessageBinary, packet); err != nil {
+		case event, ok = <-events:
+		default:
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-heartbeat.C:
+				pingCtx, cancel := context.WithTimeout(ctx, browserLiveHeartbeat/2)
+				err := c.Ping(pingCtx)
+				cancel()
+				if err != nil {
 					return err
 				}
 				continue
+			case event, ok = <-events:
+			case event, ok = <-frames:
 			}
-			message := map[string]any{"type": event.Type}
-			if len(event.Payload) > 0 {
-				message["payload"] = event.Payload
-			}
-			if event.Code != "" {
-				message["code"] = event.Code
-			}
-			if event.Message != "" {
-				message["message"] = event.Message
-			}
-			payload, marshalErr := json.Marshal(message)
-			if marshalErr != nil {
-				return marshalErr
-			}
-			if err := writeBrowserMessage(ctx, c, websocket.MessageText, payload); err != nil {
+		}
+		if !ok {
+			return nil
+		}
+		if event.Frame != nil {
+			frame := event.Frame
+			packet := make([]byte, 22+len(frame.JPEG))
+			packet[0], packet[1] = browserFrameVersion, browserFrameJPEG
+			binary.BigEndian.PutUint64(packet[2:10], frame.Sequence)
+			binary.BigEndian.PutUint64(packet[10:18], uint64(frame.Captured.UnixMilli()))
+			binary.BigEndian.PutUint16(packet[18:20], frame.Width)
+			binary.BigEndian.PutUint16(packet[20:22], frame.Height)
+			copy(packet[22:], frame.JPEG)
+			if err := writeBrowserMessage(ctx, c, websocket.MessageBinary, packet); err != nil {
 				return err
 			}
+			continue
+		}
+		message := map[string]any{"type": event.Type}
+		if len(event.Payload) > 0 {
+			message["payload"] = event.Payload
+		}
+		if event.Code != "" {
+			message["code"] = event.Code
+		}
+		if event.Message != "" {
+			message["message"] = event.Message
+		}
+		payload, marshalErr := json.Marshal(message)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := writeBrowserMessage(ctx, c, websocket.MessageText, payload); err != nil {
+			return err
 		}
 	}
 }

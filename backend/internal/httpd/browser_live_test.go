@@ -2,6 +2,7 @@ package httpd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserstream"
@@ -197,5 +199,53 @@ func TestBrowserLiveOffersPreviewGeneratedAfterConnection(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("preview polling survived stream cancellation")
+	}
+}
+
+func TestBrowserWriterSendsControlsBeforePendingFrame(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	controls := make(chan browserstream.Event, 2)
+	frames := make(chan browserstream.Event, 1)
+	controls <- browserstream.Event{Type: "state", Payload: []byte(`{"url":""}`)}
+	controls <- browserstream.Event{Type: "state", Payload: []byte(`{"url":"https://example.com"}`)}
+	frames <- browserstream.Event{Frame: &browserstream.Frame{Sequence: 100, Width: 10, Height: 10, Captured: time.Now(), JPEG: []byte{1}}}
+	hub := NewBrowserLiveHub(nil, nil, nil, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_ = hub.writeBrowserEvents(ctx, conn, controls, frames)
+	}))
+	defer server.Close()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); _ = conn.CloseNow() }()
+	for _, wantURL := range []string{"", "https://example.com"} {
+		kind, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != websocket.MessageText {
+			t.Fatalf("received frame before state: %v", kind)
+		}
+		var message struct {
+			Type    string
+			Payload struct{ URL string }
+		}
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type != "state" || message.Payload.URL != wantURL {
+			t.Fatalf("control = %s", data)
+		}
+	}
+	kind, _, err := conn.Read(ctx)
+	if err != nil || kind != websocket.MessageBinary {
+		t.Fatalf("frame kind=%v err=%v", kind, err)
 	}
 }

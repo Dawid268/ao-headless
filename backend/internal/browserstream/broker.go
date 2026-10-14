@@ -15,6 +15,8 @@ import (
 
 const helloTimeout = 5 * time.Second
 
+const controlQueueSize = 16
+
 // ErrUnavailable means the Electron browser host cannot currently serve a stream.
 var ErrUnavailable = errors.New("browser stream host is unavailable")
 
@@ -30,13 +32,20 @@ type Event struct {
 type streamState struct {
 	id        uint32
 	sessionID string
-	subs      map[uint64]chan Event
+	subs      map[uint64]*subscriber
 }
 
-// Subscription receives a latest-value stream for one AO session.
+type subscriber struct {
+	events chan Event
+	frames chan Event
+	closed bool
+}
+
+// Subscription receives ordered control events and latest-value frames for one AO session.
 type Subscription struct {
 	StreamID uint32
 	Events   <-chan Event
+	Frames   <-chan Event
 	close    func()
 }
 
@@ -91,15 +100,15 @@ func (b *Broker) Subscribe(ctx context.Context, sessionID string) (*Subscription
 	stream := b.streams[sessionID]
 	first := stream == nil
 	if first {
-		stream = &streamState{id: b.nextID, sessionID: sessionID, subs: map[uint64]chan Event{}}
+		stream = &streamState{id: b.nextID, sessionID: sessionID, subs: map[uint64]*subscriber{}}
 		b.nextID++
 		b.streams[sessionID] = stream
 		b.byID[stream.id] = stream
 	}
 	b.nextSubID++
 	subID := b.nextSubID
-	ch := make(chan Event, 1)
-	stream.subs[subID] = ch
+	subscriber := &subscriber{events: make(chan Event, controlQueueSize), frames: make(chan Event, 1)}
+	stream.subs[subID] = subscriber
 	streamID := stream.id
 	b.mu.Unlock()
 
@@ -109,7 +118,7 @@ func (b *Broker) Subscribe(ctx context.Context, sessionID string) (*Subscription
 			return nil, err
 		}
 	}
-	sub := &Subscription{StreamID: streamID, Events: ch}
+	sub := &Subscription{StreamID: streamID, Events: subscriber.events, Frames: subscriber.frames}
 	sub.close = func() { b.unsubscribe(sessionID, subID) }
 	return sub, nil
 }
@@ -121,10 +130,13 @@ func (b *Broker) unsubscribe(sessionID string, subID uint64) {
 		b.mu.Unlock()
 		return
 	}
-	ch, ok := stream.subs[subID]
+	subscriber, ok := stream.subs[subID]
 	if ok {
 		delete(stream.subs, subID)
-		close(ch)
+		if !subscriber.closed {
+			close(subscriber.events)
+			close(subscriber.frames)
+		}
 	}
 	last := len(stream.subs) == 0
 	if last {
@@ -266,16 +278,31 @@ func (b *Broker) publish(streamID uint32, event Event) {
 		b.mu.Unlock()
 		return
 	}
-	for _, ch := range stream.subs {
+	for _, subscriber := range stream.subs {
+		if subscriber.closed {
+			continue
+		}
+		if event.Frame == nil {
+			select {
+			case subscriber.events <- event:
+			default:
+				// Disconnect a stalled subscriber rather than silently dropping
+				// a state transition or growing an unbounded control queue.
+				subscriber.closed = true
+				close(subscriber.events)
+				close(subscriber.frames)
+			}
+			continue
+		}
 		select {
-		case ch <- event:
+		case subscriber.frames <- event:
 		default:
 			select {
-			case <-ch:
+			case <-subscriber.frames:
 			default:
 			}
 			select {
-			case ch <- event:
+			case subscriber.frames <- event:
 			default:
 			}
 		}

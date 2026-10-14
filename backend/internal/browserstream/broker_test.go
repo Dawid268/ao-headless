@@ -96,7 +96,7 @@ func TestBrokerAuthenticatesStartsAndPublishesLatestFrame(t *testing.T) {
 	// latest-value subscription.
 	time.Sleep(10 * time.Millisecond)
 	select {
-	case event := <-res.sub.Events:
+	case event := <-res.sub.Frames:
 		if event.Frame == nil || event.Frame.Sequence != 2 {
 			t.Fatalf("latest frame = %+v, want sequence 2", event.Frame)
 		}
@@ -120,4 +120,53 @@ func TestBrokerRejectsBadToken(t *testing.T) {
 	if b.Connected() {
 		t.Fatal("bad-token host became active")
 	}
+}
+
+func TestBrokerFramesCannotEvictControls(t *testing.T) {
+	b := New(nil, "secret")
+	sub := &subscriber{events: make(chan Event, controlQueueSize), frames: make(chan Event, 1)}
+	stream := &streamState{id: 1, sessionID: "s1", subs: map[uint64]*subscriber{1: sub}}
+	b.streams["s1"], b.byID[1] = stream, stream
+	b.publish(1, Event{Type: "state", Payload: []byte(`{"url":""}`)})
+	b.publish(1, Event{Type: "frame", Frame: &Frame{Sequence: 1}})
+	b.publish(1, Event{Type: "state", Payload: []byte(`{"url":"https://example.com"}`)})
+	b.publish(1, Event{Type: "error", Code: "BROWSER_REMOTE_READ_ONLY"})
+	for seq := uint64(2); seq <= 100; seq++ {
+		b.publish(1, Event{Type: "frame", Frame: &Frame{Sequence: seq}})
+	}
+	for _, want := range []string{"state", "state", "error"} {
+		select {
+		case event := <-sub.events:
+			if event.Type != want {
+				t.Fatalf("control = %q, want %q", event.Type, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("control was lost under frame backpressure")
+		}
+	}
+	if frame := <-sub.frames; frame.Frame.Sequence != 100 {
+		t.Fatalf("latest frame = %d", frame.Frame.Sequence)
+	}
+}
+
+func TestBrokerClosesSubscriberOnControlOverflow(t *testing.T) {
+	b := New(nil, "secret")
+	sub := &subscriber{events: make(chan Event, controlQueueSize), frames: make(chan Event, 1)}
+	stream := &streamState{id: 1, sessionID: "s1", subs: map[uint64]*subscriber{1: sub}}
+	b.streams["s1"], b.byID[1] = stream, stream
+	for range controlQueueSize + 1 {
+		b.publish(1, Event{Type: "state"})
+	}
+	if !sub.closed {
+		t.Fatal("stalled subscriber was not closed")
+	}
+	for range controlQueueSize {
+		<-sub.events
+	}
+	if _, ok := <-sub.events; ok {
+		t.Fatal("control channel stayed open")
+	}
+	// Further frames and unsubscribe must not panic after overflow teardown.
+	b.publish(1, Event{Frame: &Frame{Sequence: 1}})
+	b.unsubscribe("s1", 1)
 }

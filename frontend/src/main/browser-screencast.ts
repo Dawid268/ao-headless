@@ -13,6 +13,9 @@ export class BrowserScreencast {
 	private lastFrameAt = 0;
 	private fallbackTimer?: ReturnType<typeof setInterval>;
 	private fallbackPending = false;
+	private fallbackDelay = 500;
+	private lastJPEG?: Buffer;
+	private inputGeneration = 0;
 	private readonly listener: (event: unknown, method: string, params: Record<string, unknown>) => void;
 
 	constructor(
@@ -20,6 +23,7 @@ export class BrowserScreencast {
 		private readonly emit: (frame: BrowserLiveFrame) => void,
 		private readonly fail: (code: string, message: string) => void,
 		private readonly viewport: () => { width: number; height: number } = () => ({ width: 1280, height: 720 }),
+		private readonly needsHiddenPaint: () => boolean = () => true,
 	) {
 		this.listener = (_event, method, params) => {
 			if (method !== "Page.screencastFrame" || this.stopped) return;
@@ -62,6 +66,13 @@ export class BrowserScreencast {
 		}
 	}
 
+	// Input wakes a backed-off hidden page on the next capture tick.
+	requestFrame(): void {
+		this.inputGeneration += 1;
+		this.fallbackDelay = 500;
+		this.lastFrameAt = Date.now() - 500;
+	}
+
 	private removeListener() {
 		if (this.debug.off) this.debug.off("message", this.listener);
 		else this.debug.removeListener?.("message", this.listener);
@@ -71,8 +82,9 @@ export class BrowserScreencast {
 	// window is minimized. Request a clipped paint without unhiding the view,
 	// with at most one screenshot in flight.
 	private async captureHiddenFrame(): Promise<void> {
-		if (this.stopped || this.fallbackPending || Date.now() - this.lastFrameAt < 500) return;
+		if (this.stopped || this.fallbackPending || Date.now() - this.lastFrameAt < this.fallbackDelay) return;
 		this.fallbackPending = true;
+		const inputGeneration = this.inputGeneration;
 		try {
 			const { width, height } = this.viewport();
 			const scale = Math.min(1, 1280 / width, 720 / height);
@@ -83,10 +95,17 @@ export class BrowserScreencast {
 			const x = metrics?.cssVisualViewport?.pageX ?? 0;
 			const y = metrics?.cssVisualViewport?.pageY ?? 0;
 			const result = await this.debug.sendCommand("Page.captureScreenshot", {
-				format: "jpeg", quality: 70, fromSurface: true, captureBeyondViewport: true,
+				format: "jpeg", quality: 70, fromSurface: true,
+				captureBeyondViewport: this.needsHiddenPaint(),
 				clip: { x, y, width, height, scale },
 			}) as { data?: string };
-			if (!this.stopped && typeof result?.data === "string") this.emitJPEG(result.data);
+			if (!this.stopped && typeof result?.data === "string") {
+				const changed = this.emitJPEG(result.data);
+				if (inputGeneration === this.inputGeneration) {
+					this.fallbackDelay = changed ? 500 : Math.min(5000, this.fallbackDelay * 2);
+					this.lastFrameAt = Date.now();
+				}
+			}
 		} catch {
 			// Navigation or teardown can temporarily remove the capture target.
 			// Retry on the next tick; the stream owner reports target closure.
@@ -95,11 +114,14 @@ export class BrowserScreencast {
 		}
 	}
 
-	private emitJPEG(encoded: string): void {
-		if (this.stopped) return;
+	private emitJPEG(encoded: string): boolean {
+		if (this.stopped) return false;
 		const jpeg = Buffer.from(encoded, "base64");
 		if (jpeg.byteLength === 0 || jpeg.byteLength > 2 << 20) throw new Error("Browser frame is empty or too large");
+		if (this.lastJPEG?.equals(jpeg)) return false;
 		const dimensions = jpegDimensions(jpeg);
+		this.lastJPEG = jpeg;
+		this.fallbackDelay = 500;
 		this.sequence += 1n;
 		this.lastFrameAt = Date.now();
 		this.emit({
@@ -109,13 +131,18 @@ export class BrowserScreencast {
 			height: dimensions.height,
 			jpeg,
 		});
+		return true;
 	}
 
 	private async consume(params: Record<string, unknown>): Promise<void> {
 		const sessionId = typeof params.sessionId === "number" ? params.sessionId : undefined;
 		if (sessionId === undefined) return;
 		try {
-			this.emitJPEG(typeof params.data === "string" ? params.data : "");
+			const changed = this.emitJPEG(typeof params.data === "string" ? params.data : "");
+			if (changed || !this.fallbackPending) {
+				this.fallbackDelay = 500;
+				this.lastFrameAt = Date.now();
+			}
 		} catch (error) {
 			this.fail("BROWSER_CAPTURE_INVALID_FRAME", error instanceof Error ? error.message : "Browser frame was invalid");
 		} finally {

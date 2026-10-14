@@ -3372,6 +3372,7 @@ export function createBrowserViewHost(
 			},
 			(code, message) => live.sink.error(code, message),
 			() => liveViewport(session),
+			() => !session.visible || options.mainWindow.isMinimized?.() === true,
 		);
 		live.screencast = cast;
 		live.tabId = entry.tabId;
@@ -3454,6 +3455,7 @@ export function createBrowserViewHost(
 			assertRemoteWritable(session, scrollOnly);
 			const entry = activeEntry(session);
 			await entry.ready;
+			session.live?.screencast?.requestFrame();
 			const bounds = liveViewport(session);
 			if (input.kind === "pointer") {
 				if (!Number.isFinite(input.x) || !Number.isFinite(input.y) || input.x < 0 || input.x > 1 || input.y < 0 || input.y > 1) {
