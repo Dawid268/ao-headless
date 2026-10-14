@@ -21,14 +21,14 @@ import (
 )
 
 // TestHelperProcessFixture is the helper the tests below start: the test
-// binary run again through a wrapper script, answering only /ao/status.
+// binary run again through a wrapper script, answering /ao/status and /ao/stop.
 func TestHelperProcessFixture(t *testing.T) {
 	if os.Getenv("AO_HELPER_FIXTURE") != "1" {
 		return
 	}
-	args := os.Args[len(os.Args)-4:]
-	root, port := args[1], args[3]
-	if args[0] != "--data-dir" || args[2] != "--port" || len(os.Getenv("AO_PROXY_CONTROL_KEY")) != 64 || len(os.Getenv("AO_PROXY_INFERENCE_KEY")) != 64 {
+	args := os.Args[len(os.Args)-6:]
+	root, port, build := args[1], args[3], args[5]
+	if args[0] != "--data-dir" || args[2] != "--port" || args[4] != "--build" || len(os.Getenv("AO_PROXY_CONTROL_KEY")) != 64 || len(os.Getenv("AO_PROXY_INFERENCE_KEY")) != 64 {
 		os.Exit(2)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
@@ -45,7 +45,18 @@ func TestHelperProcessFixture(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"protocol_version":3}`))
+		if r.URL.Path == "/ao/stop" {
+			if os.Getenv("AO_HELPER_FIXTURE_BUSY") == "1" {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = listener.Close()
+			go func() { time.Sleep(50 * time.Millisecond); os.Exit(0) }()
+			return
+		}
+		status, _ := json.Marshal(map[string]any{"protocol_version": 3, "build": build})
+		_, _ = w.Write(status)
 	}))
 }
 
@@ -60,22 +71,28 @@ type fixtureRecord struct {
 func processClient(t *testing.T) *Client {
 	t.Helper()
 	t.Setenv("AO_HELPER_FIXTURE", "1")
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
-	wrapper := filepath.Join(root, "ao-proxy-host")
-	script := "#!/bin/sh\nexec '" + self + "' -test.run='^TestHelperProcessFixture$' -- \"$@\"\n"
-	if err = os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	c, err := New(root, wrapper)
+	c, err := New(root, fixtureBinary(t, root, "ao-proxy-host", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { stopFixture(t, c.root) })
 	return c
+}
+
+// fixtureBinary writes a wrapper that runs the fixture; another comment is another build.
+func fixtureBinary(t *testing.T, root, name, comment string) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(root, name)
+	script := "#!/bin/sh\n#" + comment + "\nexec '" + self + "' -test.run='^TestHelperProcessFixture$' -- \"$@\"\n"
+	if err = os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return wrapper
 }
 
 func readFixture(t *testing.T, root string) (record fixtureRecord, raw string) {
@@ -111,8 +128,8 @@ func TestHelperStartsDetachedIsReusedAndRestartsOnTheSameIdentity(t *testing.T) 
 		t.Fatal(err)
 	}
 	first, raw := readFixture(t, c.root)
-	wantArgs := []string{"--data-dir", c.root, "--port", strconv.Itoa(c.id.Port)}
-	if first.PID == os.Getpid() || first.Session != first.PID || first.Writable != c.root || !reflect.DeepEqual(first.Args[len(first.Args)-4:], wantArgs) {
+	wantArgs := []string{"--data-dir", c.root, "--port", strconv.Itoa(c.id.Port), "--build", c.build()}
+	if len(c.build()) != 16 || first.PID == os.Getpid() || first.Session != first.PID || first.Writable != c.root || !reflect.DeepEqual(first.Args[len(first.Args)-6:], wantArgs) {
 		t.Fatalf("helper was not started detached with its own arguments: %+v", first)
 	}
 	// The keys travel in the environment; the fixture exits without them.
@@ -126,8 +143,8 @@ func TestHelperStartsDetachedIsReusedAndRestartsOnTheSameIdentity(t *testing.T) 
 			t.Fatalf("%s: mode=%v err=%v", private, stat, err)
 		}
 	}
-	// A second daemon finds the helper running and never starts its own.
-	second, err := New(c.root, "/must-never-run")
+	// A second daemon of the same build finds the helper running and never starts its own.
+	second, err := New(c.root, c.binary)
 	if err != nil || second.id != c.id {
 		t.Fatalf("second daemon identity err=%v", err)
 	}
@@ -142,8 +159,49 @@ func TestHelperStartsDetachedIsReusedAndRestartsOnTheSameIdentity(t *testing.T) 
 		t.Fatal(err)
 	}
 	restarted, _ := readFixture(t, c.root)
-	if reloaded, err := New(c.root, ""); err != nil || reloaded.id != c.id || restarted.PID == first.PID || !reflect.DeepEqual(restarted.Args[len(restarted.Args)-4:], wantArgs) {
+	if reloaded, err := New(c.root, ""); err != nil || reloaded.id != c.id || restarted.PID == first.PID || !reflect.DeepEqual(restarted.Args[len(restarted.Args)-6:], wantArgs) {
 		t.Fatalf("restart changed the identity or reused a dead helper: err=%v", err)
+	}
+}
+
+func TestAHelperOfAnotherBuildIsReplacedOnceIdle(t *testing.T) {
+	old := processClient(t)
+	if err := old.ApplyRoutes(ctx, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := readFixture(t, old.root)
+	updated, err := New(old.root, fixtureBinary(t, old.root, "ao-proxy-host-updated", "update"))
+	if err != nil || updated.build() == old.build() {
+		t.Fatalf("the updated binary is not another build: err=%v", err)
+	}
+	if err = updated.ApplyRoutes(ctx, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	now, _ := readFixture(t, old.root)
+	if now.PID == first.PID || now.Args[len(now.Args)-1] != updated.build() {
+		t.Fatalf("the helper of the old build still serves: %+v", now)
+	}
+	if syscall.Kill(first.PID, 0) == nil {
+		t.Fatal("the old helper did not exit")
+	}
+}
+
+func TestABusyHelperOfAnotherBuildServesOn(t *testing.T) {
+	t.Setenv("AO_HELPER_FIXTURE_BUSY", "1")
+	old := processClient(t)
+	if err := old.ApplyRoutes(ctx, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := readFixture(t, old.root)
+	updated, err := New(old.root, fixtureBinary(t, old.root, "ao-proxy-host-updated", "update"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = updated.ApplyRoutes(ctx, nil, nil); err != nil {
+		t.Fatalf("a busy helper of another build refused the call: %v", err)
+	}
+	if now, _ := readFixture(t, old.root); now.PID != first.PID {
+		t.Fatal("a busy helper was replaced")
 	}
 }
 

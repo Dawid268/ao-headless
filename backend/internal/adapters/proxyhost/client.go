@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,9 @@ import (
 )
 
 var errDown = errors.New("account helper is not running")
+
+// errStale is a helper started from another build of its binary, such as one from before an AO update.
+var errStale = errors.New("account helper is from another build")
 
 // statusError is the HTTP status the helper refused a call with.
 type statusError int
@@ -59,6 +63,8 @@ type Client struct {
 	id           identity
 	http         *http.Client
 	relays       sync.Map
+	buildOnce    sync.Once
+	buildID      string
 }
 
 // New loads or creates the helper's identity under root; an empty binary is the one beside the daemon.
@@ -110,6 +116,20 @@ func newIdentity(path string) ([]byte, error) {
 	return data, hookutil.AtomicWriteFile(path, data, 0o600)
 }
 
+// build names the helper binary by its contents; "" when it cannot be read.
+func (c *Client) build() string {
+	c.buildOnce.Do(func() {
+		if f, err := os.Open(c.binary); err == nil {
+			defer func() { _ = f.Close() }()
+			sum := sha256.New()
+			if _, err = io.Copy(sum, f); err == nil {
+				c.buildID = hex.EncodeToString(sum.Sum(nil))[:16]
+			}
+		}
+	})
+	return c.buildID
+}
+
 // Endpoint is the loopback address sessions send model requests to.
 func (c *Client) Endpoint() string { return "http://127.0.0.1:" + strconv.Itoa(c.id.Port) }
 
@@ -156,13 +176,33 @@ func (c *Client) probe(ctx context.Context) error {
 	if at(status, "protocol_version") != 3.0 {
 		return errors.New("account helper protocol is incompatible; update AO after stopping its sessions")
 	}
+	if build := c.build(); build != "" && at(status, "build") != build {
+		return errStale
+	}
 	return nil
+}
+
+// replace stops a helper of another build at a moment no request runs through it, so the next start runs this build.
+func (c *Client) replace(ctx context.Context) error {
+	// Busy, or a build from before /ao/stop: it serves on, and a later call asks again.
+	if c.do(ctx, http.MethodPost, "/ao/stop", nil, nil) != nil {
+		return nil
+	}
+	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline) && ctx.Err() == nil; time.Sleep(100 * time.Millisecond) {
+		if err := c.probe(ctx); errors.Is(err, errDown) {
+			return err
+		}
+	}
+	return cmp.Or(ctx.Err(), errors.New("account helper of another build did not stop"))
 }
 
 // call starts the helper when nothing is listening, then sends the request.
 func (c *Client) call(ctx context.Context, method, path string, body, out any, loginID ...string) error {
 	c.mu.Lock()
 	err := c.probe(ctx)
+	if errors.Is(err, errStale) {
+		err = c.replace(ctx)
+	}
 	if errors.Is(err, errDown) && ctx.Err() == nil {
 		err = c.start(ctx)
 	}
@@ -180,7 +220,7 @@ func (c *Client) start(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = log.Close() }()
-	cmd := process.Command(c.binary, "--data-dir", c.root, "--port", strconv.Itoa(c.id.Port))
+	cmd := process.Command(c.binary, "--data-dir", c.root, "--port", strconv.Itoa(c.id.Port), "--build", c.build())
 	cmd.Dir, cmd.Stdout, cmd.Stderr = c.root, log, log
 	cmd.Env = append(os.Environ(), "AO_PROXY_CONTROL_KEY="+c.id.ControlKey, "AO_PROXY_INFERENCE_KEY="+c.id.InferenceKey, "WRITABLE_PATH="+c.root, "MANAGEMENT_PASSWORD=")
 	cmd.SysProcAttr = detached
