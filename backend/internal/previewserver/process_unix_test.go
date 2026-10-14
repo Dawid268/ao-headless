@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -198,4 +200,51 @@ func waitUntil(t *testing.T, timeout time.Duration, done func() bool, message st
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal(message)
+}
+
+// On Linux the launch identity is clock ticks since boot, which a wall-clock
+// step (a VM resumed from a pause) does not move; ps's lstart moves with it.
+func TestPreviewProcessStartTimeUsesBootTicksOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("boot ticks come from /proc")
+	}
+	cmd := startSleeper(t, "sleep", "60")
+	want := bootTicksPrefix + bootID() + "+"
+	if got := previewProcessStartTime(cmd.Process.Pid); bootID() == "" || !strings.HasPrefix(got, want) {
+		t.Fatalf("start time = %q, want %s<ticks>", got, want)
+	}
+}
+
+// The registry outlives a reboot, and ticks since boot repeat across boots: a
+// record from another boot must not match a process that started at the same
+// tick in this one.
+func TestSignalPreviewGroupRefusesRecordFromAnotherBoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("boot ticks come from /proc")
+	}
+	cmd := startSleeper(t, "sleep", "60")
+	ticks := strings.TrimPrefix(previewProcessStartTime(cmd.Process.Pid), bootTicksPrefix+bootID()+"+")
+	otherBoot := bootTicksPrefix + "00000000-0000-0000-0000-000000000000+" + ticks
+	if err := signalPreviewGroup(cmd.Process.Pid, otherBoot, syscall.SIGKILL); !errors.Is(err, errStalePreviewPID) {
+		t.Fatalf("signalPreviewGroup = %v, want errStalePreviewPID", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !sleeperRunning(t, cmd.Process.Pid) {
+		t.Fatal("a record from another boot killed a live process")
+	}
+}
+
+// A preview recorded with ps's lstart (macOS, or Linux before boot ticks)
+// can still be stopped.
+func TestSignalPreviewGroupAcceptsLstartRecord(t *testing.T) {
+	cmd := startSleeper(t, "sleep", "60")
+	recorded := psStartTime(cmd.Process.Pid)
+	if recorded == "" {
+		t.Fatal("ps reported no start time")
+	}
+	if err := signalPreviewGroup(cmd.Process.Pid, recorded, syscall.SIGKILL); err != nil {
+		t.Fatalf("signalPreviewGroup: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return !sleeperRunning(t, cmd.Process.Pid) },
+		"preview recorded with lstart was not killed")
 }
