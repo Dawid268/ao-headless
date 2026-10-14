@@ -25,9 +25,10 @@ func (s *Service) SwitchAgent(ctx context.Context, id domain.SessionID, in Switc
 		IdempotencyKey: in.IdempotencyKey,
 	})
 	if err != nil {
-		apiErr := toAPIError(err)
-		s.recordAgentSwitched(ctx, id, domain.AgentSwitch{IdempotencyKey: in.IdempotencyKey, TargetHarness: in.TargetHarness}, actionStatusForError(err), apiErr)
-		return domain.AgentSwitch{}, apiErr
+		// Admission failed before a durable switch existed. Validation
+		// rejections are not actions. A switch that was admitted and later
+		// failed is recorded by observeSettledAgentSwitch.
+		return domain.AgentSwitch{}, toAPIError(err)
 	}
 	status := domain.ActivityStatusRunning
 	switch switchRecord.State {

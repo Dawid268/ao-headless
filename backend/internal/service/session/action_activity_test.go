@@ -239,6 +239,17 @@ func TestRenameCycleKeepsEachMutation(t *testing.T) {
 	}
 }
 
+func TestRejectedSwitchWritesNothing(t *testing.T) {
+	svc, st, fc := actionFixture(t)
+	fc.switchErr = errors.New("unsupported switch harness")
+	if _, err := svc.SwitchAgent(context.Background(), "mer-1", SwitchAgentInput{TargetHarness: "notarealharness"}); err == nil {
+		t.Fatal("expected rejection")
+	}
+	if got := actionsNamed(st.activities, actionSessionAgentSwitched); len(got) != 0 {
+		t.Fatalf("rejected switch wrote %+v", got)
+	}
+}
+
 func TestSwitchActivitySettlesWhenDurableSwitchFinishes(t *testing.T) {
 	svc, st, fc := actionFixture(t)
 	ctx := context.Background()
