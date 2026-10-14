@@ -184,9 +184,8 @@ func (c *Client) probe(ctx context.Context) error {
 
 // replace stops a helper of another build at a moment no request runs through it, so the next start runs this build.
 func (c *Client) replace(ctx context.Context) error {
-	// Busy, or a build from before /ao/stop: it serves on, and a later call asks again.
-	if c.do(ctx, http.MethodPost, "/ao/stop", nil, nil) != nil {
-		return nil
+	if err := c.do(ctx, http.MethodPost, "/ao/stop", nil, nil); err != nil {
+		return nil //nolint:nilerr // busy, or a build from before /ao/stop: it serves on, and a later call asks again
 	}
 	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline) && ctx.Err() == nil; time.Sleep(100 * time.Millisecond) {
 		if err := c.probe(ctx); errors.Is(err, errDown) {

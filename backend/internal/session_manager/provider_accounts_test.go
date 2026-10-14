@@ -100,7 +100,7 @@ func TestAccountEnvIsAddedOnlyToManagedLaunches(t *testing.T) {
 		if !errors.Is(err, tc.err) || env["PATH"] != "/agent-bin" || env["ANTHROPIC_API_KEY"] != tc.key || (tc.key == "") != (env["AO_PROXY_TICKET"] == "private") {
 			t.Errorf("%s: env=%v err=%v", name, env, err)
 		}
-		if _, managed, err := m.sessionAccount(context.Background(), "s"); managed != (name == "managed") && err == nil {
+		if managed, err := m.sessionManaged(context.Background(), "s"); managed != (name == "managed") && err == nil {
 			t.Errorf("%s: managed=%v", name, managed)
 		}
 	}

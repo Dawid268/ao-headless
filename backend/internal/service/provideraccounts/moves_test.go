@@ -51,9 +51,9 @@ func TestACodexSessionMovesOnlyBetweenAccountsOfOneKind(t *testing.T) {
 	}
 	h.route("s2", "")
 	// Claude has no such binding.
-	max := h.signIn("claude", "max@example.com")
+	subscription := h.signIn("claude", "max@example.com")
 	claudeKey := h.addKey("claude", "Console key", "0")
-	if err := limit(max, claudeKey); err != nil {
+	if err := limit(subscription, claudeKey); err != nil {
 		t.Fatalf("claude plan to key: %v", err)
 	}
 }

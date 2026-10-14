@@ -1,6 +1,7 @@
 package provideraccounts
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -60,7 +61,7 @@ func TestAProviderWithNoDefaultKeepsTheComputersOwnSetup(t *testing.T) {
 	if _, managed, err := h.svc.ResolveAccount(h.ctx, domain.HarnessCodex, ""); managed || err != nil {
 		t.Fatalf("codex has no account: managed=%t err=%v", managed, err)
 	}
-	if _, _, err := h.svc.ResolveAccount(h.ctx, domain.HarnessCodex, alice); err != ports.ErrProviderAccountIncompatible {
+	if _, _, err := h.svc.ResolveAccount(h.ctx, domain.HarnessCodex, alice); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
 		t.Fatalf("an account of another provider named outright: err=%v", err)
 	}
 }

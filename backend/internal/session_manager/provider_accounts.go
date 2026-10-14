@@ -37,12 +37,13 @@ func (m *Manager) ApplyAccountEnv(ctx context.Context, id domain.SessionID, harn
 	return m.applyAccountEnv(ctx, id, harness, env)
 }
 
-// sessionAccount is a session's route; false is a session whose sign-in Account Manager does not supply.
-func (m *Manager) sessionAccount(ctx context.Context, id domain.SessionID) (domain.ProviderSessionRoute, bool, error) {
+// sessionManaged reports a session whose sign-in Account Manager supplies.
+func (m *Manager) sessionManaged(ctx context.Context, id domain.SessionID) (bool, error) {
 	if m.accounts == nil {
-		return domain.ProviderSessionRoute{}, false, nil
+		return false, nil
 	}
-	return m.accounts.SessionAccount(ctx, id)
+	_, managed, err := m.accounts.SessionAccount(ctx, id)
+	return managed, err
 }
 
 func (m *Manager) forgetAccount(ctx context.Context, id domain.SessionID) error {
@@ -113,7 +114,7 @@ func (m *Manager) MigrateLegacySessions(ctx context.Context) (int, error) {
 				continue
 			}
 			// One whose account cannot be read is listed too, to be looked at again.
-			if _, managed, err := m.sessionAccount(ctx, rec.ID); err != nil || !managed {
+			if managed, err := m.sessionManaged(ctx, rec.ID); err != nil || !managed {
 				m.legacyLeft = append(m.legacyLeft, rec.ID)
 			}
 		}
@@ -147,7 +148,7 @@ func (m *Manager) SessionTurnEnded(rec domain.SessionRecord) {
 		defer m.agentSwitchWorkers.Done()
 		ctx, cancel := context.WithTimeout(m.backgroundContext, 2*time.Minute)
 		defer cancel()
-		if _, managed, err := m.sessionAccount(ctx, rec.ID); err != nil || managed {
+		if managed, err := m.sessionManaged(ctx, rec.ID); err != nil || managed {
 			return
 		}
 		if _, err := m.moveLegacySession(ctx, rec.ID); err != nil {
@@ -190,7 +191,7 @@ func (m *Manager) moveLegacySession(ctx context.Context, id domain.SessionID) (b
 		m.legacyExited.Delete(id)
 		return false, nil
 	}
-	if _, managed, err := m.sessionAccount(ctx, id); err != nil || managed {
+	if managed, err := m.sessionManaged(ctx, id); err != nil || managed {
 		return err != nil, err
 	}
 	// With no default to move onto it keeps the computer's own setup; a restart would change nothing.
@@ -212,7 +213,7 @@ func (m *Manager) moveLegacySession(ctx context.Context, id domain.SessionID) (b
 			m.legacyExited.Store(id, true) // its start is tried again at each check
 			return true, err
 		}
-		_, managed, err := m.sessionAccount(ctx, id)
+		managed, err := m.sessionManaged(ctx, id)
 		return !managed, err
 	}
 	if rec.Activity.State != domain.ActivityIdle || rec.Metadata.RuntimeLaunchID == "" ||
@@ -246,7 +247,7 @@ func (m *Manager) exitLegacyTerminal(ctx context.Context, rec domain.SessionReco
 		return false, err
 	}
 	if !adopted { // no default after all: the agent keeps its own setup and keeps running
-		if _, managed, err := m.sessionAccount(ctx, rec.ID); err != nil || !managed {
+		if managed, err := m.sessionManaged(ctx, rec.ID); err != nil || !managed {
 			return false, err
 		}
 	}
