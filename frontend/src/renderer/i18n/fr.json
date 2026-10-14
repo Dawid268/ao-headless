@@ -172,6 +172,7 @@
 	"browser.find.placeholder": "Rechercher dans la page",
 	"browser.find.previous": "Résultat précédent",
 	"browser.annotate": "Annoter la page",
+	"browser.annotateAgentTab": "L’annotation fonctionne dans vos onglets, pas dans ceux de l’agent",
 	"browser.annotationActive": "Annotation en cours",
 	"browser.annotationCount_one": "{{count}} annotation",
 	"browser.annotationCount_other": "{{count}} annotations",

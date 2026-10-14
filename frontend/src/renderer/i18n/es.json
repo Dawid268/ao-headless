@@ -172,6 +172,7 @@
 	"browser.find.placeholder": "Buscar en la página",
 	"browser.find.previous": "Coincidencia anterior",
 	"browser.annotate": "Anotar página",
+	"browser.annotateAgentTab": "Anotar funciona en tus pestañas, no en las del agente",
 	"browser.annotationActive": "Anotando",
 	"browser.annotationCount_one": "{{count}} anotación",
 	"browser.annotationCount_other": "{{count}} anotaciones",

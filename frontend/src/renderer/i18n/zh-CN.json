@@ -172,6 +172,7 @@
 	"browser.find.placeholder": "在页面中查找",
 	"browser.find.previous": "上一个匹配项",
 	"browser.annotate": "标注页面",
+	"browser.annotateAgentTab": "标注仅适用于你自己的标签，不适用于代理的标签",
 	"browser.annotationActive": "正在标注",
 	"browser.annotationCount_one": "{{count}} 条标注",
 	"browser.annotationCount_other": "{{count}} 条标注",

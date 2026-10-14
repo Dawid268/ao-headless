@@ -1038,15 +1038,31 @@ export function useBrowserView({
 	// streamed) is part of the session's surface: main shows it as one tab per
 	// agent page. It is derived from the host whenever the view is built or
 	// the host reconnects, not remembered: a reopened window brings it back.
+	// A host with no agent browser to show yet (starting, redeploying, or not
+	// set up) is asked again, backing off, while the view stays.
 	useEffect(() => {
 		if (!hasNativeBrowser || !origin || !viewId || viewIdRef.current !== viewId || terminated) return;
 		let cancelled = false;
-		void aoBridge.remotes.agentBrowserUrl(origin.hostId, origin.sessionId).then(async (url) => {
-			if (cancelled || !url || viewIdRef.current !== viewId) return;
-			const state = await window.ao!.browser.openTab({ viewId, url });
-			if (viewIdRef.current === viewId) setTabsState(state);
-		}).catch((error) => console.warn("Unable to open the agent browser", error));
-		return () => { cancelled = true; };
+		let retry = 0;
+		const ask = (attempt: number) => {
+			void aoBridge.remotes.agentBrowserUrl(origin.hostId, origin.sessionId).then(async (url) => {
+				if (cancelled || viewIdRef.current !== viewId) return;
+				// ponytail: six more tries over about two minutes, then the next
+				// session switch or reconnect asks afresh; main could instead say
+				// when the agent browser comes up.
+				if (!url) {
+					if (attempt < 6) retry = window.setTimeout(() => ask(attempt + 1), 2_000 * 2 ** attempt);
+					return;
+				}
+				const state = await window.ao!.browser.openTab({ viewId, url });
+				if (viewIdRef.current === viewId) setTabsState(state);
+			}).catch((error) => console.warn("Unable to open the agent browser", error));
+		};
+		ask(0);
+		return () => {
+			cancelled = true;
+			window.clearTimeout(retry);
+		};
 	}, [hasNativeBrowser, origin?.hostId, origin?.sessionId, origin?.proxyBase, terminated, viewId]);
 
 	const clear = useCallback(() => {

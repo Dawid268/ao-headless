@@ -1449,6 +1449,23 @@ describe("BrowserPanel", () => {
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeDisabled();
 	});
 
+	it("disables annotation mode on an agent tab, whose page is its viewer's picture", async () => {
+		hookState.navState = { ...hookState.navState, url: "https://en.wikipedia.org/wiki/Starfish" };
+		const agentTab = { id: "a1", url: "https://en.wikipedia.org/wiki/Starfish", title: "Starfish", active: true, remote: { tabId: "R1" } };
+		hookState.tabs = [agentTab];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const button = screen.getByRole("button", { name: /annotate/i });
+		expect(button).toBeDisabled();
+		// The tooltip says why.
+		fireEvent.pointerMove(button.closest('[data-slot="tooltip-trigger"]')!, { pointerType: "mouse" });
+		await waitFor(() =>
+			expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent(
+				"Annotate works in your tabs, not the agent's",
+			),
+		);
+	});
+
 	it("adds an annotation control row below the tab row while keeping tabs visible", async () => {
 		hookState.navState = { ...hookState.navState, url: "https://example.test/docs" };
 		hookState.annotationMode = true;

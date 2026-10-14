@@ -1611,6 +1611,50 @@ describe("useBrowserView", () => {
 			expect(browser.openTab).not.toHaveBeenCalled();
 		});
 
+		it("asks again, backing off, for an agent browser that is not up yet", async () => {
+			vi.useFakeTimers();
+			try {
+				const browser = setupBridge();
+				// Redeploying, then up.
+				const lookup = vi.spyOn(aoBridge.remotes, "agentBrowserUrl").mockResolvedValueOnce("").mockResolvedValueOnce("").mockResolvedValue(agentUrl);
+				renderHook(() => useBrowserView(remote));
+				await act(() => vi.advanceTimersByTimeAsync(0));
+				expect(lookup).toHaveBeenCalledTimes(1);
+				await act(() => vi.advanceTimersByTimeAsync(2_000));
+				expect(lookup).toHaveBeenCalledTimes(2);
+				await act(() => vi.advanceTimersByTimeAsync(3_999));
+				expect(lookup).toHaveBeenCalledTimes(2);
+				await act(() => vi.advanceTimersByTimeAsync(1));
+				expect(lookup).toHaveBeenCalledTimes(3);
+				expect(browser.openTab).toHaveBeenCalledWith({ viewId, url: agentUrl });
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it("stops asking for the agent browser after a while, and as soon as the view goes", async () => {
+			vi.useFakeTimers();
+			try {
+				setupBridge();
+				const lookup = vi.spyOn(aoBridge.remotes, "agentBrowserUrl").mockResolvedValue("");
+				const view = renderHook(() => useBrowserView(remote));
+				await act(() => vi.advanceTimersByTimeAsync(0));
+				await act(() => vi.advanceTimersByTimeAsync(60 * 60_000));
+				// Six more tries, 2 s to 64 s apart: about two minutes.
+				expect(lookup).toHaveBeenCalledTimes(7);
+				view.unmount();
+				lookup.mockClear();
+				const next = renderHook(() => useBrowserView(remote));
+				await act(() => vi.advanceTimersByTimeAsync(0));
+				expect(lookup).toHaveBeenCalledTimes(1);
+				next.unmount();
+				await act(() => vi.advanceTimersByTimeAsync(60 * 60_000));
+				expect(lookup).toHaveBeenCalledTimes(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it("opens a link in the person's own tab, never in an agent tab", async () => {
 			const browser = setupBridge();
 			vi.spyOn(aoBridge.remotes, "agentBrowserUrl").mockResolvedValue("");

@@ -457,7 +457,9 @@ export function BrowserPanelView({
 		annotationQueue;
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
-	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
+	// Not on an agent tab: its page is its viewer's picture of the agent's page.
+	const onAgentTab = Boolean(tabs.find((tab) => tab.active)?.remote);
+	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url && !onAgentTab);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const [devicePreset, setDevicePreset] = useState<string | null>(null);
 	const [customDeviceWidth, setCustomDeviceWidth] = useState("390");
@@ -1360,7 +1362,15 @@ export function BrowserPanelView({
 					</span>
 				) : null}
 				<BrowserControlTooltip
-					label={annotationStatusLabel || agentStatusLabel || (canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate"))}
+					label={
+						annotationStatusLabel ||
+						agentStatusLabel ||
+						(canRetryAnnotation
+							? t("browser.retryAnnotation")
+							: onAgentTab
+								? t("browser.annotateAgentTab")
+								: t("browser.annotate"))
+					}
 				>
 					<span className="inline-flex">
 							<Button

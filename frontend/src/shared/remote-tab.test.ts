@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REMOTE_TAB_REPORT, parseRemoteTabReport, pinnedRemoteTab } from "./remote-tab";
+import { REMOTE_TAB_REPORT, parseRemoteTabReport } from "./remote-tab";
 
 const PNG_ICON = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -49,11 +49,5 @@ describe("parseRemoteTabReport", () => {
 		expect(parseRemoteTabReport(REMOTE_TAB_REPORT + JSON.stringify({ url: "https://a.example/" }))).toBeNull();
 		const report = parseRemoteTabReport(REMOTE_TAB_REPORT + JSON.stringify({ tabId: "R1", url: "javascript:alert(1)", favicon: "data:image/png;base64,x" }));
 		expect(report).toMatchObject({ url: "", favicon: "", tabs: [] });
-	});
-
-	it("finds the agent browser tab a viewer URL is pinned to", () => {
-		expect(pinnedRemoteTab("https://ao-preview-x.localhost:1/v/cdp?embed=1&tab=R7")).toBe("R7");
-		expect(pinnedRemoteTab("https://ao-preview-x.localhost:1/v/cdp?embed=1")).toBe("");
-		expect(pinnedRemoteTab("https://example.com/?tab=R7")).toBe("");
 	});
 });

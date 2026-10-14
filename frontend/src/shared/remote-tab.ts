@@ -75,13 +75,3 @@ export function parseRemoteTabReport(message: string): RemoteTabReport | null {
 		...(closed ? { closed } : {}),
 	};
 }
-
-/** The agent browser tab a viewer URL is pinned to (its tab= parameter). */
-export function pinnedRemoteTab(url: string): string {
-	try {
-		const parsed = new URL(url);
-		return parsed.pathname === "/v/cdp" ? (parsed.searchParams.get("tab") ?? "") : "";
-	} catch {
-		return "";
-	}
-}
