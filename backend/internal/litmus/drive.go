@@ -392,13 +392,6 @@ func isTabDrift(err error) bool {
 	return errors.Is(err, errTabDrift)
 }
 
-// clickPoint asks the engine where ref sits and how big the viewport is. It is best effort and bounded: any failure
-// returns nil when coordinates are unavailable, except tab drift, which must reach the tester.
-func (e *Engine) clickPoint(ctx context.Context, ref string) (*clickAt, error) {
-	point, _, err := e.clickTarget(ctx, ref)
-	return point, err
-}
-
 // clickTarget reads the element box and viewport before a click. The box is
 // returned even when the viewport lookup fails, so a refused click can still
 // leave useful evidence.

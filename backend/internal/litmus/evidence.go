@@ -672,68 +672,6 @@ func (s *Service) uploadVideoFile(ctx context.Context, run Run, file, name strin
 	return up.URL, nil
 }
 
-// publishVideos uploads each leg's recording (the PR build's first) to GitHub's attachment store and checks that GitHub serves it back, so the comment can show a player. The endpoint is undocumented and has stored nothing while
-// answering 201, so nothing here is trusted until the check passes. It never fails the submit: the state is off (not
-// asked for, or no recording and no screenshots), attached, partial or failed:<reason>, and each failure goes to comment.log.
-func (s *Service) publishVideos(ctx context.Context, run Run, videos []legVideo) (items []vidItem, state string) {
-	var recorded []legVideo
-	if run.Evidence == EvidencePost {
-		recorded = slices.DeleteFunc(slices.Clone(videos), func(v legVideo) bool { return !v.raw })
-	}
-	if len(recorded) == 0 {
-		return nil, "off"
-	}
-	id, err := s.repoID(ctx, run)
-	var first error
-	attached := 0
-	for _, v := range recorded {
-		it, uerr := vidItem{leg: v.leg}, err
-		if uerr == nil {
-			it, uerr = s.attachVideo(ctx, run, v, id)
-		}
-		if uerr != nil {
-			s.commentLogf(run, "video of %s: %v", sideSlug(run, v.leg), uerr)
-			first = cmp.Or(first, uerr)
-		} else {
-			attached++
-		}
-		items = append(items, it)
-	}
-	switch attached {
-	case len(items):
-		return items, "attached"
-	case 0:
-		reason, _, _ := strings.Cut(s.scrub(first.Error()), "\n")
-		return items, "failed:" + clip(strings.TrimSpace(reason), 120)
-	}
-	return items, "partial"
-}
-
-// attachVideo uploads a leg's recording (its cut when the recording is over videoCap) and verifies it.
-func (s *Service) attachVideo(ctx context.Context, run Run, v legVideo, repoID int64) (vidItem, error) {
-	leg := v.leg
-	runDir, it := filepath.Join(s.store.root, run.ID), vidItem{leg: leg}
-	file := cmp.Or(v.source, recordingPath(runDir, leg))
-	st, err := os.Stat(file)
-	if err == nil && st.Size() > videoCap {
-		it.cut, file = true, cutPath(runDir, leg)
-		if _, err = os.Stat(file); err != nil {
-			err = fmt.Errorf("the recording is over %d MB and has no shorter cut", videoCap>>20)
-		}
-	}
-	if err != nil {
-		return it, err
-	}
-	it.url, err = s.uploadVideoFile(ctx, run, file, sideSlug(run, leg), repoID)
-	if err != nil {
-		return it, err
-	}
-	if i := slices.IndexFunc(run.Legs, func(l Leg) bool { return l.Name == leg }); i >= 0 && !it.cut && !run.Legs[i].RecordStartedAt.IsZero() {
-		it.span = max(run.Legs[i].RecordStoppedAt.Sub(run.Legs[i].RecordStartedAt), 0) // the cut's length is not known
-	}
-	return it, nil
-}
-
 // verifyVideo reads the upload back as the token: it must answer 200 and video/mp4. A fresh asset answers 404 for a
 // while, so a 404 is tried once more after videoRetryWait.
 func (s *Service) verifyVideo(ctx context.Context, url string) error {

@@ -618,8 +618,6 @@ const (
 	vid2 = "https://github.com/user-attachments/assets/00000002-aaaa-4bbb-8ccc-dddddddddddd"
 )
 
-var bothRecorded = []legVideo{{leg: "head", raw: true, cut: true}, {leg: "base", raw: true}}
-
 // recordLegs gives run a finished recording per leg on disk: the PR build's 1 min 19 s and main's 15 s.
 func recordLegs(t *testing.T, svc *Service, runID string) string {
 	t.Helper()
@@ -636,129 +634,6 @@ func recordLegs(t *testing.T, svc *Service, runID string) string {
 		is(t, "")(nil, os.WriteFile(p, []byte("mp4"), 0o600))
 	}
 	return runDir
-}
-
-func vidSvc(t *testing.T) (*Service, *commentGH, Run, string) {
-	t.Helper()
-	svc, _ := newSvc(t)
-	gh := &commentGH{t: t, login: "bot"}
-	svc.gh = gh
-	run := commentRun
-	run.Evidence = EvidencePost
-	is(t, "")(nil, svc.store.Save(run))
-	runDir := recordLegs(t, svc, run.ID)
-	run, _ = svc.store.Get(run.ID)
-	return svc, gh, run, runDir
-}
-
-func (g *commentGH) readBacks() (n int) {
-	for _, a := range g.argv {
-		if len(a) > 1 && a[1] == "-i" {
-			n++
-		}
-	}
-	return n
-}
-
-func TestVideosUploadThroughGHAndAreReadBack(t *testing.T) {
-	svc, gh, run, runDir := vidSvc(t)
-	items, state := svc.publishVideos(ctx, run, bothRecorded)
-	up := func(name, file string) []string {
-		return []string{"api", "--method", "POST", "-H", "Content-Type: video/mp4",
-			"https://uploads.github.com/user-attachments/assets?name=" + name + "&content_type=video%2Fmp4&repository_id=1234", "--input", file}
-	}
-	wantCalls := [][]string{{"api", "repos/o/r", "--jq", ".id"}, up("pr.mp4", recordingPath(runDir, "head")), {"api", "-i", vid1}, up("main.mp4", recordingPath(runDir, "base")), {"api", "-i", vid2}}
-	wantItems := []vidItem{{leg: "head", url: vid1, span: 79 * time.Second}, {leg: "base", url: vid2, span: 15 * time.Second}}
-	if state != "attached" || !reflect.DeepEqual(items, wantItems) || !reflect.DeepEqual(gh.argv, wantCalls) {
-		t.Fatalf("state %q items %+v\ngh %q\nwant %q", state, items, gh.argv, wantCalls)
-	}
-	stored, _ := svc.store.Get(run.ID)
-	gh.argv = nil
-	svc.publishVideos(ctx, stored, bothRecorded)
-	if stored.RepoID != 1234 || slices.ContainsFunc(gh.argv, func(a []string) bool { return a[1] == "repos/o/r" }) {
-		t.Fatalf("the repo id is cached on the run, not asked twice: %+v %q", stored, gh.argv)
-	}
-}
-
-func TestVideoThatAnswers404IsReadOnceMoreThenGivenUp(t *testing.T) {
-	if videoRetryWait != 15*time.Second {
-		t.Fatalf("the retry waits %v, want 15 s", videoRetryWait)
-	}
-	videoRetryWait = time.Millisecond
-	defer func() { videoRetryWait = 15 * time.Second }()
-
-	svc, gh, run, _ := vidSvc(t)
-	gh.notFound = 1 // the first read of the PR build's video is a 404
-	if items, state := svc.publishVideos(ctx, run, bothRecorded); state != "attached" || items[0].url == "" || gh.readBacks() != 3 {
-		t.Fatalf("one 404 then 200: state %q items %+v reads %d", state, items, gh.readBacks())
-	}
-
-	svc, gh, run, runDir := vidSvc(t)
-	gh.notFound = 9
-	items, state := svc.publishVideos(ctx, run, bothRecorded)
-	log, _ := os.ReadFile(filepath.Join(runDir, "comment.log"))
-	if state != "failed:gh: Not Found (HTTP 404)" || items[0].url != "" || items[1].url != "" || len(items) != 2 || gh.readBacks() != 4 || !strings.Contains(string(log), "video of pr: gh: Not Found (HTTP 404)") {
-		t.Fatalf("404 twice: state %q items %+v reads %d log %q", state, items, gh.readBacks(), log)
-	}
-}
-
-func TestVideoUploadErrorsAreLoggedAndNeverFatal(t *testing.T) {
-	svc, gh, run, runDir := vidSvc(t)
-	gh.fail = "uploads.github.com"
-	items, state := svc.publishVideos(ctx, run, bothRecorded)
-	log, _ := os.ReadFile(filepath.Join(runDir, "comment.log"))
-	if state != "failed:HTTP 403: Resource not accessible" || items[0].url != "" || items[1].url != "" || gh.readBacks() != 0 || !strings.Contains(string(log), "video of pr: HTTP 403") {
-		t.Fatalf("state %q items %+v reads %d log %q", state, items, gh.readBacks(), log)
-	}
-
-	svc, gh, run, _ = vidSvc(t)
-	gh.fail = "name=main.mp4"
-	if items, state := svc.publishVideos(ctx, run, bothRecorded); state != "partial" || items[0].url != vid1 || items[1].url != "" {
-		t.Fatalf("one failed: state %q items %+v", state, items)
-	}
-
-	svc, gh, run, _ = vidSvc(t)
-	svc.gh = ghFunc(func(args ...string) ([]byte, error) {
-		if args[1] == "--method" {
-			return []byte(`{"url":"https://evil.example/x"}`), nil
-		}
-		return gh.Run(ctx, args...)
-	})
-	if _, state := svc.publishVideos(ctx, run, bothRecorded); state != "failed:GitHub's answer to the upload had no video link" {
-		t.Fatalf("a link that is not a GitHub attachment is refused: %q", state)
-	}
-}
-
-type ghFunc func(args ...string) ([]byte, error)
-
-func (f ghFunc) Run(_ context.Context, args ...string) ([]byte, error) { return f(args...) }
-
-func TestRecordingOverTheCapUploadsItsCut(t *testing.T) {
-	svc, gh, run, runDir := vidSvc(t)
-	is(t, "")(nil, os.Truncate(recordingPath(runDir, "head"), videoCap+1))
-	if items, state := svc.publishVideos(ctx, run, bothRecorded); state != "partial" || items[0].url != "" || items[1].url == "" {
-		t.Fatalf("no cut to fall back on: state %q items %+v", state, items)
-	}
-	is(t, "")(nil, os.WriteFile(cutPath(runDir, "head"), []byte("mp4"), 0o600))
-	gh.argv = nil
-	items, state := svc.publishVideos(ctx, run, bothRecorded)
-	if state != "attached" || !items[0].cut || items[0].span != 0 || gh.argv[1][len(gh.argv[1])-1] != cutPath(runDir, "head") || items[1].cut {
-		t.Fatalf("state %q items %+v upload %q", state, items, gh.argv[1])
-	}
-	if got, want := strings.Join(videoParts(run, evidence{videos: items}), "|"), "PR build, only the moments around each step\n\n"+items[0].url+"|Main, 15 s\n\n"+items[1].url; got != want {
-		t.Fatalf("the cut says it is a cut: %q", got)
-	}
-}
-
-func TestNoRecordingsOrNoEvidenceMeansNoVideosAndNoCalls(t *testing.T) {
-	svc, gh, run, _ := vidSvc(t)
-	if items, state := svc.publishVideos(ctx, run, []legVideo{{leg: "head"}, {leg: "base"}}); state != "off" || items != nil || len(gh.argv) != 0 { // no recording
-		t.Fatalf("nothing to show: state %q items %+v gh %q", state, items, gh.argv)
-	}
-	run.Evidence = EvidenceOff // --no-evidence
-	if items, state := svc.publishVideos(ctx, run, bothRecorded); state != "off" || items != nil || len(gh.argv) != 0 {
-		t.Fatalf("--no-evidence: state %q items %+v gh %q", state, items, gh.argv)
-	}
 }
 
 func TestSpanText(t *testing.T) {

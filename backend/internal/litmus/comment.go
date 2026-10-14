@@ -1504,42 +1504,6 @@ func (s *Service) commentLogf(run Run, format string, a ...any) {
 	_, _ = fmt.Fprintf(f, "%s %s\n", s.clock().UTC().Format(time.RFC3339), fmt.Sprintf(format, a...))
 }
 
-// upsertComment edits this PR's Litmus comment written by the token's login, or posts one. A failing verdict also
-// asks for changes in a review, once per call (a review body cannot be edited), when the project turned reviews on.
-func (s *Service) upsertComment(ctx context.Context, run Run, overall CheckState, body string) (string, string, error) {
-	login, err := s.ghLogin(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	n, api := strconv.Itoa(run.PRNumber), "repos/"+run.Repo
-	raw, err := s.gh.Run(ctx, "api", api+"/issues/"+n+"/comments", "--paginate")
-	if err != nil {
-		return "", "", err
-	}
-	id, err := findComment(raw, commentMarker(run.Repo, run.PRNumber), login)
-	if err != nil {
-		return "", "", fmt.Errorf("unreadable comment list: %w", err)
-	}
-	method, path, state := "POST", api+"/issues/"+n+"/comments", "posted"
-	if id != 0 {
-		method, path, state = "PATCH", api+"/issues/comments/"+strconv.FormatInt(id, 10), "updated"
-	}
-	out, err := s.ghSend(ctx, run, method, path, map[string]string{"body": body})
-	if err != nil {
-		return "", "", err
-	}
-	var sent struct {
-		HTMLURL string `json:"html_url"`
-	}
-	_ = json.Unmarshal(out, &sent)
-	if overall == CheckFail && s.reviewOn(run) {
-		if err := s.requestChanges(ctx, run, login, sent.HTMLURL); err != nil { // the comment is up; only the review failed
-			s.commentLog(run, fmt.Errorf("review not submitted: %w", err))
-		}
-	}
-	return sent.HTMLURL, state, nil
-}
-
 // requestChanges submits the REQUEST_CHANGES review, unless the token owns the PR: GitHub refuses that from an author.
 func (s *Service) requestChanges(ctx context.Context, run Run, login, commentURL string) error {
 	n := strconv.Itoa(run.PRNumber)
