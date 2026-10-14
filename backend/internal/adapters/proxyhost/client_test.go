@@ -195,6 +195,45 @@ func TestAccountModelsKeepsReasoningLevelsAndOffersOnlyChatModels(t *testing.T) 
 	}
 }
 
+func TestCodexSignInsOfferOnlyTheModelsOpenAIListsForTheAccount(t *testing.T) {
+	catalogue := `{"models":[{"id":"gpt-6.1-sol","label":"Sol"},{"id":"gpt-5.5","label":"GPT-5.5"}]}`
+	for name, tc := range map[string]struct {
+		account  domain.ProviderAccount
+		listed   string
+		want     []string
+		consults bool
+	}{
+		"a Go plan":             {domain.ProviderAccount{Provider: "codex", AuthID: "go"}, `{"status":200,"body":{"models":[{"slug":"gpt-5.5"},{"slug":"gpt-4"}]}}`, []string{"gpt-5.5"}, true},
+		"OpenAI did not answer": {domain.ProviderAccount{Provider: "codex", AuthID: "go"}, `{"status":503,"body":"down"}`, []string{"gpt-6.1-sol", "gpt-5.5"}, true},
+		"an API key":            {domain.ProviderAccount{Provider: "codex", AuthID: "key", Kind: "api_key"}, ``, []string{"gpt-6.1-sol", "gpt-5.5"}, false},
+		"Claude":                {domain.ProviderAccount{Provider: "claude", AuthID: "max"}, ``, []string{"gpt-6.1-sol", "gpt-5.5"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, helper := helperClient(t, func(received call) (int, string) {
+				if received.Path == "/ao/provider-call" {
+					return http.StatusOK, tc.listed
+				}
+				return http.StatusOK, catalogue
+			})
+			models, err := c.AccountModels(ctx, tc.account)
+			var ids []string
+			for _, m := range models {
+				ids = append(ids, m.ID)
+			}
+			if err != nil || !reflect.DeepEqual(ids, tc.want) {
+				t.Fatalf("models=%v err=%v", ids, err)
+			}
+			lines := helper.lines()
+			if consulted := len(lines) == 2 && lines[1] == "POST /ao/provider-call"; consulted != tc.consults {
+				t.Fatalf("calls=%v", lines)
+			}
+			if tc.consults && !strings.Contains(helper.calls[1].Body, `"url":"https://chatgpt.com/backend-api/codex/models?client_version=`) {
+				t.Fatalf("sent %s", helper.calls[1].Body)
+			}
+		})
+	}
+}
+
 func TestCredentialsAlsoListsAPIKeysByTheirIndex(t *testing.T) {
 	c, _ := helperClient(t, func(request call) (int, string) {
 		switch request.Path {

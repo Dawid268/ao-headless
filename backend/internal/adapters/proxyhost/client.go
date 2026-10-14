@@ -245,14 +245,38 @@ func (c *Client) ApplyRoutes(ctx context.Context, routes []ports.ProviderRoute, 
 	return err
 }
 
+// codexModelsURL is OpenAI's list of the models one ChatGPT account can run. A
+// client version above any release keeps it from hiding models by Codex version:
+// the catalogue already holds only models the helper can serve.
+const codexModelsURL = "https://chatgpt.com/backend-api/codex/models?client_version=999.0.0"
+
 // AccountModels lists the models a person can pick for one account.
 func (c *Client) AccountModels(ctx context.Context, a domain.ProviderAccount) ([]ports.AgentModelInfo, error) {
 	var out struct{ Models []ports.AgentModelInfo }
 	err := c.call(ctx, http.MethodPost, "/ao/account-models", on(a), &out)
 	// The catalogue also names the models Codex calls for itself.
-	return slices.DeleteFunc(out.Models, func(m ports.AgentModelInfo) bool {
+	models := slices.DeleteFunc(out.Models, func(m ports.AgentModelInfo) bool {
 		return strings.HasPrefix(m.ID, "gpt-image-") || m.ID == "codex-auto-review"
-	}), err
+	})
+	// The catalogue is one list for several plans; OpenAI refuses some of its models on Go, for one.
+	if err == nil && a.Provider == "codex" && !a.APIKey() {
+		if offered := codexSlugs(c.read(ctx, a, codexModelsURL, quick)); len(offered) > 0 {
+			models = slices.DeleteFunc(models, func(m ports.AgentModelInfo) bool { return !offered[m.ID] })
+		}
+	}
+	return models, err
+}
+
+// codexSlugs are the models OpenAI lists for an account; none when it did not answer.
+func codexSlugs(doc any) map[string]bool {
+	offered := map[string]bool{}
+	list, _ := at(doc, "models").([]any)
+	for _, model := range list {
+		if slug := text(model, "slug"); slug != "" {
+			offered[slug] = true
+		}
+	}
+	return offered
 }
 
 // Credentials lists the sign-ins held as files, with the helper's verdict on a refused one.
