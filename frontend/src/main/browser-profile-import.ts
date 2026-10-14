@@ -377,6 +377,7 @@ async function discoverChromiumProfiles(descriptor: BrowserDescriptor, root: str
 
 async function discoverFirefoxProfiles(descriptor: BrowserDescriptor, root: string): Promise<InternalSourceProfile[]> {
 	const registered = new Map<string, { name: string; default: boolean }>();
+	const installDefaults = new Set<string>();
 	try {
 		const text = await readSmallText(path.join(root, "profiles.ini"), LOCAL_STATE_MAX_BYTES);
 		const sections: Array<{ section: string; values: Map<string, string> }> = [];
@@ -392,13 +393,11 @@ async function discoverFirefoxProfiles(descriptor: BrowserDescriptor, root: stri
 			const equals = line.indexOf("=");
 			if (current && equals > 0) current.values.set(line.slice(0, equals).trim(), line.slice(equals + 1).trim());
 		}
-		const installDefaults = new Set<string>();
 		for (const { section, values } of sections) {
 			if (/^Install[0-9a-f]+$/i.test(section)) {
 				const directory = values.get("Default");
 				if (!directory) continue;
 				const candidate = path.resolve(root, directory);
-				if (!contained(root, candidate)) continue;
 				const profileRoot = await existingRealDirectory(candidate);
 				if (profileRoot && contained(root, profileRoot)) installDefaults.add(profileRoot);
 				continue;
@@ -410,16 +409,13 @@ async function discoverFirefoxProfiles(descriptor: BrowserDescriptor, root: stri
 			if (!name || !directory || !["0", "1"].includes(relative ?? "")) continue;
 			if (path.isAbsolute(directory) !== (relative === "0")) continue;
 			const candidate = path.resolve(root, directory);
-			if (!contained(root, candidate)) continue;
 			const profileRoot = await existingRealDirectory(candidate);
 			if (!profileRoot || !contained(root, profileRoot)) continue;
 			registered.set(profileRoot, { name, default: values.get("Default") === "1" });
 		}
-		for (const [profileRoot, metadata] of registered) {
-			if (installDefaults.has(profileRoot)) metadata.default = true;
-		}
 	} catch {
 		registered.clear();
+		installDefaults.clear();
 	}
 	const profileParent = (await existingRealDirectory(path.join(root, "Profiles"))) ?? root;
 	const entries = contained(root, profileParent) ? await readdir(profileParent, { withFileTypes: true }).catch(() => []) : [];
@@ -438,7 +434,9 @@ async function discoverFirefoxProfiles(descriptor: BrowserDescriptor, root: stri
 		profiles.push({
 			id: opaqueSourceId(`${descriptor.id}:profile`, profileRoot),
 			name: metadata?.name ?? (suffix || basename),
-			default: metadata?.default ?? /default|release/i.test(suffix),
+			default: installDefaults.size > 0
+				? installDefaults.has(profileRoot)
+				: metadata?.default ?? /default|release/i.test(suffix),
 			root: profileRoot,
 		});
 	}
