@@ -781,6 +781,10 @@ func (d *Driver) ForkIntoHost(ctx context.Context, sourceProviderConversationID,
 	if cfg.Model != "" {
 		params["model"] = cfg.Model
 	}
+	// As for thread/resume: a routed process names the account helper for the fork too.
+	if conv.modelProvider != "" {
+		params["modelProvider"] = conv.modelProvider
+	}
 	// Same overrides as thread/start and thread/resume: without the MCP servers
 	// a fresh fork has no AO tools until a restart resumes it.
 	if config := threadConfig(cfg.Effort, cfg.MCPServers); len(config) > 0 {

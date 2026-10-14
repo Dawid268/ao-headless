@@ -343,26 +343,106 @@ func (s *Service) SessionAccount(ctx context.Context, id domain.SessionID) (doma
 	return domain.ProviderSessionRoute{}, false, err
 }
 
-// LaunchAccountEnv is the helper address and ticket a routed session keeps for life.
-func (s *Service) LaunchAccountEnv(ctx context.Context, id domain.SessionID) (map[string]string, error) {
-	route, managed, err := s.SessionAccount(ctx, id)
-	if err != nil || !managed {
+// otherRoute names a session's route for a provider its own agent does not run on now:
+// the one it left in a switch, or the one its reviewers on that provider use.
+func otherRoute(id domain.SessionID, provider string) domain.SessionID {
+	return id + domain.SessionID("/"+provider)
+}
+
+// launchRoute settles which of the session's routes a launch of harness runs on,
+// and returns its name. A session keeps one route for each provider it uses, each
+// with a ticket for life. Its own agent runs on its route; after a switch to
+// another provider that route moves there, and the old one is kept for a switch
+// back. Related work, such as a reviewer, runs on the session's route for its own
+// provider. A session with no route is adopted onto the default; with no default
+// the agent keeps its own setup and the name is empty.
+func launchRoute(st *domain.ProviderAccountState, id domain.SessionID, provider string, related bool) (key domain.SessionID, waiting bool) {
+	key = id
+	own, kept := routed(*st, id), routed(*st, otherRoute(id, provider))
+	switch {
+	case own >= 0 && st.Routes[own].Provider == provider:
+	case related:
+		if key = otherRoute(id, provider); kept < 0 && st.Defaults[provider] != "" {
+			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: key, Provider: provider, AccountID: st.Defaults[provider]})
+		}
+	case own < 0:
+		if st.Defaults[provider] != "" {
+			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: st.Defaults[provider]})
+		}
+	default: // its own agent now runs another provider
+		left, account := st.Routes[own], st.Defaults[provider]
+		if kept >= 0 {
+			account = st.Routes[kept].AccountID // the account it had there before
+		}
+		back := otherRoute(id, left.Provider)
+		st.Routes = slices.DeleteFunc(st.Routes, func(r domain.ProviderSessionRoute) bool { return r.SessionID == id || r.SessionID == back })
+		st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: back, Provider: left.Provider, AccountID: left.AccountID})
+		if managed(*st, provider) { // else the agent keeps its own setup
+			st.Routes = append(st.Routes, domain.ProviderSessionRoute{SessionID: id, Provider: provider, AccountID: account})
+		}
+	}
+	if i := routed(*st, key); i >= 0 {
+		return key, st.Routes[i].AccountID == ""
+	}
+	return "", false
+}
+
+// LaunchAccountEnv is the helper address and ticket for an agent of harness that
+// the session launches, with its route settled as launchRoute says.
+func (s *Service) LaunchAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, related bool) (map[string]string, error) {
+	provider := domain.AccountProvider(harness)
+	if provider == "" {
+		return nil, nil
+	}
+	var key domain.SessionID
+	var waiting bool
+	err := s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
+		key, waiting = launchRoute(st, id, provider, related)
+		return "", nil
+	})
+	if err == nil && related && waiting {
+		err = ports.ErrProviderLoginRequired
+	}
+	if err != nil || key == "" {
 		return nil, err
 	}
-	token, err := s.ticket(id)
+	return s.accountEnv(key, provider)
+}
+
+// PlannedAccountEnv is what LaunchAccountEnv would give the session's own agent
+// of harness, without moving any route: a switch prepares its target this way
+// while the source still runs, and moves the route once the source has stopped.
+func (s *Service) PlannedAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness) (map[string]string, error) {
+	provider := domain.AccountProvider(harness)
+	stored, err := s.store.LoadProviderAccounts(ctx)
+	if err != nil || provider == "" {
+		return nil, err
+	}
+	var st domain.ProviderAccountState // a copy: nothing here may reach the stored routes
+	_ = json.Unmarshal([]byte(encode(stored)), &st)
+	if key, _ := launchRoute(&st, id, provider, false); key != "" {
+		return s.accountEnv(key, provider)
+	}
+	return nil, nil
+}
+
+func (s *Service) accountEnv(key domain.SessionID, provider string) (map[string]string, error) {
+	token, err := s.ticket(key)
 	if err != nil {
 		return nil, err
 	}
-	if route.Provider == "codex" {
+	if provider == "codex" {
 		return map[string]string{"AO_PROXY_ENDPOINT": s.helper.Endpoint(), "AO_PROXY_TICKET": token}, nil
 	}
 	return map[string]string{"AO_PROXY_ENDPOINT": "", "AO_PROXY_TICKET": "", "ANTHROPIC_BASE_URL": s.helper.Endpoint(), "ANTHROPIC_AUTH_TOKEN": token, "ANTHROPIC_API_KEY": "", "CLAUDE_CODE_OAUTH_TOKEN": "", "CLAUDE_CODE_USE_BEDROCK": "", "CLAUDE_CODE_USE_VERTEX": "", "CLAUDE_CODE_USE_FOUNDRY": ""}, nil
 }
 
-// ForgetAccount drops a deleted session's route.
+// ForgetAccount drops a deleted session's routes.
 func (s *Service) ForgetAccount(ctx context.Context, id domain.SessionID) error {
 	return s.change(ctx, func(st *domain.ProviderAccountState) (string, error) {
-		st.Routes = slices.DeleteFunc(st.Routes, func(r domain.ProviderSessionRoute) bool { return r.SessionID == id })
+		st.Routes = slices.DeleteFunc(st.Routes, func(r domain.ProviderSessionRoute) bool {
+			return r.SessionID == id || strings.HasPrefix(string(r.SessionID), string(id)+"/")
+		})
 		return "", nil
 	})
 }
@@ -698,9 +778,12 @@ func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.P
 			if r.AccountID != a.ID {
 				continue
 			}
-			view.Sessions = append(view.Sessions, string(r.SessionID))
+			session, _, _ := strings.Cut(string(r.SessionID), "/") // a session's route for another provider
+			if !slices.Contains(view.Sessions, session) {
+				view.Sessions = append(view.Sessions, session)
+			}
 			if hash, err := s.ticketHash(r.SessionID); err == nil && byHash[hash] > 0 {
-				view.Usage.Activity.Sessions[string(r.SessionID)] = byHash[hash]
+				view.Usage.Activity.Sessions[session] += byHash[hash]
 			}
 		}
 		views = append(views, view)

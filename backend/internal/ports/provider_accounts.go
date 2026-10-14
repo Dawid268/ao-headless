@@ -118,7 +118,12 @@ type ProviderAccountRouting interface {
 	ResolveAccount(ctx context.Context, harness domain.AgentHarness, explicit string) (id string, managed bool, err error)
 	AssignAccount(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, accountID string) error
 	SessionAccount(context.Context, domain.SessionID) (domain.ProviderSessionRoute, bool, error)
-	LaunchAccountEnv(context.Context, domain.SessionID) (map[string]string, error)
+	// LaunchAccountEnv is the environment for an agent of the harness that the
+	// session launches; related is work run for the session, such as a reviewer.
+	LaunchAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, related bool) (map[string]string, error)
+	// PlannedAccountEnv is what LaunchAccountEnv would give the session's own
+	// agent of harness, without moving any route.
+	PlannedAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness) (map[string]string, error)
 	ForgetAccount(context.Context, domain.SessionID) error
 	// AdoptSession gives a session that predates Account Manager a route.
 	AdoptSession(context.Context, domain.SessionID, domain.AgentHarness) (bool, error)

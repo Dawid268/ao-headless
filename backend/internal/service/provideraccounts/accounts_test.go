@@ -204,7 +204,7 @@ func TestLastSignOutLeavesSessionsWaitingAndTheNextSignInPicksThemUp(t *testing.
 	h.assign("c1", domain.HarnessCodex, alice)
 	h.assign("c2", domain.HarnessCodex, alice)
 	h.assign("a1", domain.HarnessClaudeCode, claude)
-	before, err := h.svc.LaunchAccountEnv(h.ctx, "c1")
+	before, err := h.svc.LaunchAccountEnv(h.ctx, "c1", domain.HarnessCodex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestLastSignOutLeavesSessionsWaitingAndTheNextSignInPicksThemUp(t *testing.
 	h.route("c1", bob)
 	h.route("c2", bob)
 	h.route("a1", claude)
-	after, err := h.svc.LaunchAccountEnv(h.ctx, "c1")
+	after, err := h.svc.LaunchAccountEnv(h.ctx, "c1", domain.HarnessCodex, false)
 	if err != nil || !reflect.DeepEqual(before, after) || h.defaultOf("codex") != bob {
 		t.Fatalf("env changed or default=%q err=%v", h.defaultOf("codex"), err)
 	}
@@ -308,8 +308,9 @@ func TestSessionsKeepOneRouteTicketAndEnvironmentThroughEveryAccountChange(t *te
 		t.Fatalf("a second route for one session: %v", err)
 	}
 	envs := map[string]map[string]string{}
+	agents := map[string]domain.AgentHarness{"c1": domain.HarnessCodex, "c2": domain.HarnessCodex, "a1": domain.HarnessClaudeCode}
 	for _, session := range []string{"c1", "c2", "a1"} {
-		env, err := h.svc.LaunchAccountEnv(h.ctx, domain.SessionID(session))
+		env, err := h.svc.LaunchAccountEnv(h.ctx, domain.SessionID(session), agents[session], false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,8 +331,8 @@ func TestSessionsKeepOneRouteTicketAndEnvironmentThroughEveryAccountChange(t *te
 	if stored := encode(h.store.get()); strings.Contains(stored, c1["AO_PROXY_TICKET"]) || strings.Contains(stored, a1["ANTHROPIC_AUTH_TOKEN"]) {
 		t.Fatal("a ticket was stored")
 	}
-	if env, err := h.svc.LaunchAccountEnv(h.ctx, "unrouted"); env != nil || err != nil {
-		t.Fatalf("an unrouted session got env=%v err=%v", env, err)
+	if env, err := h.svc.LaunchAccountEnv(h.ctx, "unmanaged", domain.AgentHarness("opencode"), false); env != nil || err != nil {
+		t.Fatalf("an agent AO does not manage got env=%v err=%v", env, err)
 	}
 	for _, step := range []func() error{
 		func() error { return h.act(bob, "primary") },
@@ -343,7 +344,7 @@ func TestSessionsKeepOneRouteTicketAndEnvironmentThroughEveryAccountChange(t *te
 			t.Fatal(err)
 		}
 		for session, want := range envs {
-			if env, err := h.svc.LaunchAccountEnv(h.ctx, domain.SessionID(session)); err != nil || !reflect.DeepEqual(env, want) {
+			if env, err := h.svc.LaunchAccountEnv(h.ctx, domain.SessionID(session), agents[session], false); err != nil || !reflect.DeepEqual(env, want) {
 				t.Fatalf("session %s env changed: %v err=%v", session, env, err)
 			}
 		}

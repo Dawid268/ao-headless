@@ -5841,7 +5841,7 @@ func (m *Manager) prepareWorkerLaunchEnv(
 	if err != nil {
 		return rec, nil, err
 	}
-	if err := m.applyAccountEnv(ctx, rec.ID, env); err != nil {
+	if err := m.applyAccountEnv(ctx, rec.ID, rec.Harness, env); err != nil {
 		return rec, nil, err
 	}
 	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, rec.ControllerOwner(), verifier)
@@ -5857,6 +5857,7 @@ func (m *Manager) prepareWorkerLaunchEnv(
 func (m *Manager) prepareChatControllerEnv(
 	ctx context.Context,
 	rec domain.SessionRecord,
+	harness domain.AgentHarness, // the agent this launch starts, the target's in a switch
 	projectEnv map[string]string,
 	expected domain.SessionControllerOwner,
 ) (domain.SessionRecord, map[string]string, error) {
@@ -5864,7 +5865,7 @@ func (m *Manager) prepareChatControllerEnv(
 	if err != nil {
 		return rec, nil, err
 	}
-	if err := m.applyAccountEnv(ctx, rec.ID, env); err != nil {
+	if err := m.applyAccountEnv(ctx, rec.ID, harness, env); err != nil {
 		return rec, nil, err
 	}
 	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, expected, verifier)

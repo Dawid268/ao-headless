@@ -86,6 +86,7 @@ type Service struct {
 	backgroundWakes    map[domain.SessionID]bool
 
 	runPromptSuggestion   func(context.Context, domain.SessionID, string, string, string) (string, error)
+	accountEnv            func(context.Context, domain.SessionID, domain.AgentHarness, map[string]string) error
 	promptSuggestionSlots chan struct{}
 
 	mu               sync.RWMutex

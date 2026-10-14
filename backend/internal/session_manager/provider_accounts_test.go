@@ -23,6 +23,7 @@ type accountRoutingFake struct {
 	noDefault                              bool // no default account for an older session to move onto
 	assigned, forgotten, launches, adopted []domain.SessionID
 	resolved                               []string
+	launched, planned                      []string // "id harness" and, for launches, "own" or "related"
 }
 
 func (f *accountRoutingFake) ResolveAccount(_ context.Context, h domain.AgentHarness, id string) (string, bool, error) {
@@ -39,11 +40,20 @@ func (f *accountRoutingFake) SessionAccount(_ context.Context, id domain.Session
 	return f.route, f.managed || f.has[id], f.err
 }
 
-func (f *accountRoutingFake) LaunchAccountEnv(_ context.Context, id domain.SessionID) (map[string]string, error) {
+func (f *accountRoutingFake) LaunchAccountEnv(_ context.Context, id domain.SessionID, harness domain.AgentHarness, related bool) (map[string]string, error) {
+	f.launched = append(f.launched, string(id)+" "+string(harness)+" "+map[bool]string{false: "own", true: "related"}[related])
 	if f.err != nil || (!f.managed && !f.has[id]) {
 		return nil, f.err
 	}
 	f.launches = append(f.launches, id)
+	return f.env, nil
+}
+
+func (f *accountRoutingFake) PlannedAccountEnv(_ context.Context, id domain.SessionID, harness domain.AgentHarness) (map[string]string, error) {
+	f.planned = append(f.planned, string(id)+" "+string(harness))
+	if f.err != nil || (!f.managed && !f.has[id]) {
+		return nil, f.err
+	}
 	return f.env, nil
 }
 
@@ -86,7 +96,7 @@ func TestAccountEnvIsAddedOnlyToManagedLaunches(t *testing.T) {
 		m, _, _, _ := newManager()
 		m.accounts = tc.accounts
 		env := map[string]string{"PATH": "/agent-bin", "ANTHROPIC_API_KEY": "ambient"}
-		err := m.applyAccountEnv(context.Background(), "s", env)
+		err := m.applyAccountEnv(context.Background(), "s", domain.HarnessClaudeCode, env)
 		if !errors.Is(err, tc.err) || env["PATH"] != "/agent-bin" || env["ANTHROPIC_API_KEY"] != tc.key || (tc.key == "") != (env["AO_PROXY_TICKET"] == "private") {
 			t.Errorf("%s: env=%v err=%v", name, env, err)
 		}
@@ -96,30 +106,29 @@ func TestAccountEnvIsAddedOnlyToManagedLaunches(t *testing.T) {
 	}
 }
 
-func TestRelatedWorkUsesTheOwnersAccountOnlyWhenTheProviderMatches(t *testing.T) {
+// A reviewer runs on its worker's account for the reviewer's own provider; which
+// account that is, the worker's own or the provider's default, Account Manager decides.
+func TestRelatedWorkAsksForTheOwnersAccountOfItsProvider(t *testing.T) {
 	for name, tc := range map[string]struct {
-		harness  domain.AgentHarness
-		provider string
-		managed  bool
-		account  string
-		calls    int
+		accounts *accountRoutingFake
 		want     error
+		ticket   bool
 	}{
-		"codex owner":        {domain.HarnessCodex, "codex", true, "a", 1, nil},
-		"claude owner":       {domain.HarnessClaudeCode, "claude", true, "c", 1, nil},
-		"different provider": {domain.HarnessClaudeCode, "codex", true, "a", 0, nil},
-		"unmanaged harness":  {domain.HarnessCursor, "codex", true, "a", 0, nil},
-		"native owner":       {domain.HarnessCodex, "", false, "", 0, nil},
-		"waiting owner":      {domain.HarnessCodex, "codex", true, "", 0, ports.ErrProviderLoginRequired},
+		"managed":       {&accountRoutingFake{managed: true, env: map[string]string{"ticket": "owner"}}, nil, true},
+		"needs sign-in": {&accountRoutingFake{managed: true, err: ports.ErrProviderLoginRequired}, ports.ErrProviderLoginRequired, false},
+		"not managed":   {&accountRoutingFake{env: map[string]string{"ticket": "owner"}}, nil, false},
 	} {
 		m, _, _, _ := newManager()
-		f := &accountRoutingFake{managed: tc.managed, route: domain.ProviderSessionRoute{Provider: tc.provider, AccountID: tc.account}, env: map[string]string{"ticket": "owner"}}
-		m.accounts = f
+		m.accounts = tc.accounts
 		env := map[string]string{}
-		err := m.RelatedAccountEnv(context.Background(), "worker", tc.harness, env)
-		if !errors.Is(err, tc.want) || len(f.launches) != tc.calls || (tc.calls == 1) != (env["ticket"] == "owner") {
-			t.Errorf("%s: env=%v launches=%v err=%v", name, env, f.launches, err)
+		err := m.RelatedAccountEnv(context.Background(), "worker", domain.HarnessCodex, env)
+		if !errors.Is(err, tc.want) || (env["ticket"] == "owner") != tc.ticket || !reflect.DeepEqual(tc.accounts.launched, []string{"worker codex related"}) {
+			t.Errorf("%s: env=%v launched=%v err=%v", name, env, tc.accounts.launched, err)
 		}
+	}
+	m, _, _, _ := newManager()
+	if err := m.RelatedAccountEnv(context.Background(), "worker", domain.HarnessCodex, map[string]string{}); err != nil {
+		t.Fatalf("without Account Manager: %v", err)
 	}
 }
 
@@ -204,22 +213,22 @@ func TestManagedChatLaunchAndRestoreCarryTheSameTicket(t *testing.T) {
 	}
 }
 
-func TestManagedSessionCannotChangeProvider(t *testing.T) {
-	for _, mode := range []domain.SessionMode{domain.SessionModeTUI, domain.SessionModeChat} {
-		runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
-		m, sessions, _ := newSwitchTestManager(t, runtime)
-		rec := sessions.sessions["proj-1"]
-		rec.Mode = mode
-		sessions.sessions[rec.ID] = rec
-		routes := &accountRoutingFake{managed: true, route: domain.ProviderSessionRoute{Provider: "claude", AccountID: "alice"}}
-		m.accounts = routes
-		_, err := m.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "managed-harness-switch"})
-		if !errors.Is(err, ports.ErrProviderAccountIncompatible) || !reflect.DeepEqual(sessions.sessions[rec.ID], rec) {
-			t.Fatalf("%s: err=%v", mode, err)
-		}
-		if len(runtime.destroyedIDs) != 0 || runtime.created != 0 || len(routes.assigned)+len(routes.launches)+len(routes.forgotten) != 0 {
-			t.Fatalf("%s: a refused change touched the session's process or account", mode)
-		}
+// A managed session switches provider onto its account for the target: planned
+// while the source still runs its handoff turn, moved once the source stopped.
+func TestAManagedTerminalSwitchesProviderOntoItsAccountForTheTarget(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	m, _, _ := newSwitchTestManager(t, runtime)
+	routes := &accountRoutingFake{managed: true, route: domain.ProviderSessionRoute{Provider: "claude", AccountID: "alice"}, env: managedLaunch}
+	m.accounts = routes
+	if _, err := m.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "managed-provider-switch"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSwitchWorkers(t, m)
+	if !reflect.DeepEqual(routes.planned, []string{"proj-1 codex"}) || !slices.Contains(routes.launched, "proj-1 codex own") {
+		t.Fatalf("planned=%v launched=%v", routes.planned, routes.launched)
+	}
+	if cfg := runtime.lastCfg; cfg.Env["AO_PROXY_TICKET"] != "session-ticket" || !slices.Contains(cfg.Argv, `model_provider="ao-managed"`) {
+		t.Fatalf("target launch env=%v argv=%v", cfg.Env, cfg.Argv)
 	}
 }
 

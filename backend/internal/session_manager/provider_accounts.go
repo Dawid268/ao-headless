@@ -12,13 +12,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func (m *Manager) applyAccountEnv(ctx context.Context, id domain.SessionID, env map[string]string) error {
+// applyAccountEnv adds the account of the session to a launch of its own agent,
+// which runs harness: after a switch to another provider the session's account
+// for that provider.
+func (m *Manager) applyAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, env map[string]string) error {
 	if m.accounts == nil {
 		return nil
 	}
-	managed, err := m.accounts.LaunchAccountEnv(ctx, id)
+	managed, err := m.accounts.LaunchAccountEnv(ctx, id, harness, false)
 	maps.Copy(env, managed)
 	return err
+}
+
+// plannedAccountEnv is what applyAccountEnv would add, with no route moved.
+func (m *Manager) plannedAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness) (map[string]string, error) {
+	if m.accounts == nil {
+		return nil, nil
+	}
+	return m.accounts.PlannedAccountEnv(ctx, id, harness)
+}
+
+// ApplyAccountEnv is applyAccountEnv for launches the chat service makes, such as side chats.
+func (m *Manager) ApplyAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, env map[string]string) error {
+	return m.applyAccountEnv(ctx, id, harness, env)
 }
 
 // sessionAccount is a session's route; false is a session whose sign-in Account Manager does not supply.
@@ -36,16 +52,16 @@ func (m *Manager) forgetAccount(ctx context.Context, id domain.SessionID) error 
 	return m.accounts.ForgetAccount(ctx, id)
 }
 
-// RelatedAccountEnv adds its owning worker's ticket to a same-provider reviewer's environment.
+// RelatedAccountEnv adds its owning worker's account for harness to a reviewer's
+// environment: the worker's own on the same provider, else its account for the
+// reviewer's provider, which starts as that provider's default.
 func (m *Manager) RelatedAccountEnv(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, env map[string]string) error {
-	route, managed, err := m.sessionAccount(ctx, id)
-	if err != nil || !managed || route.Provider != domain.AccountProvider(harness) {
-		return err
+	if m.accounts == nil {
+		return nil
 	}
-	if route.AccountID == "" {
-		return ports.ErrProviderLoginRequired
-	}
-	return m.applyAccountEnv(ctx, id, env)
+	related, err := m.accounts.LaunchAccountEnv(ctx, id, harness, true)
+	maps.Copy(env, related)
+	return err
 }
 
 // agentSwitching reports a session changing agent: it has no settled provider.

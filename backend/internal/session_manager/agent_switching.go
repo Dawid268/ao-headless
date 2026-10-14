@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -259,11 +260,6 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	}
 	if rec.Harness == cfg.TargetHarness {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w: %s", id, ErrAlreadyUsingHarness, cfg.TargetHarness)
-	}
-	if _, managed, accountErr := m.sessionAccount(ctx, id); accountErr != nil {
-		return domain.AgentSwitch{}, nil, accountErr
-	} else if managed {
-		return domain.AgentSwitch{}, nil, fmt.Errorf("managed sessions keep their provider; create a new session for another provider: %w", ports.ErrProviderAccountIncompatible)
 	}
 	if mode == domain.SessionModeChat {
 		if m.chat == nil || !m.chat.SupportsChat(rec.Harness) || !m.chat.SupportsChat(cfg.TargetHarness) {
@@ -782,6 +778,10 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		return result, fmt.Errorf("switch agent %s: record target native session: %w", id, err)
 	}
 
+	// The source has stopped: the session's route moves to the target's provider, and a rollback moves it back.
+	if err := m.applyAccountEnv(ctx, id, result.TargetHarness, target.env); err != nil {
+		return result, fmt.Errorf("switch agent %s: target account: %w", id, err)
+	}
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
@@ -1383,9 +1383,16 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		return preparedTargetActivation{}, fmt.Errorf("target config: %w", err)
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	// The session's account for the target's provider. Its route moves there only once
+	// the source has stopped, in executeAgentSwitch: the source's handoff turn runs before.
+	planned, err := m.plannedAccountEnv(ctx, rec.ID, harness)
+	if err != nil {
+		return preparedTargetActivation{}, fmt.Errorf("target account: %w", err)
+	}
+	maps.Copy(env, planned)
 	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
-	if validator, ok := agent.(ports.AgentLaunchAuthValidator); ok {
+	if validator, ok := agent.(ports.AgentLaunchAuthValidator); ok && len(planned) == 0 {
 		status, authErr := validator.ValidateLaunchAuth(ctx, rec.Metadata.WorkspacePath, env)
 		if authErr != nil {
 			m.logger.Warn("agent switch: target launch auth probe failed; launch remains authoritative",

@@ -589,6 +589,12 @@ func Run() error {
 			return runner.RunPromptSuggestionTask(taskCtx, id, turnID, systemPrompt, prompt)
 		})
 	}
+	// Side chats take the session's account at their own launch, as the main chat does.
+	if accounts, ok := sessMgr.(interface {
+		ApplyAccountEnv(context.Context, domain.SessionID, domain.AgentHarness, map[string]string) error
+	}); ok {
+		chatSvc.SetAccountEnv(accounts.ApplyAccountEnv)
+	}
 	if fenced, ok := sessMgr.(interface{ SetPersistentHostReconcileDone(<-chan struct{}) }); ok {
 		fenced.SetPersistentHostReconcileDone(persistentHostsReconciled)
 	}

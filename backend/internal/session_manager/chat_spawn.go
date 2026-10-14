@@ -130,7 +130,7 @@ func (m *Manager) runBackgroundTask(ctx context.Context, id domain.SessionID, sy
 			m.augmentAgentRuntimeEnv(agent, env)
 		}
 	}
-	if err := m.applyAccountEnv(ctx, rec.ID, env); err != nil {
+	if err := m.applyAccountEnv(ctx, rec.ID, rec.Harness, env); err != nil {
 		return "", fmt.Errorf("background task account: %w", err)
 	}
 	// This provider call is not the worker session. Suppress session-scoped hooks
@@ -247,7 +247,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		ExpectedControllerOwner: in.record.ControllerOwner(),
 		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
 			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
-				launchCtx, in.record, in.project.Config.Env, expected,
+				launchCtx, in.record, in.record.Harness, in.project.Config.Env, expected,
 			)
 			if prepareErr != nil {
 				return nil, fmt.Errorf("%w: %w", ErrSpawnBrowser, prepareErr)
@@ -510,7 +510,7 @@ func (m *Manager) resumeChatController(
 		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
 			m.adoptLegacyChat(launchCtx, rec)
 			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
-				launchCtx, rec, project.Config.Env, expected,
+				launchCtx, rec, rec.Harness, project.Config.Env, expected,
 			)
 			if prepareErr != nil {
 				return nil, prepareErr

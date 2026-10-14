@@ -325,11 +325,12 @@ func TestRandomAccountJourneysKeepTheHelperAndTheStoreInStep(t *testing.T) {
 				if r.AccountID != "" && (i < 0 || after.Accounts[i].Provider != r.Provider || !after.Accounts[i].SignedIn()) {
 					t.Fatalf("seed %d step %d: route %+v names no signed-in account of its provider", seed, step, r)
 				}
-				if r.AccountID == "" && after.Defaults[r.Provider] != "" {
+				// A Codex session waits rather than move onto a default of the other kind.
+				if r.AccountID == "" && after.Defaults[r.Provider] != "" && r.Provider != "codex" {
 					t.Fatalf("seed %d step %d: session %s waits although %s has a default", seed, step, r.SessionID, r.Provider)
 				}
 				h.route(string(r.SessionID), r.AccountID)
-				env, _ := h.svc.LaunchAccountEnv(h.ctx, r.SessionID)
+				env, _ := h.svc.LaunchAccountEnv(h.ctx, r.SessionID, map[string]domain.AgentHarness{"codex": domain.HarnessCodex, "claude": domain.HarnessClaudeCode}[r.Provider], false)
 				ticket := env["AO_PROXY_TICKET"] + env["ANTHROPIC_AUTH_TOKEN"]
 				if known, ok := tickets[string(r.SessionID)]; ok && known != ticket {
 					t.Fatalf("seed %d step %d: session %s changed its ticket", seed, step, r.SessionID)
