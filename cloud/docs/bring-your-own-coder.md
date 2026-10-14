@@ -86,11 +86,9 @@ have AO work in that same checkout, with the same access:
    below that root, and may not contain `.` or `..` segments.
 3. **Workspace ready check** if your template signals readiness itself (above).
 4. **Project Setup and Cleanup scripts** for anything per session (below).
-5. **Keep the agent out of secret files (.env): on** (the default). AO tells the
-   agent not to read or edit `.env` and `.env.*` files. Commands and `make`
-   targets that load `.env` themselves still work. This matters most once the
-   agent runs as the workspace user, because it then has the access to read
-   them.
+5. **Keep the agent out of secret files (.env): on** (the default). This
+   matters most once the agent runs as the workspace user, because it then has
+   the access to read them. See [Secret files](#secret-files).
 
 Without a working directory, **Use the template's existing checkout** (on by
 default with the workspace user) makes AO look for a checkout of the session's
@@ -171,6 +169,30 @@ docker compose -p "ao-$AO_SESSION_ID" exec -T app make db-migrate
 # Cleanup, step 1
 docker compose -p "ao-$AO_SESSION_ID" down --remove-orphans
 ```
+
+## Secret files
+
+With **Keep the agent out of secret files** on, a session's agent cannot read
+or edit `.env` or `.env.<name>` files (for example `.env.local`). Committed
+templates named `.env.example`, `.env.sample` and `.env.template` stay readable.
+
+- **Claude Code** gets permission rules that stop its file tools, and file
+  commands such as `cat`, `grep` or `cp`, from touching those files. The rules
+  hold in every permission mode, including auto-approve.
+- **Claude Code and Codex** also run an AO check before each shell command,
+  in the terminal and in Chat. A command that names one of those files is
+  blocked, for example `python3 -c "open('.env')"` or `source .env`, and the
+  agent is told to use the project's own `make` targets or scripts instead.
+- **Commands that load `.env` without naming it still run**, such as
+  `make db-host` or `docker compose up`. That is how a project uses its
+  secrets without the agent seeing them.
+
+This keeps the agent from reading secrets by accident or out of habit. It is
+not a hard boundary: a program the agent writes could still open the file, and
+Cursor and OpenCode sessions are not covered. Secrets the agent must never be
+able to reach belong outside the workspace user's access, for example by
+running the agent as `ao-worker` and keeping the file readable only by the
+workspace user.
 
 ## Troubleshooting
 

@@ -79,13 +79,14 @@ func applySecretFileProtection(settings map[string]any, protect bool) error {
 	return nil
 }
 
-// writeClaudeSecretFileProtection applies the protection to the settings.json
-// in Claude's config directory, which both the terminal CLI and the Chat ACP
-// adapter load as user settings.
+// writeClaudeSecretFileProtection applies the protection (deny rules and the
+// shell guard hook) to the settings.json in Claude's config directory, which
+// both the terminal CLI and the Chat ACP adapter load as user settings.
 func (b HarnessBuilder) writeClaudeSecretFileProtection(configDir string) error {
 	var applyErr error
 	err := updateJSONFile(filepath.Join(configDir, "settings.json"), func(settings map[string]any) {
 		applyErr = applySecretFileProtection(settings, b.ProtectSecretFiles)
+		applySecretFileGuardHook(settings, b.secretFileGuard())
 	})
 	if err != nil {
 		return err

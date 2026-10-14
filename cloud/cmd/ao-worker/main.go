@@ -64,6 +64,11 @@ var workerCapabilities = []string{
 }
 
 func main() {
+	// The coding agent runs this binary as its PreToolUse hook (see
+	// workerexec.RunSecretFileGuard); answer it before any worker setup.
+	if len(os.Args) == 2 && os.Args[1] == workerexec.SecretFileGuardArg {
+		os.Exit(workerexec.RunSecretFileGuard(os.Stdin, os.Stderr))
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
 		logger.Error("worker exited", "error", err)
@@ -148,6 +153,10 @@ func run(logger *slog.Logger) error {
 	// exactly there, adopting the template's checkout or cloning into it.
 	workingDirectory := readWorkingDirectory()
 	protectSecretFiles := os.Getenv(worker.ProtectSecretFilesEnv) == "1"
+	secretFileGuard := ""
+	if protectSecretFiles {
+		secretFileGuard = secretFileGuardCommand(logger)
+	}
 	reuse := worker.ReuseDecision{Workspace: workspace}
 	var workingDirectoryErr error
 	hasRepository := strings.TrimSpace(bootstrap.Launch.RepositoryURL) != "" &&
@@ -240,7 +249,7 @@ func run(logger *slog.Logger) error {
 		}
 		b := workerexec.HarnessBuilder{
 			DataDir: dataDir, Launch: bootstrap.Launch, Env: map[string]string{},
-			ProtectSecretFiles: protectSecretFiles,
+			ProtectSecretFiles: protectSecretFiles, SecretFileGuard: secretFileGuard,
 		}
 		b.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
 		b.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
@@ -346,7 +355,7 @@ func run(logger *slog.Logger) error {
 		}
 		command, err := (workerexec.HarnessBuilder{
 			DataDir: dataDir, ConfigRoot: filepath.Join(dataDir, "reviews", input.ReviewRunID),
-			ProtectSecretFiles: protectSecretFiles,
+			ProtectSecretFiles: protectSecretFiles, SecretFileGuard: secretFileGuard,
 		}).BuildInteractive(launch, credential, workspace)
 		if err != nil {
 			return workerexec.Command{}, err
@@ -1528,4 +1537,21 @@ func (c *client) currentToken() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.token
+}
+
+// secretFileGuardCommand is the hook command that runs this binary's
+// secret-file guard. A self-updated worker re-execs from its healed copy, so
+// os.Executable names the binary that is actually current. Without it the
+// Read/Edit deny rules still apply; only the shell guard is skipped.
+func secretFileGuardCommand(logger *slog.Logger) string {
+	self, err := os.Executable()
+	if err != nil {
+		logger.Warn("resolve worker executable for the secret file guard", "error", err)
+		return ""
+	}
+	if strings.ContainsAny(self, " \t\n\"'\\$`") {
+		logger.Warn("worker executable path cannot be used as a hook command", "path", self)
+		return ""
+	}
+	return self + " " + workerexec.SecretFileGuardArg
 }

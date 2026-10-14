@@ -60,7 +60,7 @@
 	"settings.coder.workspaceSetupHint": "AO 在你的模板工作区中的工作方式。更改会应用于保存后启动的会话。",
 	"settings.coder.workspaceSetupReadOnly": "只有组织所有者和管理员可以更改这些设置。",
 	"settings.coder.protectSecretFilesLabel": "禁止智能体访问密钥文件（.env）",
-	"settings.coder.protectSecretFilesHint": "AO 会告诉智能体不要读取或编辑工作区中的 .env 和 .env.* 文件。自行加载 .env 的命令和 make 目标仍可正常运行。建议开启，尤其是在智能体以工作区用户身份运行时。",
+	"settings.coder.protectSecretFilesHint": "适用于 Claude Code 和 Codex。智能体无法读取或编辑工作区中的 .env 和 .env.* 文件，提及这些文件名的 shell 命令也会被拦截。自行加载 .env 的 make 目标和脚本仍可正常运行。建议开启，尤其是在智能体以工作区用户身份运行时。",
 	"settings.coder.workingDirectoryLabel": "工作目录",
 	"settings.coder.workingDirectoryHint": "可选。会话工作的位置，例如 ~/work/{repo}。{repo} 是仓库名称。AO 会使用该位置已有的检出（切换到会话分支，并将本地更改保存到 stash），如果不存在则克隆到该位置。需要使用工作区用户。",
 	"settings.coder.workingDirectoryNeedsWorkspaceUser": "请先开启“以工作区用户身份运行智能体”，再设置工作目录。",

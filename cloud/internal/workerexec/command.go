@@ -28,6 +28,9 @@ type Command struct {
 	Env          map[string]string
 	SystemPrompt string
 	Cleanup      func()
+	// SecretFileGuard is the PreToolUse hook command a Codex Chat turn
+	// registers and trusts in its app-server (see trustCodexSecretFileGuard).
+	SecretFileGuard string
 }
 
 type CommandBuilder interface {
@@ -48,6 +51,10 @@ type HarnessBuilder struct {
 	// files (see secretFileDenyRules). A bring-your-own Coder connection sets
 	// it through worker.ProtectSecretFilesEnv.
 	ProtectSecretFiles bool
+	// SecretFileGuard is the command that runs RunSecretFileGuard
+	// ("<ao-worker> secret-file-guard"). With ProtectSecretFiles it is
+	// registered as a PreToolUse hook on Claude's and Codex's shell tools.
+	SecretFileGuard string
 }
 
 // extraReposPromptNote describes the additional repositories the worker checked
@@ -144,6 +151,7 @@ func (b HarnessBuilder) BuildInteractive(
 		if launch.Kind != "reviewer" {
 			providerArgs = codexActivityHookArgs(hookHelperPath(b.DataDir))
 		}
+		providerArgs = append(providerArgs, codexSecretFileGuardArgs(b.secretFileGuard())...)
 		if launch.ReasoningEffort != "" {
 			providerArgs = append(providerArgs, "-c", "model_reasoning_effort="+strconv.Quote(launch.ReasoningEffort))
 		}
@@ -392,6 +400,11 @@ func (b HarnessBuilder) Build(
 		command.Args, err = claudeArgs(turn)
 	case "codex":
 		command.Args, err = codexArgs(turn)
+		if err == nil {
+			// Global options go before exec's own arguments and the prompt.
+			command.Args = slices.Insert(command.Args, 1, codexSecretFileGuardArgs(b.secretFileGuard())...)
+			command.SecretFileGuard = b.secretFileGuard()
+		}
 	case "cursor":
 		command.Args, err = cursorArgs(turn)
 	default:
@@ -519,6 +532,7 @@ func (b HarnessBuilder) prepareClaudeCloudExperience(command *Command, workspace
 		}
 		permissions["defaultMode"] = mode
 		protectionErr = applySecretFileProtection(settings, b.ProtectSecretFiles)
+		applySecretFileGuardHook(settings, b.secretFileGuard())
 	}); err != nil {
 		return fmt.Errorf("prepare Claude settings: %w", err)
 	}
@@ -535,6 +549,7 @@ func (b HarnessBuilder) prepareClaudeCloudExperience(command *Command, workspace
 	); err != nil {
 		return fmt.Errorf("install Claude activity hooks: %w", err)
 	}
+	excludeFromGit(workspace, ".claude/settings.local.json")
 	return nil
 }
 

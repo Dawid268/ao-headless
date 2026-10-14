@@ -60,7 +60,7 @@
 	"settings.coder.workspaceSetupHint": "How AO works inside your template's workspaces. Changes apply to sessions started after you save.",
 	"settings.coder.workspaceSetupReadOnly": "Only organization owners and admins can change these settings.",
 	"settings.coder.protectSecretFilesLabel": "Keep the agent out of secret files (.env)",
-	"settings.coder.protectSecretFilesHint": "AO tells the agent not to read or edit .env and .env.* files in the workspace. Commands and make targets that load .env themselves still work. Recommended, especially when the agent runs as the workspace user.",
+	"settings.coder.protectSecretFilesHint": "For Claude Code and Codex. The agent can't read or edit .env and .env.* files in the workspace, and shell commands that name one are blocked. Make targets and scripts that load .env themselves still work. Recommended, especially when the agent runs as the workspace user.",
 	"settings.coder.workingDirectoryLabel": "Working directory",
 	"settings.coder.workingDirectoryHint": "Optional. Where the session works, for example ~/work/{repo}. {repo} is the repository name. AO uses the checkout already there (switching it to the session branch and stashing local changes) or clones into it if it is missing. Requires the workspace user.",
 	"settings.coder.workingDirectoryNeedsWorkspaceUser": "Turn on \"Run the agent as the workspace user\" to set a working directory.",

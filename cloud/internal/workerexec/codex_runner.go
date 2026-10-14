@@ -202,7 +202,7 @@ func (s *Supervisor) runCodex(ctx context.Context, turn worker.Turn, command Com
 	if !ok {
 		return errors.New("Cloud approval control is unavailable")
 	}
-	process := exec.CommandContext(ctx, command.Path, "app-server")
+	process := exec.CommandContext(ctx, command.Path, append(codexSecretFileGuardArgs(command.SecretFileGuard), "app-server")...)
 	configureProviderProcess(process)
 	process.Dir = command.Dir
 	process.Env = mergedEnvironment(command.Env)
@@ -231,6 +231,11 @@ func (s *Supervisor) runCodex(ctx context.Context, turn worker.Turn, command Com
 	}
 	if err := conn.notify("initialized", map[string]any{}); err != nil {
 		return err
+	}
+	if command.SecretFileGuard != "" {
+		if err := trustCodexSecretFileGuard(openCtx, conn, command.Dir, command.SecretFileGuard); err != nil {
+			return fmt.Errorf("protect secret files in Codex: %w", err)
+		}
 	}
 	policy, sandbox, reviewer := codexApprovalSettings(turn)
 	threadParams := map[string]any{

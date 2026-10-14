@@ -60,7 +60,7 @@
 	"settings.coder.workspaceSetupHint": "Cómo trabaja AO dentro de los espacios de trabajo de tu plantilla. Los cambios se aplican a las sesiones que se inicien después de guardar.",
 	"settings.coder.workspaceSetupReadOnly": "Solo los propietarios y administradores de la organización pueden cambiar esta configuración.",
 	"settings.coder.protectSecretFilesLabel": "Mantener al agente fuera de los archivos secretos (.env)",
-	"settings.coder.protectSecretFilesHint": "AO indica al agente que no lea ni edite los archivos .env y .env.* del espacio de trabajo. Los comandos y objetivos de make que cargan .env por su cuenta siguen funcionando. Recomendado, sobre todo cuando el agente se ejecuta como el usuario del espacio de trabajo.",
+	"settings.coder.protectSecretFilesHint": "Para Claude Code y Codex. El agente no puede leer ni editar los archivos .env y .env.* del espacio de trabajo, y se bloquean los comandos de shell que nombran uno. Los objetivos de make y los scripts que cargan .env por su cuenta siguen funcionando. Recomendado, sobre todo cuando el agente se ejecuta como el usuario del espacio de trabajo.",
 	"settings.coder.workingDirectoryLabel": "Directorio de trabajo",
 	"settings.coder.workingDirectoryHint": "Opcional. Dónde trabaja la sesión, por ejemplo ~/work/{repo}. {repo} es el nombre del repositorio. AO usa el checkout que ya existe ahí (lo cambia a la rama de la sesión y guarda los cambios locales en un stash) o clona en él si no existe. Requiere el usuario del espacio de trabajo.",
 	"settings.coder.workingDirectoryNeedsWorkspaceUser": "Activa «Ejecutar el agente como el usuario del espacio de trabajo» para definir un directorio de trabajo.",

@@ -60,7 +60,7 @@
 	"settings.coder.workspaceSetupHint": "テンプレートのワークスペース内で AO がどう動作するかを設定します。変更は保存後に開始したセッションに適用されます。",
 	"settings.coder.workspaceSetupReadOnly": "この設定を変更できるのは組織のオーナーと管理者だけです。",
 	"settings.coder.protectSecretFilesLabel": "シークレットファイル (.env) にエージェントを近づけない",
-	"settings.coder.protectSecretFilesHint": "AO はワークスペース内の .env と .env.* ファイルを読み取ったり編集したりしないようエージェントに指示します。.env を自分で読み込むコマンドや make ターゲットはそのまま動作します。特にエージェントをワークスペースユーザーとして実行する場合に推奨します。",
+	"settings.coder.protectSecretFilesHint": "Claude Code と Codex が対象です。エージェントはワークスペース内の .env と .env.* ファイルを読み取りも編集もできず、それらのファイル名を含むシェルコマンドはブロックされます。.env を自分で読み込む make ターゲットやスクリプトはそのまま動作します。特にエージェントをワークスペースユーザーとして実行する場合に推奨します。",
 	"settings.coder.workingDirectoryLabel": "作業ディレクトリ",
 	"settings.coder.workingDirectoryHint": "任意。セッションが作業する場所です (例: ~/work/{repo})。{repo} はリポジトリ名です。AO はそこにある既存のチェックアウトを使い (セッションのブランチに切り替え、ローカルの変更は stash に保存)、なければそこにクローンします。ワークスペースユーザーが必要です。",
 	"settings.coder.workingDirectoryNeedsWorkspaceUser": "作業ディレクトリを設定するには「ワークスペースユーザーとしてエージェントを実行」をオンにしてください。",

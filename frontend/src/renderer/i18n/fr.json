@@ -60,7 +60,7 @@
 	"settings.coder.workspaceSetupHint": "La façon dont AO travaille dans les espaces de travail de votre modèle. Les modifications s'appliquent aux sessions démarrées après l'enregistrement.",
 	"settings.coder.workspaceSetupReadOnly": "Seuls les propriétaires et les administrateurs de l'organisation peuvent modifier ces paramètres.",
 	"settings.coder.protectSecretFilesLabel": "Tenir l'agent à l'écart des fichiers secrets (.env)",
-	"settings.coder.protectSecretFilesHint": "AO demande à l'agent de ne pas lire ni modifier les fichiers .env et .env.* de l'espace de travail. Les commandes et cibles make qui chargent .env elles-mêmes fonctionnent toujours. Recommandé, surtout quand l'agent s'exécute en tant qu'utilisateur de l'espace de travail.",
+	"settings.coder.protectSecretFilesHint": "Pour Claude Code et Codex. L'agent ne peut ni lire ni modifier les fichiers .env et .env.* de l'espace de travail, et les commandes shell qui en nomment un sont bloquées. Les cibles make et les scripts qui chargent .env eux-mêmes fonctionnent toujours. Recommandé, surtout quand l'agent s'exécute en tant qu'utilisateur de l'espace de travail.",
 	"settings.coder.workingDirectoryLabel": "Répertoire de travail",
 	"settings.coder.workingDirectoryHint": "Facultatif. L'endroit où la session travaille, par exemple ~/work/{repo}. {repo} est le nom du dépôt. AO utilise le checkout déjà présent (en passant sur la branche de la session et en mettant les modifications locales dans un stash) ou y clone le dépôt s'il manque. Nécessite l'utilisateur de l'espace de travail.",
 	"settings.coder.workingDirectoryNeedsWorkspaceUser": "Activez « Exécuter l'agent en tant qu'utilisateur de l'espace de travail » pour définir un répertoire de travail.",
