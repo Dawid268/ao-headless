@@ -40,6 +40,10 @@ type Service struct {
 	stamps   map[string]time.Time
 	logins   map[string]*attempt
 	devices  map[string]string // whose login each provider's own agent on this computer holds
+	// resetting runs one reset at a time; unsettled keeps the request ID of a
+	// reset whose answer was lost, so a retry cannot spend a second one.
+	resetting sync.Mutex
+	unsettled map[string]string
 }
 
 type attempt struct {
@@ -51,7 +55,7 @@ type attempt struct {
 // New creates the account service.
 func New(store ports.ProviderAccountStore, helper ports.AccountHelper, newID func() string) *Service {
 	return &Service{store: store, helper: helper, newID: newID, now: time.Now, tick: 10 * time.Second, changed: func() {},
-		usage: map[string]domain.ProviderAccountUsage{}, moved: map[string]*domain.ProviderAccountMove{}, stamps: map[string]time.Time{}, logins: map[string]*attempt{}}
+		usage: map[string]domain.ProviderAccountUsage{}, moved: map[string]*domain.ProviderAccountMove{}, stamps: map[string]time.Time{}, logins: map[string]*attempt{}, unsettled: map[string]string{}}
 }
 
 // OnChange sets what is called when the accounts a provider can use change.
@@ -277,6 +281,18 @@ func (s *Service) pick(ctx context.Context, provider, chosen string) (domain.Pro
 	return st.Accounts[index(st, id)], nil
 }
 
+// movable reports whether a session on account from can continue on account to.
+// Codex sends its earlier encrypted reasoning back on every turn, and a ChatGPT
+// plan cannot read what an API key wrote, or the other way round.
+func movable(st domain.ProviderAccountState, from, to string) bool {
+	i, j := index(st, from), index(st, to)
+	if i < 0 || j < 0 {
+		return j >= 0 // a session with no account yet can go on any
+	}
+	a, b := st.Accounts[i], st.Accounts[j]
+	return a.Provider == b.Provider && (a.Provider != "codex" || a.APIKey() == b.APIKey())
+}
+
 // managed reports a provider AO holds an account for, signed in or not; the
 // agents of any other keep their own setup, as before Account Manager.
 func managed(st domain.ProviderAccountState, provider string) bool {
@@ -396,7 +412,7 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 				a.Reserved = *in.Reserved && st.Defaults[a.Provider] != id
 			}
 			if in.OnLimit != nil {
-				if j := index(*st, *in.OnLimit); *in.OnLimit != "" && (j < 0 || *in.OnLimit == id || st.Accounts[j].Provider != a.Provider) {
+				if *in.OnLimit != "" && (*in.OnLimit == id || !movable(*st, id, *in.OnLimit)) {
 					return "", ports.ErrProviderAccountIncompatible
 				}
 				a.OnLimit = *in.OnLimit
@@ -407,7 +423,7 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 			return "", nil
 		case "assign-session":
 			j := routed(*st, domain.SessionID(in.SessionID))
-			if j < 0 {
+			if j < 0 || st.Routes[j].AccountID != "" && !movable(*st, st.Routes[j].AccountID, id) {
 				return "", ports.ErrProviderAccountIncompatible
 			}
 			st.Routes[j].AccountID = id
@@ -437,7 +453,7 @@ func (s *Service) remove(ctx context.Context, st *domain.ProviderAccountState, i
 	}
 	for j, r := range st.Routes {
 		if r.AccountID == a.ID {
-			st.Routes[j].AccountID = next
+			st.Routes[j].AccountID = map[bool]string{true: next}[movable(*st, a.ID, next)] // else it waits for a sign-in
 		}
 	}
 	if signOut {
@@ -479,6 +495,9 @@ func (s *Service) switchOnLimit(ctx context.Context) error {
 			if err := s.usable(ctx, *st, from.OnLimit, from.Provider); err != nil {
 				return "", err
 			}
+			if !movable(*st, from.ID, from.OnLimit) { // a target saved before this rule
+				return "", ports.ErrProviderAccountIncompatible
+			}
 			for i, r := range st.Routes {
 				if r.AccountID == from.ID {
 					st.Routes[i].AccountID, sessions = from.OnLimit, sessions+1
@@ -509,7 +528,17 @@ func (s *Service) helperAction(ctx context.Context, id, action string) (string, 
 	case !st.Accounts[i].SignedIn():
 		return "", ports.ErrProviderLoginRequired
 	}
-	outcome, err := s.helper.AccountAction(ctx, st.Accounts[i], action, s.newID())
+	requestID := s.newID()
+	if action == ports.AccountActionReset {
+		s.resetting.Lock() // a click in a second window waits, then reuses the ID
+		defer s.resetting.Unlock()
+		requestID = cmp.Or(s.unsettled[id], requestID)
+	}
+	outcome, err := s.helper.AccountAction(ctx, st.Accounts[i], action, requestID)
+	if action == ports.AccountActionReset {
+		// Until the provider's answer is known the same claim is sent again; it answers already_redeemed.
+		s.unsettled[id] = map[bool]string{true: requestID}[err != nil || outcome == domain.ProviderResetUnknown]
+	}
 	s.due("usage "+st.Accounts[i].AuthID, 0, true) // The cached reading is now out of date.
 	if action == ports.AccountActionRefresh {
 		s.check(ctx, st, true) // A refused renewal is the verdict that the sign-in is dead.

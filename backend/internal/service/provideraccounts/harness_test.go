@@ -60,37 +60,38 @@ func (m *memoryStore) get() domain.ProviderAccountState {
 // fakeHelper is the account helper: it holds the route table it was last
 // given and refuses one that drops an account with a request in flight.
 type fakeHelper struct {
-	mu        sync.Mutex
-	routes    []ports.ProviderRoute
-	authIDs   []string
-	applies   int
-	applyErr  error
-	inFlight  map[string]bool
-	held      []ports.ProviderCredential
-	heldErr   error
-	heldCalls int
-	deleted   []string
-	deleteErr error
-	usage     domain.ProviderAccountUsage
-	usageErr  error
-	usageBy   map[string]domain.ProviderAccountUsage // by sign-in, in place of usage and usageErr
-	usageFail map[string]bool
-	usageFor  []string
-	actions   []string
-	outcome   string
-	actionErr error
-	models    []ports.AgentModelInfo
-	modelsFor []string
-	started   []ports.ProviderLoginRequest
-	startErr  error
-	status    string
-	statusErr error
-	results   map[string]ports.VerifiedProviderLogin
-	resultErr error
-	cancelled []string
-	cancelErr error
-	devices   map[string]string // whose login the computer's own agent holds, by provider
-	reads     int
+	mu         sync.Mutex
+	routes     []ports.ProviderRoute
+	authIDs    []string
+	applies    int
+	applyErr   error
+	inFlight   map[string]bool
+	held       []ports.ProviderCredential
+	heldErr    error
+	heldCalls  int
+	deleted    []string
+	deleteErr  error
+	usage      domain.ProviderAccountUsage
+	usageErr   error
+	usageBy    map[string]domain.ProviderAccountUsage // by sign-in, in place of usage and usageErr
+	usageFail  map[string]bool
+	usageFor   []string
+	actions    []string
+	requestIDs []string
+	outcome    string
+	actionErr  error
+	models     []ports.AgentModelInfo
+	modelsFor  []string
+	started    []ports.ProviderLoginRequest
+	startErr   error
+	status     string
+	statusErr  error
+	results    map[string]ports.VerifiedProviderLogin
+	resultErr  error
+	cancelled  []string
+	cancelErr  error
+	devices    map[string]string // whose login the computer's own agent holds, by provider
+	reads      int
 }
 
 func (f *fakeHelper) Endpoint() string           { return "http://127.0.0.1:1234" }
@@ -145,6 +146,7 @@ func (f *fakeHelper) AccountAction(_ context.Context, a domain.ProviderAccount, 
 		return "", errors.New("an action needs a request id")
 	}
 	f.actions = append(f.actions, action+" "+a.AuthID)
+	f.requestIDs = append(f.requestIDs, requestID)
 	return f.outcome, f.actionErr
 }
 
