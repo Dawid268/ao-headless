@@ -11,7 +11,9 @@ vi.mock("../../hooks/useAgentModelsQuery", () => ({
 		queryFn: async () => ({
 			models: agent === "codex"
 				? [{ id: "gpt-x", label: "GPT X", isDefault: true, efforts: ["low", "high"], defaultEffort: "high" }]
-				: [],
+				: agent === "cursor"
+					? ["claude-opus-4-8-high", "claude-opus-4-8-thinking-high"].map((id) => ({ id, label: id }))
+					: [],
 		}),
 	}),
 }));
@@ -87,6 +89,14 @@ describe("AgentModelPicker", () => {
 		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
 		expect(await screen.findByRole("menuitem", { name: /Model.*GPT X/ })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: /Effort.*High/ })).toBeInTheDocument();
+	});
+
+	it("offers Cursor's thinking when a terminal switches to it", async () => {
+		const user = userEvent.setup();
+		const { onPendingChange } = open({ harness: "cursor", model: "claude-opus-4-8-high" }, true);
+		await user.click(screen.getByRole("button", { name: "Agent running in this terminal" }));
+		await user.click(await screen.findByText("Thinking"));
+		expect(onPendingChange).toHaveBeenCalledWith(expect.objectContaining({ harness: "cursor", model: "claude-opus-4-8-thinking-high" }));
 	});
 
 	it("offers only the agent row for a terminal's running agent", async () => {
