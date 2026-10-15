@@ -37,14 +37,14 @@ func TestTryAcquireRespectsCapsAndPressure(t *testing.T) {
 	}
 
 	avail = 4 << 30 // enter pressure
-	alive["w1"] = false
-	if !b.ReleaseIfDead("w1") {
-		t.Fatal("expected release")
-	}
-	// pressure caps: total 3, already hold o1,o2,w2,w3,w4 = 5 until we release more
-	for _, id := range []string{"w2", "w3", "w4"} {
+	// Observe live PIDs once so reservation grace clears, then release on death.
+	for _, id := range []string{"w1", "w2", "w3", "w4"} {
+		alive[id] = true
+		_ = b.ReleaseIfDead(id)
 		alive[id] = false
-		b.ReleaseIfDead(id)
+		if !b.ReleaseIfDead(id) {
+			t.Fatalf("expected release of %s", id)
+		}
 	}
 	// held: o1, o2 (2). pressure orch max 1 — cannot acquire another orch; worker ok up to pressure worker 2
 	if err := b.TryAcquireSpawn("o3", ClassOrchestrator); !errors.Is(err, ErrNoCapacity) {
@@ -119,13 +119,16 @@ func TestEnqueueDedupAndFairDrain(t *testing.T) {
 	}
 	for _, w := range got {
 		alive[w.HostID] = true
+		_ = b.ReleaseIfDead(w.HostID) // clear Drain reservation grace
 	}
 	b.Enqueue(QueuedWake{HostID: "a2", ProjectID: "A", Class: ClassWorker})
 	if len(b.Drain(context.Background())) != 0 {
 		t.Fatal("expected capacity full")
 	}
 	alive["a1"] = false
-	b.ReleaseIfDead("a1")
+	if !b.ReleaseIfDead("a1") {
+		t.Fatal("expected release of a1")
+	}
 	got = b.Drain(context.Background())
 	if len(got) != 1 || got[0].HostID != "a2" {
 		t.Fatalf("drain after free = %v", got)

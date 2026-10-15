@@ -211,13 +211,15 @@ func (b *Budget) MarkSeeded() {
 func (b *Budget) MarkSeededForTest() { b.MarkSeeded() }
 
 // NoteAdopt records an already-live host without consuming a new spawn slot.
-// If the host was not held (e.g. raced Seed), it is charged once.
+// If the host was not held (e.g. raced Seed), it is charged once. A live host
+// clears any SoftAdmit/Drain reservation grace.
 func (b *Budget) NoteAdopt(hostID string, class Class) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, ok := b.held[hostID]; !ok {
 		b.held[hostID] = class
 	}
+	delete(b.reservedUntil, hostID)
 }
 
 // TryAcquireSpawn reserves a slot for a new host process. Returns ErrNoCapacity
