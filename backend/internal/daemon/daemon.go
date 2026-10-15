@@ -231,6 +231,7 @@ func Run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	chatHostBudget := installChatHostBudget(cfg.DataDir, store, log)
 	if _, err := store.RequeueClaimedReports(context.Background()); err != nil {
 		return fmt.Errorf("recover report delivery claims: %w", err)
 	}
@@ -1071,6 +1072,12 @@ func Run() error {
 			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store, cfg.AppRunID); reconcileErr != nil {
 				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
 			}
+			if seedErr := chatHostBudget.Seed(cfg.DataDir); seedErr != nil {
+				log.Error("chat host warm budget seed failed", "err", seedErr)
+				// Fail open for boot: allow spawns rather than wedging the daemon
+				// if the chat-hosts directory is unreadable after reconcile.
+				chatHostBudget.MarkSeeded()
+			}
 			close(persistentHostsReconciled)
 			// Reviewer-owned Chat controllers wait for persistent host reconciliation.
 			// Recover them only after the listener is ready and the gate is closed, or
@@ -1096,11 +1103,18 @@ func Run() error {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if !settingsSvc.ChatHibernationEnabled() {
-						continue
+					if settingsSvc.ChatHibernationEnabled() {
+						if err := sessMgr.HibernateIdleChats(ctx); err != nil && ctx.Err() == nil {
+							log.Warn("idle Chat hibernation failed", "err", err)
+						}
 					}
-					if err := sessMgr.HibernateIdleChats(ctx); err != nil && ctx.Err() == nil {
-						log.Warn("idle Chat hibernation failed", "err", err)
+					// Drop hosts for exited (non-terminated) Chat sessions even when
+					// hibernation is off — they cannot be adopted and only burn RAM.
+					if err := reconcilePersistentChatHosts(ctx, cfg.DataDir, store, cfg.AppRunID); err != nil && ctx.Err() == nil {
+						log.Warn("persistent chat host reclaim failed", "err", err)
+					}
+					for hostID := range chatHostBudget.Snapshot().Held {
+						chatHostBudget.ReleaseIfDead(hostID)
 					}
 				}
 			}

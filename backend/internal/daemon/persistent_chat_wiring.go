@@ -38,7 +38,12 @@ func reconcilePersistentChatHosts(ctx context.Context, dataDir string, store per
 func persistentChatHostKeepSet(records []domain.SessionRecord, reviews []domain.Review) map[string]struct{} {
 	keep := make(map[string]struct{})
 	for _, rec := range records {
-		if rec.IsTerminated || rec.HibernatedAt != nil || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
+		// Exited Chat sessions keep their durable row but must not pin a provider
+		// host across daemon restarts — board hover/open used to leave dozens of
+		// idle Codex processes holding GBs of RAM after AO came back.
+		if rec.IsTerminated || rec.HibernatedAt != nil ||
+			rec.Activity.State == domain.ActivityExited ||
+			domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
 			continue
 		}
 		keep[string(rec.ID)] = struct{}{}

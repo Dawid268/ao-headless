@@ -14,6 +14,7 @@ func TestPersistentChatHostKeepSetUsesDurableOwnership(t *testing.T) {
 	records := []domain.SessionRecord{
 		{ID: "live-chat", Mode: domain.SessionModeChat, Harness: domain.HarnessCodex},
 		{ID: "terminated-chat", Mode: domain.SessionModeChat, Harness: domain.HarnessCodex, IsTerminated: true},
+		{ID: "exited-chat", Mode: domain.SessionModeChat, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityExited}},
 		{ID: "tui", Mode: domain.SessionModeTUI, Harness: domain.HarnessCodex},
 		{ID: "other-provider", Mode: domain.SessionModeChat, Harness: domain.HarnessClaudeCode},
 		{ID: "hibernated-chat", Mode: domain.SessionModeChat, Harness: domain.HarnessCodex, HibernatedAt: &before},
@@ -27,6 +28,9 @@ func TestPersistentChatHostKeepSetUsesDurableOwnership(t *testing.T) {
 	}
 	if _, ok := keep["other-provider"]; !ok {
 		t.Fatalf("keep = %v, missing other-provider", keep)
+	}
+	if _, ok := keep["exited-chat"]; ok {
+		t.Fatalf("keep = %v, exited-chat must not pin a host", keep)
 	}
 	if _, ok := keep["review-recoverable-review"]; !ok {
 		t.Fatalf("keep = %v, missing recoverable reviewer host", keep)

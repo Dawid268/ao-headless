@@ -1,0 +1,29 @@
+# Portainer / docker compose stack for a self-hosted AO headless host.
+#
+# After first start, exec into the container (or use a sidecar) and run:
+#   ao remote-host enable --tunnel-only
+#   ao remote-host status
+# Then pair the printed address + password from the laptop (Developer mode →
+# Settings → Remote hosts). Put Tailscale on the VPS/network path to the
+# authenticated listener — do not Tailscale-serve the primary loopback daemon.
+services:
+  ao:
+    build:
+      context: ../..
+      dockerfile: deploy/headless/Dockerfile
+    image: ao-headless:local
+    restart: unless-stopped
+    environment:
+      AO_DATA_DIR: /ao-data
+      AO_CHAT_HOST_MAX_TOTAL: ${AO_CHAT_HOST_MAX_TOTAL:-6}
+      AO_CHAT_HOST_MAX_ORCH: ${AO_CHAT_HOST_MAX_ORCH:-2}
+      AO_CHAT_HOST_MAX_WORKER: ${AO_CHAT_HOST_MAX_WORKER:-4}
+    volumes:
+      - ao-data:/ao-data
+    # Map only if you terminate TLS/auth in front; prefer Tailscale to the host.
+    # ports:
+    #   - "8787:8787"
+    network_mode: bridge
+
+volumes:
+  ao-data:

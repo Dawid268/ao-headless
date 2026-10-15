@@ -290,6 +290,8 @@ func validateDescriptor(cfg Config, d Descriptor) error {
 
 // ConnectOrStart attaches to an existing compatible host or starts one with the
 // current AO executable. Failed/incompatible probes never terminate that host.
+// When the daemon installed SpawnAdmission, adopt paths NoteAdopt and spawn
+// paths BeforeSpawn / AfterFailedSpawn so warm-host budgets stay accurate.
 func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 	if d, err := readDescriptor(cfg.DataDir, cfg.SessionID); err == nil {
 		if err := validateDescriptor(cfg, d); err != nil && processalive.Alive(d.PID) {
@@ -297,6 +299,9 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		}
 		transport, attachErr := attach(ctx, d, true)
 		if attachErr == nil {
+			if a := admission(); a != nil && a.NoteAdopt != nil {
+				a.NoteAdopt(cfg.SessionID)
+			}
 			return transport, nil
 		}
 		if errors.Is(attachErr, ErrAttached) {
@@ -314,6 +319,9 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 				}
 				transport, attachErr = attach(ctx, d, true)
 				if attachErr == nil {
+					if a := admission(); a != nil && a.NoteAdopt != nil {
+						a.NoteAdopt(cfg.SessionID)
+					}
 					return transport, nil
 				}
 				if !errors.Is(attachErr, ErrAttached) {
@@ -353,18 +361,33 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 	if len(cfg.Argv) == 0 {
 		return nil, errors.New("chat host start requires provider argv")
 	}
+	if a := admission(); a != nil && a.BeforeSpawn != nil {
+		if err := a.BeforeSpawn(cfg.SessionID); err != nil {
+			return nil, err
+		}
+	}
 	if err := spawnDetached(ctx, cfg); err != nil {
+		if a := admission(); a != nil && a.AfterFailedSpawn != nil {
+			a.AfterFailedSpawn(cfg.SessionID, false)
+		}
 		return nil, err
 	}
 	deadline := time.Now().Add(startupTimeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
+			if a := admission(); a != nil && a.AfterFailedSpawn != nil {
+				_, alive := HostPID(cfg.DataDir, cfg.SessionID)
+				a.AfterFailedSpawn(cfg.SessionID, alive)
+			}
 			return nil, err
 		}
 		d, err := readDescriptor(cfg.DataDir, cfg.SessionID)
 		if err == nil {
 			if compatibleErr := validateDescriptor(cfg, d); compatibleErr != nil {
+				if a := admission(); a != nil && a.AfterFailedSpawn != nil {
+					a.AfterFailedSpawn(cfg.SessionID, processalive.Alive(d.PID))
+				}
 				return nil, compatibleErr
 			}
 			transport, attachErr := attach(ctx, d, false)
@@ -378,7 +401,11 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if d, readErr := readDescriptor(cfg.DataDir, cfg.SessionID); readErr == nil && processalive.Alive(d.PID) {
+		// Host published and is alive — keep the warm slot charged.
 		return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, lastErr)
+	}
+	if a := admission(); a != nil && a.AfterFailedSpawn != nil {
+		a.AfterFailedSpawn(cfg.SessionID, false)
 	}
 	return nil, fmt.Errorf("start chat host: %w", lastErr)
 }
