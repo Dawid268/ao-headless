@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -202,16 +203,49 @@ func waitUntil(t *testing.T, timeout time.Duration, done func() bool, message st
 	t.Fatal(message)
 }
 
-// On Linux the launch identity is clock ticks since boot, which a wall-clock
-// step (a VM resumed from a pause) does not move; ps's lstart moves with it.
+// requireBootTicks returns pid's start time and its ticks, failing unless the
+// start time is boot+<this boot's id>+<non-zero ticks since boot>.
+func requireBootTicks(t *testing.T, pid int) (start, ticks string) {
+	t.Helper()
+	boot, err := bootID()
+	if err != nil {
+		t.Fatalf("read boot id: %v", err)
+	}
+	start = previewProcessStartTime(pid)
+	ticks, ok := strings.CutPrefix(start, bootTicksPrefix+boot+"+")
+	if n, err := strconv.ParseUint(ticks, 10, 64); !ok || err != nil || n == 0 {
+		t.Fatalf("start time = %q, want %s%s+<ticks since boot>", start, bootTicksPrefix, boot)
+	}
+	return start, ticks
+}
+
+// On Linux the launch identity is the boot id plus clock ticks since boot,
+// which a wall-clock step (a VM resumed from a pause) does not move; ps's
+// lstart moves with it.
 func TestPreviewProcessStartTimeUsesBootTicksOnLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("boot ticks come from /proc")
 	}
 	cmd := startSleeper(t, "sleep", "60")
-	want := bootTicksPrefix + bootID() + "+"
-	if got := previewProcessStartTime(cmd.Process.Pid); bootID() == "" || !strings.HasPrefix(got, want) {
-		t.Fatalf("start time = %q, want %s<ticks>", got, want)
+	requireBootTicks(t, cmd.Process.Pid)
+}
+
+// The #3475 case under boot ticks: a recorded PID that now belongs to a later
+// process in the same boot must not match the record.
+func TestSignalPreviewGroupRefusesLaterProcessFromSameBoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("boot ticks come from /proc")
+	}
+	earlier := startSleeper(t, "sleep", "60")
+	recorded, _ := requireBootTicks(t, earlier.Process.Pid)
+	time.Sleep(50 * time.Millisecond) // several clock ticks (USER_HZ is 100)
+	later := startSleeper(t, "sleep", "60")
+	if err := signalPreviewGroup(later.Process.Pid, recorded, syscall.SIGKILL); !errors.Is(err, errStalePreviewPID) {
+		t.Fatalf("signalPreviewGroup = %v, want errStalePreviewPID", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !sleeperRunning(t, later.Process.Pid) {
+		t.Fatal("an earlier process's record killed a later process in the same boot")
 	}
 }
 
@@ -223,7 +257,7 @@ func TestSignalPreviewGroupRefusesRecordFromAnotherBoot(t *testing.T) {
 		t.Skip("boot ticks come from /proc")
 	}
 	cmd := startSleeper(t, "sleep", "60")
-	ticks := strings.TrimPrefix(previewProcessStartTime(cmd.Process.Pid), bootTicksPrefix+bootID()+"+")
+	_, ticks := requireBootTicks(t, cmd.Process.Pid)
 	otherBoot := bootTicksPrefix + "00000000-0000-0000-0000-000000000000+" + ticks
 	if err := signalPreviewGroup(cmd.Process.Pid, otherBoot, syscall.SIGKILL); !errors.Is(err, errStalePreviewPID) {
 		t.Fatalf("signalPreviewGroup = %v, want errStalePreviewPID", err)
