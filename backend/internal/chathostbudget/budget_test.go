@@ -225,6 +225,24 @@ func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
 	}
 }
 
+func TestReleaseIfDeadProtectsInFlightReservation(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	if err := b.SoftAdmitWake("inflight", ClassWorker, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b.ReleaseIfDead("inflight") {
+		t.Fatal("must not release SoftAdmit reservation during grace")
+	}
+	if _, ok := b.Snapshot().Held["inflight"]; !ok {
+		t.Fatal("reservation lost")
+	}
+	b.ForceRelease("inflight")
+	if b.ReleaseIfDead("inflight") {
+		t.Fatal("already released")
+	}
+}
+
 func TestSoftAdmitWakeReservesSlotBeforeClear(t *testing.T) {
 	b := New(Caps{
 		MaxTotal: 1, MaxOrchestrator: 1, MaxWorker: 1,

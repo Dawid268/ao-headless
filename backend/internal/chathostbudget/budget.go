@@ -14,7 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
+
+// reservationGrace keeps SoftAdmit/Drain slots charged until the host has time
+// to publish a PID (or AfterFailedSpawn ForceReleases). Without this the 30s
+// ReleaseIfDead sweep can free an in-flight reservation and let another spawn
+// steal the last warm slot.
+const reservationGrace = 15 * time.Second
 
 // Host class for sub-caps. Orchestrators never auto-hibernate in AO today, so
 // they use a separate budget from reclaimable workers.
@@ -88,6 +95,9 @@ type Budget struct {
 	// held maps hostID → class for every charged warm slot (including
 	// in-flight Acquires whose PID is not published yet).
 	held map[string]Class
+	// reservedUntil protects SoftAdmit/Drain reservations from ReleaseIfDead
+	// until the host publishes a PID or grace expires.
+	reservedUntil map[string]time.Time
 	// queue is fair-ish: round-robin by project on Drain.
 	queue []QueuedWake
 	rr    int
@@ -102,10 +112,11 @@ func New(caps Caps, alive HostAlive, available AvailableBytes) *Budget {
 		alive = func(string) bool { return false }
 	}
 	return &Budget{
-		caps:      caps,
-		alive:     alive,
-		available: available,
-		held:      make(map[string]Class),
+		caps:          caps,
+		alive:         alive,
+		available:     available,
+		held:          make(map[string]Class),
+		reservedUntil: make(map[string]time.Time),
 	}
 }
 
@@ -147,6 +158,7 @@ func (b *Budget) Seed(dataDir string, classOf func(hostID string) Class) error {
 		if os.IsNotExist(err) {
 			b.mu.Lock()
 			b.held = make(map[string]Class)
+			b.reservedUntil = make(map[string]time.Time)
 			b.seeded = true
 			b.mu.Unlock()
 			return nil
@@ -166,12 +178,22 @@ func (b *Budget) Seed(dataDir string, classOf func(hostID string) Class) error {
 	b.mu.Lock()
 	// Preserve in-flight SoftAdmit reservations that have no PID yet so a late
 	// Seed (or re-seed) cannot drop a just-reserved cold wake.
+	keptUntil := make(map[string]time.Time)
 	for id, class := range b.held {
 		if _, ok := next[id]; !ok && !b.alive(id) {
 			next[id] = class
+			if until, ok := b.reservedUntil[id]; ok {
+				keptUntil[id] = until
+			}
+		}
+	}
+	for id := range next {
+		if until, ok := b.reservedUntil[id]; ok {
+			keptUntil[id] = until
 		}
 	}
 	b.held = next
+	b.reservedUntil = keptUntil
 	b.seeded = true
 	b.refreshPressureLocked()
 	b.mu.Unlock()
@@ -214,11 +236,14 @@ func (b *Budget) TryAcquireSpawn(hostID string, class Class) error {
 		return ErrNoCapacity
 	}
 	b.held[hostID] = class
+	b.protectReservationLocked(hostID)
 	return nil
 }
 
 // ReleaseIfDead drops the slot when the host PID is gone. Safe to call
-// repeatedly. Returns whether a slot was freed.
+// repeatedly. Returns whether a slot was freed. In-flight SoftAdmit/Drain
+// reservations are protected for reservationGrace so the sweep cannot steal
+// a just-reserved cold wake before the host publishes a PID.
 func (b *Budget) ReleaseIfDead(hostID string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -226,9 +251,14 @@ func (b *Budget) ReleaseIfDead(hostID string) bool {
 		return false
 	}
 	if b.alive(hostID) {
+		delete(b.reservedUntil, hostID)
+		return false
+	}
+	if until, ok := b.reservedUntil[hostID]; ok && time.Now().Before(until) {
 		return false
 	}
 	delete(b.held, hostID)
+	delete(b.reservedUntil, hostID)
 	b.refreshPressureLocked()
 	return true
 }
@@ -238,8 +268,16 @@ func (b *Budget) ReleaseIfDead(hostID string) bool {
 func (b *Budget) ForceRelease(hostID string) {
 	b.mu.Lock()
 	delete(b.held, hostID)
+	delete(b.reservedUntil, hostID)
 	b.refreshPressureLocked()
 	b.mu.Unlock()
+}
+
+func (b *Budget) protectReservationLocked(hostID string) {
+	if b.reservedUntil == nil {
+		b.reservedUntil = make(map[string]time.Time)
+	}
+	b.reservedUntil[hostID] = time.Now().Add(reservationGrace)
 }
 
 // ReleaseIfNoPID drops a SoftAdmit reservation when resume failed before a
@@ -287,6 +325,7 @@ func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) err
 	}
 	// Reserve now — BeforeSpawn's TryAcquireSpawn is idempotent for this host.
 	b.held[hostID] = class
+	b.protectReservationLocked(hostID)
 	return nil
 }
 
@@ -362,6 +401,7 @@ func (b *Budget) Drain(ctx context.Context) []QueuedWake {
 			continue
 		}
 		b.held[wake.HostID] = wake.Class
+		b.protectReservationLocked(wake.HostID)
 		admitted = append(admitted, wake)
 	}
 	b.queue = remaining
