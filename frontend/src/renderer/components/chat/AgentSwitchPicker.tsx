@@ -204,7 +204,9 @@ export function AgentModelPicker({
 	const [open, setOpen] = useState(false);
 	const favorites = useModelFavorites();
 	const keepCurrent = () => { if (pending) onPendingChange(undefined); };
-	const live = listsModelVariants(currentHarness)
+	// The command line's Cursor ids fold the settings into the model. A running
+	// Cursor chat reports them as its own settings, which are kept as they are.
+	const live = listsModelVariants(currentHarness) && current.efforts.length === 0 && current.thinking === undefined
 		? variantSource(current.models, current.modelId, current.modelLabel, current.onPickModel && ((variant) => current.onPickModel?.(variant.id)), t)
 		: current;
 	const currentSource: PickerSource = disabled

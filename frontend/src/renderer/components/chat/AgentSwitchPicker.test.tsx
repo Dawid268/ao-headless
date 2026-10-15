@@ -16,7 +16,7 @@ vi.mock("../../hooks/useAgentModelsQuery", () => ({
 	}),
 }));
 
-function open(pending?: PendingAgentSwitch, terminal = false) {
+function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-code", extra: Partial<PickerSource> = {}) {
 	const onPendingChange = vi.fn();
 	const current: PickerSource = {
 		models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }],
@@ -26,11 +26,12 @@ function open(pending?: PendingAgentSwitch, terminal = false) {
 		efforts: [{ value: "high", label: "High" }, { value: "max", label: "Max" }],
 		effort: "high",
 		onPickEffort: vi.fn(),
+		...extra,
 	};
 	render(
 		<QueryClientProvider client={new QueryClient()}>
 			<AgentModelPicker
-				currentHarness="claude-code"
+				currentHarness={harness}
 				current={current}
 				terminal={terminal}
 				agentSwitch={{ projectId: "p", pending, onPendingChange }}
@@ -52,6 +53,14 @@ describe("AgentModelPicker", () => {
 		await user.click(screen.getByRole("menuitem", { name: /Effort.*High/ }));
 		fireEvent.click(await screen.findByRole("menuitemradio", { name: "Max" }));
 		expect(current.onPickEffort).toHaveBeenCalledWith("max");
+	});
+
+	it("keeps a running Cursor chat's own effort and thinking", async () => {
+		const user = userEvent.setup();
+		open(undefined, false, "cursor", { thinking: true, onToggleThinking: vi.fn() });
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		expect(screen.getByRole("menuitem", { name: /Effort.*High/ })).toBeInTheDocument();
+		expect(screen.getByText("Thinking")).toBeInTheDocument();
 	});
 
 	it("holds another agent as pending when it is picked", async () => {
