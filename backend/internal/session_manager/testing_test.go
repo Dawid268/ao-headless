@@ -274,7 +274,7 @@ func TestTestingSessionPromptPointsAtTheLitmusSkill(t *testing.T) {
 	skill := skillassets.LitmusDir(dataDir) + "/SKILL.md"
 	build := func(c context.Context, id domain.SessionID) string {
 		t.Helper()
-		p, err := m.buildSystemPrompt(c, domain.KindWorker, "mer", id, false)
+		p, err := m.buildSystemPrompt(c, domain.KindWorker, "mer", id, "", false)
 		if err != nil {
 			t.Fatal(err)
 		}

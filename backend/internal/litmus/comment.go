@@ -1193,11 +1193,20 @@ func (s *Store) DraftComments(id string) ([]DraftComment, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Stat first: on Windows, ReadDir on a regular file reports no error or
+	// ErrNotExist, so a broken comments path would read as "no drafts".
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, &fs.PathError{Op: "readdir", Path: dir, Err: errors.New("not a directory")}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	var docs []DraftComment
