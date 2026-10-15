@@ -250,7 +250,7 @@ func TestLiveHeadAndBaseVideos(t *testing.T) {
 	run, _ := svc.store.Get("run_live")
 	for _, l := range run.Legs {
 		log, _ := os.ReadFile(filepath.Join(svc.store.root, "run_live", l.Name, "engine.log"))
-		t.Logf("%s: recording started %s, cursor overlay %t; engine.log: %.400q", l.Name, l.RecordStartedAt.Format(time.TimeOnly), l.RecordCursor, log)
+		t.Logf("%s: recording started %s; engine.log: %.400q", l.Name, l.RecordStartedAt.Format(time.TimeOnly), log)
 		if l.RecordStartedAt.IsZero() {
 			t.Fatalf("%s: no recording started", l.Name)
 		}

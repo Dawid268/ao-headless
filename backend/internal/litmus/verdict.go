@@ -505,7 +505,8 @@ func renderVerdict(run Run, v Verdict, claims bool, videos []legVideo, runDir st
 	}
 	var gaps []string
 	for _, g := range run.Gaps {
-		if strings.HasPrefix(g, "The PR build started without its sample content (seed step ") || strings.HasPrefix(g, "The main build started without its sample content (seed step ") {
+		if strings.HasPrefix(g, "The PR build started without its sample content (seed step ") || strings.HasPrefix(g, "The main build started without its sample content (seed step ") ||
+			strings.HasPrefix(g, "The PR build's recording was not available:") || strings.HasPrefix(g, "The main build's recording was not available:") {
 			limits = append(limits, g)
 		} else {
 			gaps = append(gaps, g)

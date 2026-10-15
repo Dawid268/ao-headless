@@ -462,8 +462,8 @@ const (
 	oneVideoPostBudget = uploadTimeout + 2*time.Minute + 15*time.Second
 	// PostBudget bounds login, image staging, the evidence push and repo lookup, two videos with one retry each, and the PR comment.
 	PostBudget = commentTimeout + stageTimeout + pushTimeout + time.Minute + 2*oneVideoPostBudget + commentTimeout
-	// SubmitBudget adds the time to stop two recordings and finish their video before publication.
-	SubmitBudget = PostBudget + 2*stopTimeout + videoTimeout
+	// SubmitBudget allows two frame encodes, then captioned cuts, before publication.
+	SubmitBudget = PostBudget + 2*stopTimeout + 3*videoTimeout + 2*time.Duration(screencastFrameCap)*100*time.Millisecond
 )
 
 // Discard closes a run awaiting approval without posting: its targets are cleaned up and its comment is kept in the

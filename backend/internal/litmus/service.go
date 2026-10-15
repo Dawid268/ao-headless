@@ -36,7 +36,9 @@ type Service struct {
 	closeEngine     func(runID string)  // cleanup calls it before killing anything
 	busy            map[string]busyVerb // long verbs in flight, by run and verb
 	engines         map[string]*Engine  // by run/leg
-	seqs            map[string]int      // receipts handed out, by run
+	recorderMu      sync.Mutex
+	recorders       map[string]*screencast // by run/leg, separate from action locks
+	seqs            map[string]int         // receipts handed out, by run
 	engExec         execFn
 	media           Media           // ffmpeg, behind an interface so tests never run it
 	spawn           Spawner         // launches testing workers; nil until the daemon wires it

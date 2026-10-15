@@ -116,12 +116,13 @@ type Leg struct {
 	RunFile       string      `json:"runFile,omitempty"`
 	Engine        *EngineInfo `json:"engine,omitempty"`
 	State         string      `json:"state"`
-	// RecordStartedAt is when `record start` succeeded on this leg's engine, so action times map onto <leg>/<leg>.mp4. Zero: no recording.
+	// RecordStartedAt is the screencast wall-clock origin, so action times map onto <leg>/<leg>.mp4. Zero: no recording.
 	RecordStartedAt time.Time `json:"recordStartedAt,omitzero"`
-	// RecordStoppedAt is when `record stop` was settled (or the file dropped); started without stopped means the recording never finished.
+	// RecordStoppedAt is when frame capture stopped; started without stopped means the recording never finished.
 	RecordStoppedAt time.Time `json:"recordStoppedAt,omitzero"`
-	RecordCursor    bool      `json:"recordCursor,omitempty"` // the recording shows the pointer overlay (`record start --cursor`); false after the fallback to a plain start
-	RecordFPS       string    `json:"recordFps,omitempty"`    // the capture rate asked of `record start --fps`
+	// Retained for the generated API contract. The screencast recorder leaves these unset.
+	RecordCursor bool   `json:"recordCursor,omitempty"`
+	RecordFPS    string `json:"recordFps,omitempty"`
 }
 
 // CheckState is a check's progress; pass, fail, partial, absent and skipped are its outcomes.

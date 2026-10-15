@@ -230,6 +230,21 @@ func (s *Service) prune(ctx context.Context, keepRuns, keepCheckouts int, dry bo
 	for _, r := range runs {
 		if !keepDir[r.ID] {
 			remove(filepath.Join(s.store.root, r.ID), "", &rep.Runs, "run")
+		} else if finishedRun(r) {
+			// Failed or interrupted encodes keep frames only while the run is open.
+			s.mu.Lock()
+			cur, err := s.store.Get(r.ID)
+			closed := err == nil && finishedRun(cur)
+			s.mu.Unlock()
+			if closed {
+				for _, leg := range []string{"head", "base"} {
+					path := filepath.Join(s.store.root, r.ID, leg, "frames")
+					if _, err := os.Lstat(path); err == nil {
+						var frames []string
+						remove(path, "", &frames, "frames")
+					}
+				}
+			}
 		}
 	}
 	if !dry && len(unreadable) == 0 && ctx.Err() == nil {

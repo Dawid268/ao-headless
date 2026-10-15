@@ -51,7 +51,6 @@ var verbs = map[string]verb{
 	"console":    {usage: "console"},
 	"errors":     {usage: "errors"},
 	"network":    {engine: []string{"network", "requests"}, max: 2, usage: "network [--filter <pattern>]"},
-	"record":     {min: 1, max: 2, usage: "record start <path> | record stop"},
 	"tab":        {engine: []string{"tab", "list"}, max: 1, usage: "tab list"},
 }
 
@@ -105,7 +104,7 @@ func inRun(runDir, p string) (string, error) {
 	return filepath.Clean(p), os.MkdirAll(filepath.Dir(p), 0o750)
 }
 
-// argv validates one action and returns the engine command and, for screenshot and record start, the file it writes.
+// argv validates one action and returns the engine command and, for screenshot, the file it writes.
 func argv(action string, args []string, runDir, leg string) (cmd []string, file string, err error) {
 	v := verbs[action]
 	bad := func(msg string) ([]string, string, error) {
@@ -134,15 +133,6 @@ func argv(action string, args []string, runDir, leg string) (cmd []string, file 
 			return bad("only `tab list` is supported")
 		}
 		args = nil
-	case "record":
-		if start := args[0] == "start"; !start && args[0] != "stop" || start != (len(args) == 2) {
-			return bad("unsupported record arguments")
-		} else if start {
-			if file, err = inRun(runDir, args[1]); err != nil {
-				return nil, "", err
-			}
-			args = []string{"start", file}
-		}
 	case "screenshot":
 		if file, err = inRun(runDir, cmp.Or(strings.Join(args, ""), filepath.Join("shots", fmt.Sprintf("%s-%d.png", leg, time.Now().UnixMilli())))); err != nil {
 			return nil, "", err
@@ -222,7 +212,6 @@ func (s *Service) Drive(ctx context.Context, sessionID, action string, args []st
 			// after-shot and receipt evidence as a successful state change, then
 			// return the refusal so the tester stops rather than guessing.
 			rec := s.receipt(ctx, run.ID, e, leg.Name, action, cmd[len(cmdWords(action, v)):], target, click, box, time.Since(t0), err.Error())
-			s.recordingReceipt(ctx, run.ID, leg.Name, e)
 			res := map[string]any{"leg": leg.Name, "action": action, "output": out, "receipt": rec, "refused": true, "reason": err.Error()}
 			if rec.After != "" {
 				res["after"] = relPath(runDir, rec.After)
@@ -254,7 +243,6 @@ func (s *Service) Drive(ctx context.Context, sessionID, action string, args []st
 	}
 	if v.receipt {
 		rec := s.receipt(ctx, run.ID, e, leg.Name, action, cmd[len(cmdWords(action, v)):], target, click, box, time.Since(t0), "")
-		s.recordingReceipt(ctx, run.ID, leg.Name, e)
 		res["receipt"] = rec
 		if rec.After != "" { // the tester reads this shot to judge anything visual
 			res["after"] = relPath(runDir, rec.After)
@@ -405,7 +393,7 @@ func isTabDrift(err error) bool {
 }
 
 // clickPoint asks the engine where ref sits and how big the viewport is. It is best effort and bounded: any failure
-// returns nil and the click simply has no ring in the slideshow, except tab drift, which must reach the tester.
+// returns nil when coordinates are unavailable, except tab drift, which must reach the tester.
 func (e *Engine) clickPoint(ctx context.Context, ref string) (*clickAt, error) {
 	point, _, err := e.clickTarget(ctx, ref)
 	return point, err
@@ -480,7 +468,7 @@ type actionRec struct {
 	ConsoleTail string      `json:"consoleTail"`
 	At          time.Time   `json:"at"`
 	MS          int64       `json:"ms"`
-	Click       *clickAt    `json:"click,omitempty"` // click only: where the pointer went, for the slideshow's ring
+	Click       *clickAt    `json:"click,omitempty"` // click only: where the pointer went
 	Box         *ElementBox `json:"box,omitempty"`   // click only: the element's CSS-pixel box
 	PageErrors  string      `json:"pageErrors,omitempty"`
 	Reason      string      `json:"reason,omitempty"`

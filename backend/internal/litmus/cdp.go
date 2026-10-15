@@ -26,6 +26,16 @@ func (e *Engine) pageCDP(ctx context.Context) (*pageCDP, error) {
 }
 
 func (e *Engine) pageURL(ctx context.Context) (string, error) {
+	targetID, err := e.pinnedTargetID(ctx)
+	if err != nil {
+		return "", err
+	}
+	return e.targetURL(ctx, targetID)
+}
+
+// pinnedTargetID resolves the engine's app tab to the target ID that remains
+// stable while the browser replaces its WebSocket connection.
+func (e *Engine) pinnedTargetID(ctx context.Context) (string, error) {
 	list, err := e.Run(ctx, pointTimeout, "tab", "list", "--json")
 	if err != nil {
 		return "", err
@@ -48,6 +58,10 @@ func (e *Engine) pageURL(ctx context.Context) (string, error) {
 	if targetID == "" {
 		return "", fmt.Errorf("the engine's pinned app tab %q is missing", e.tab)
 	}
+	return targetID, nil
+}
+
+func (e *Engine) targetURL(ctx context.Context, targetID string) (string, error) {
 	var targets []struct{ ID, Type, WebSocketDebuggerURL string }
 	if err := getJSON(ctx, e.Endpoint+"/json/list", &targets); err != nil {
 		return "", err
@@ -58,6 +72,29 @@ func (e *Engine) pageURL(ctx context.Context) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("the engine's pinned app target %q is missing on the leg's debug port", targetID)
+}
+
+// recordingPageResolver pins the app target once while the engine is
+// initialized, then returns a resolver for reconnects that only reads the
+// debug endpoint. Reconnects must not take e.mu or invoke agent-browser:
+// either can block Drive while a dead tab is being resolved.
+func (e *Engine) recordingPageResolver(ctx context.Context) (string, func(context.Context) (string, error), error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
+	e.mu.Lock()
+	targetID, err := e.pinnedTargetID(ctx)
+	e.mu.Unlock()
+	if err != nil {
+		return "", nil, err
+	}
+	url, err := e.targetURL(ctx, targetID)
+	if err != nil {
+		return "", nil, err
+	}
+	return url, func(ctx context.Context) (string, error) {
+		return e.targetURL(ctx, targetID)
+	}, nil
 }
 
 type pageCDP struct {

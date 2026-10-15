@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,10 +23,8 @@ type fakeEngine struct {
 	fail  map[string]error // by first word
 	out   map[string]string
 	noImg bool // diff writes no image, as the engine does when it has nothing to diff
-	// noCursor makes a record start with --cursor fail, as an engine that cannot draw the overlay would.
-	noCursor bool
-	shot     []byte
-	hook     func(args []string) // called with each engine call's arguments, before it is answered
+	shot  []byte
+	hook  func(args []string) // called with each engine call's arguments, before it is answered
 }
 
 func (f *fakeEngine) exec(ctx context.Context, _ string, args, env []string) (string, error) {
@@ -40,9 +37,6 @@ func (f *fakeEngine) exec(ctx context.Context, _ string, args, env []string) (st
 	}
 	if err := f.fail[args[2]]; err != nil {
 		return "", err
-	}
-	if f.noCursor && args[2] == "record" && slices.Contains(args, "--cursor") {
-		return "", errors.New("unknown flag --cursor")
 	}
 	if args[2] == "screenshot" {
 		data := f.shot
@@ -102,7 +96,7 @@ func TestDriveMapsVerbsAndNormalizesRefs(t *testing.T) {
 		{"type @e3 x", "type @e3 x"}, {"press Enter", "press Enter"}, {"drag e1 e2", "drag @e1 @e2"}, {"wait --text Done", "wait --text Done"},
 		{"wait 500", "wait 500"}, {"console", "console"}, {"errors", "errors"}, {"network", "network requests"},
 		{"network --filter api", "network requests --filter api"}, {"tab", "tab list"}, {"tab list", "tab list"},
-		{"screenshot a.png", "screenshot " + d + "/a.png"}, {"record start v.mp4", "record start " + d + "/v.mp4"}, {"record stop", "record stop"},
+		{"screenshot a.png", "screenshot " + d + "/a.png"},
 	} {
 		f := strings.Fields(c.in)
 		got, _, err := argv(f[0], f[1:], d, "head")
@@ -220,7 +214,7 @@ func TestDriveRefusals(t *testing.T) {
 		{"TESTING_ACTION_UNSUPPORTED", "open https://example.com"}, {"TESTING_ACTION_UNSUPPORTED", "eval 1"}, {"TESTING_ACTION_UNSUPPORTED", "cookies"},
 		{"TESTING_ARGS_INVALID", "click"}, {"TESTING_ARGS_INVALID", "click button"}, {"TESTING_ARGS_INVALID", "fill e1"},
 		{"TESTING_ARGS_INVALID", "press --cdp=http://x"}, {"TESTING_ARGS_INVALID", "snapshot --session x"}, {"TESTING_ARGS_INVALID", "tab new"},
-		{"TESTING_ARGS_INVALID", "record start"}, {"TESTING_ARGS_INVALID", "record pause"},
+		{"TESTING_ACTION_UNSUPPORTED", "record start v.mp4"}, {"TESTING_ACTION_UNSUPPORTED", "record stop"},
 		{"TESTING_PATH_INVALID", "screenshot ../x.png"}, {"TESTING_PATH_INVALID", "screenshot /etc/x.png"},
 		{"TESTING_LEG_NOT_LAUNCHED", "snapshot --leg base"}, {"TESTING_LEG_NOT_LAUNCHED", "snapshot --leg=main"},
 	} {

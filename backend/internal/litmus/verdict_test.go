@@ -221,24 +221,14 @@ func TestSubmitWritesVerdictAndPublishesArtifacts(t *testing.T) {
 	if err != nil || v.Overall != CheckPass { // c1 passes on head and fails on base; c3 has no base result and does not matter
 		t.Fatalf("verdict %+v err %v", v, err)
 	}
-	hasList := func(name string) bool {
-		return slices.ContainsFunc(fm.calls, func(call []string) bool { return strings.Contains(strings.Join(call, " "), name) })
-	}
-	if !hasList("slides-head.txt") || !hasList("slides-base.txt") || !hasList("slides-check-c1.txt") || !hasList("slides-check-c3.txt") { // no recordings: leg and per-check slideshows
-		t.Fatalf("slideshow commands: %v", fm.calls)
-	}
-	list, _ := os.ReadFile(filepath.Join(runDir, "slides-head.txt"))
-	if strings.Count(string(list), "duration 1") != 2 || !strings.HasSuffix(string(list), "3-after.png'\n") || strings.Contains(string(list), "2-after.png") { // head shots only; the last still is repeated for the demuxer
-		t.Fatalf("slides-head.txt:\n%s", list)
-	}
-	if srt, _ := os.ReadFile(filepath.Join(runDir, "base-slide-captions.srt")); string(srt) != "1\n00:00:00,000 --> 00:00:01,000\nStep 2: click an element\n\n" {
-		t.Fatalf("base captions:\n%s", srt)
+	if len(fm.calls) != 0 {
+		t.Fatalf("video encoded without a recording: %v", fm.calls)
 	}
 	md, _ := os.ReadFile(filepath.Join(runDir, "verdict.md"))
 	for _, want := range []string{"# Verdict: pass", "| check | expect | head result | base result | receipts |", `| c1 menu opens | list \| shown | pass | fail | [1](receipts/1-after.png) |`,
 		"| c3 last model | scrolls | pass | not compared on base |", "Uncaught TypeError: boom", "listening on :3200", "## Limits", "The base leg was not launched",
 		"- c3 last model: not compared on base", "- The result is fail if any head check was absent or failed, except a head fail beside an unmarked base fail that ran and has evidence; that finding stays in the comment but leaves the result partial",
-		"- The PR title claims a behavior change.", "Video: head: live recording lost, slideshow attached (head-cut.mp4, the after-shots at 1 fps); base: live recording lost, slideshow attached", "looks right on head"} {
+		"- The PR title claims a behavior change.", "Video: none (recording was not available)", "looks right on head"} {
 		if !strings.Contains(string(md), want) {
 			t.Errorf("verdict.md lacks %q:\n%s", want, md)
 		}
@@ -247,12 +237,12 @@ func TestSubmitWritesVerdictAndPublishesArtifacts(t *testing.T) {
 		t.Errorf("the base twin got its own row:\n%s", md)
 	}
 	for _, d := range []string{runDir, art} { // the run dir and the session's artifact dir hold the same evidence
-		for _, f := range []string{"verdict.md", "head-cut.mp4", "base-cut.mp4", "receipts/1-after.png", "receipts/3-after.png"} {
+		for _, f := range []string{"verdict.md", "receipts/1-after.png", "receipts/3-after.png"} {
 			exists(t, filepath.Join(d, f))
 		}
 	}
 	index, _ := os.ReadFile(filepath.Join(art, "index.md"))
-	for _, want := range []string{`<img src="receipts/1-after.png"`, "[head-cut.mp4](head-cut.mp4), [base-cut.mp4](base-cut.mp4)"} {
+	for _, want := range []string{`<img src="receipts/1-after.png"`} {
 		if !strings.Contains(string(index), want) {
 			t.Fatalf("index.md lacks %q:\n%s", want, index)
 		}
@@ -321,154 +311,6 @@ func TestSubmitCutsEachLegFromItsOwnRecordingAndSurvivesFFmpegFailure(t *testing
 	exists(t, filepath.Join(art, "verdict.md"))
 }
 
-func TestRecordingIsPerLegAndNeverFatal(t *testing.T) {
-	svc, f, _, runDir := driveSvc(t)
-	head := Leg{Name: "head", Engine: &svc.engines["run_s1/head"].EngineInfo}
-	base, err := svc.attachEngine(ctx, "run_s1", Leg{Name: "base", State: "running", DebugPort: 9401})
-	is(t, "")(nil, err)
-	put := func(l Leg) { // save one leg as Launch does
-		_, err := svc.update("run_s1", func(r *Run) {
-			if i := slices.IndexFunc(r.Legs, func(x Leg) bool { return x.Name == l.Name }); i >= 0 {
-				r.Legs[i] = l
-			} else {
-				r.Legs = append(r.Legs, l)
-			}
-		})
-		is(t, "")(nil, err)
-	}
-	stop := func() Run { // stopRecording on the saved run, returning the saved run after
-		r, err := svc.store.Get("run_s1")
-		is(t, "")(nil, err)
-		svc.stopRecording(ctx, r)
-		r, err = svc.store.Get("run_s1")
-		is(t, "")(nil, err)
-		return r
-	}
-	put(head)
-	put(base)
-	f.fail["record"] = errors.New("timed out: window not frontmost")
-	if got := svc.startRecording(ctx, "run_s1", head); !got.RecordStartedAt.IsZero() {
-		t.Fatalf("a failed record start was remembered: %+v", got)
-	}
-	f.fail = map[string]error{}
-	head = svc.startRecording(ctx, "run_s1", head)
-	if !head.RecordStartedAt.Equal(svc.clock()) || !head.RecordCursor || head.RecordFPS != "5" {
-		t.Fatalf("head not stamped with the cursor overlay: %+v", head)
-	}
-	put(head)
-	records := func() (out [][]string) { // the record calls since the last reset, without the engine's tab bookkeeping
-		for _, c := range f.calls {
-			if c[0] == "record" {
-				out = append(out, c[1:])
-			}
-		}
-		f.calls = nil
-		return out
-	}
-	records()
-	if r := stop(); r.Legs[0].RecordStoppedAt.IsZero() || !r.Legs[1].RecordStoppedAt.IsZero() { // only the head recording was running
-		t.Fatalf("stopped state not saved for head alone: %+v", r.Legs)
-	}
-	if got := records(); !reflect.DeepEqual(got, [][]string{{"stop"}}) {
-		t.Fatalf("stop calls %v", got)
-	}
-	base, head = svc.startRecording(ctx, "run_s1", base), svc.startRecording(ctx, "run_s1", head)
-	put(base)
-	put(head)
-	stop()
-	stop() // nothing left to stop
-	bm, hm := filepath.Join(runDir, "base", "base.mp4"), filepath.Join(runDir, "head", "head.mp4")
-	want := [][]string{{"start", bm, "--cursor", "--fps", "5"}, {"start", hm, "--cursor", "--fps", "5"}, {"stop"}, {"stop"}}
-	if got := records(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("calls %v, want %v", got, want)
-	}
-
-	f.noCursor = true // an engine that cannot draw the overlay: restart without it and say so
-	base = svc.startRecording(ctx, "run_s1", base)
-	if base.RecordStartedAt.IsZero() || base.RecordCursor || !base.RecordStoppedAt.IsZero() {
-		t.Fatalf("fallback leg: %+v", base)
-	}
-	if got, want := records(), [][]string{{"start", bm, "--cursor", "--fps", "5"}, {"restart", bm, "--fps", "5"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("fallback calls %v, want %v", got, want)
-	}
-	if log, _ := os.ReadFile(filepath.Join(runDir, "base", "engine.log")); !strings.Contains(string(log), "record start --cursor failed, restarting the recording without the pointer overlay: agent-browser record: unknown flag --cursor") {
-		t.Fatalf("engine.log:\n%s", log)
-	}
-
-	put(base)
-	is(t, "")(nil, os.WriteFile(bm, []byte("no moov atom"), 0o600)) // a stop that fails leaves the source for later probing
-	f.fail["record"] = errors.New("Recording encoder fell more than 500 ms behind capture")
-	if r := stop(); r.Legs[1].RecordStoppedAt.IsZero() {
-		t.Fatalf("a failed stop is retried on every stop: %+v", r.Legs[1])
-	}
-	if _, err := os.Stat(bm); err != nil {
-		t.Fatalf("the unfinished recording was removed: %v", err)
-	}
-	if log, _ := os.ReadFile(filepath.Join(runDir, "base", "engine.log")); !strings.Contains(string(log), "record stop failed, recording kept (playable=false): agent-browser record: Recording encoder fell") {
-		t.Fatalf("engine.log:\n%s", log)
-	}
-}
-
-// The start time is taken before `record start` is issued (and again before the fallback restart that actually ran),
-// so caption windows are not late by the start latency.
-func TestRecordStartedAtIsTakenBeforeTheCall(t *testing.T) {
-	svc, f, _, _ := driveSvc(t)
-	t0, ticks, seen := svc.clock(), 0, 0
-	svc.clock = func() time.Time { ticks++; return t0.Add(time.Duration(ticks) * time.Second) }
-	f.hook = func(args []string) {
-		if args[0] == "record" {
-			seen = ticks // clock ticks that happened before this engine call
-		}
-	}
-	head := Leg{Name: "head", Engine: &svc.engines["run_s1/head"].EngineInfo}
-	if got := svc.startRecording(ctx, "run_s1", head); !got.RecordStartedAt.Equal(t0.Add(time.Duration(seen)*time.Second)) || ticks != seen {
-		t.Fatalf("started at +%v after %d ticks, call saw %d", got.RecordStartedAt.Sub(t0), ticks, seen)
-	}
-	f.noCursor = true
-	if got := svc.startRecording(ctx, "run_s1", head); !got.RecordStartedAt.Equal(t0.Add(time.Duration(seen)*time.Second)) || ticks != seen || seen <= 3 { // 2 was the failed --cursor attempt, 3 the engine.log line
-		t.Fatalf("fallback started at +%v, the restart call saw %d ticks of %d", got.RecordStartedAt.Sub(t0), seen, ticks)
-	}
-}
-
-// A recording the persisted state calls unfinished (started, never stopped: the daemon restarted, or the engine is
-// gone) is stopped once if the engine answers, and otherwise keeps its files for later probing.
-func TestUnfinishedRecordingIsStoppedOnceOrDropped(t *testing.T) {
-	svc, f, _, _ := driveSvc(t)
-	t0, mp4 := svc.clock(), recordingPath(filepath.Join(svc.store.root, "run_s1"), "head")
-	is(t, "")(nil, os.MkdirAll(filepath.Dir(mp4), 0o750))
-	is(t, "")(nil, os.WriteFile(mp4, []byte("no moov atom"), 0o600))
-	run, err := svc.store.Get("run_s1")
-	is(t, "")(nil, err)
-	run.Legs[0].RecordStartedAt = t0
-	delete(svc.engines, "run_s1/head") // the daemon restarted: no in-memory state, only what was persisted
-	svc.stopRecording(ctx, run)
-	if got := f.find("record"); !reflect.DeepEqual(got, []string{"record", "stop"}) || !fileExists(mp4) {
-		t.Fatalf("an answering engine is stopped once and its file kept: %v %v", f.calls, fileExists(mp4))
-	}
-	if saved, _ := svc.store.Get("run_s1"); saved.Legs[0].RecordStoppedAt.IsZero() {
-		t.Fatal("stop not saved")
-	}
-
-	svc, f, _, runDir := driveSvc(t) // the engine is gone altogether: the file is kept without a call
-	mp4 = recordingPath(runDir, "head")
-	is(t, "")(nil, os.MkdirAll(filepath.Dir(mp4), 0o750))
-	is(t, "")(nil, os.WriteFile(mp4, []byte("no moov atom"), 0o600))
-	run, _ = svc.store.Get("run_s1")
-	run.Legs[0].RecordStartedAt, run.Legs[0].Engine = t0, nil
-	svc.stopRecording(ctx, run)
-	if len(f.calls) != 0 || !fileExists(mp4) {
-		t.Fatalf("calls %v, file kept %v", f.calls, fileExists(mp4))
-	}
-
-	is(t, "")(nil, os.WriteFile(mp4, []byte("no moov atom"), 0o600)) // finishVideo never trusts an unplayable file, but does not delete it
-	fm := &fakeMedia{}
-	svc.media = fm
-	run.Legs[0].RecordStartedAt, run.Legs[0].RecordStoppedAt = t0, time.Time{}
-	if out := svc.finishVideo(ctx, runDir, run); len(out) != 0 || len(fm.calls) != 0 || !fileExists(mp4) {
-		t.Fatalf("videos %v, ffmpeg %v, file kept %v", out, fm.calls, fileExists(mp4))
-	}
-}
-
 // Submit, cleanup and launch exclude each other, whichever started first, so a recording is never stopped before
 // its launch has stored it.
 func TestLaunchAndCloseRefuseEachOther(t *testing.T) {
@@ -493,51 +335,6 @@ func TestLaunchAndCloseRefuseEachOther(t *testing.T) {
 		closing()
 	}
 	is(t, "")(svc.Submit(ctx, "s1", "", "")) // nothing stays marked busy
-}
-
-// A leg without a usable recording (never recorded, or unplayable after a failed stop) gets a slideshow built from that
-// leg's own after-shots, never the other leg's.
-func TestSlideshowFallbackIsPerLeg(t *testing.T) {
-	svc, fm, runDir, art := submitSvc(t)
-	f := &fakeEngine{fail: map[string]error{"record": errors.New("Recording encoder fell behind")}, out: map[string]string{}}
-	svc.engExec, svc.binary = f.exec, "/fake/agent-browser"
-	base, err := svc.attachEngine(ctx, "run_s1", Leg{Name: "base", State: "running", DebugPort: 9401})
-	is(t, "")(nil, err)
-	t0 := svc.clock()
-	base.RecordStartedAt = t0 // still recording at submit: record stop fails, so the file remains for probing
-	is(t, "")(nil, os.MkdirAll(filepath.Join(runDir, "base"), 0o750))
-	is(t, "")(nil, os.WriteFile(recordingPath(runDir, "base"), []byte("no moov atom"), 0o600))
-	_, err = svc.update("run_s1", func(r *Run) { // head: stopped, but its file never appeared (recording missing)
-		r.Legs = []Leg{{Name: "head", State: "running", RecordStartedAt: t0, RecordStoppedAt: t0.Add(time.Minute)}, base}
-	})
-	is(t, "")(nil, err)
-	skipLastModelOnBase(t, svc)
-	is(t, "")(svc.Submit(ctx, "s1", "", ""))
-	hasList := func(name string) bool {
-		return slices.ContainsFunc(fm.calls, func(call []string) bool { return strings.Contains(strings.Join(call, " "), name) })
-	}
-	if !hasList("slides-head.txt") || !hasList("slides-base.txt") {
-		t.Fatalf("want one slideshow per leg, no cut from a recording: %v", fm.calls)
-	}
-	headList, _ := os.ReadFile(filepath.Join(runDir, "slides-head.txt"))
-	baseList, _ := os.ReadFile(filepath.Join(runDir, "slides-base.txt"))
-	if !strings.Contains(string(headList), "1-after.png") || !strings.Contains(string(headList), "3-after.png") || strings.Contains(string(headList), "2-after.png") {
-		t.Errorf("head slideshow:\n%s", headList)
-	}
-	if !strings.Contains(string(baseList), "2-after.png") || strings.Contains(string(baseList), "1-after.png") || strings.Contains(string(baseList), "3-after.png") {
-		t.Errorf("base slideshow:\n%s", baseList)
-	}
-	for _, f := range []string{"head-cut.mp4", "base-cut.mp4"} {
-		exists(t, filepath.Join(art, f))
-	}
-	for _, f := range []string{"head.mp4", "base.mp4"} {
-		if _, err := os.Stat(filepath.Join(art, f)); !os.IsNotExist(err) {
-			t.Errorf("%s published without a recording: %v", f, err)
-		}
-	}
-	if md, _ := os.ReadFile(filepath.Join(runDir, "verdict.md")); !strings.Contains(string(md), "Video: head: live recording lost, slideshow attached (head-cut.mp4, the after-shots at 1 fps); base: live recording lost, slideshow attached") {
-		t.Errorf("verdict.md:\n%s", md)
-	}
 }
 
 func TestNotesAreKeptWholeAndNeverRefused(t *testing.T) {
@@ -793,8 +590,38 @@ func TestSubmitBlockedKeepsRecordedFailure(t *testing.T) {
 	if saved, err := svc.store.Get(run.ID); err != nil || saved.State != RunSubmitted {
 		t.Fatalf("saved %+v, %v", saved, err)
 	}
-	if body := readRunFile(t, svc, run, "comment.md"); !strings.Contains(body, "**Result: something broke; do not merge yet") {
-		t.Fatalf("comment lost the failure:\n%s", body)
+	for _, file := range []string{"comment.md", "comments/1.md"} {
+		body := readRunFile(t, svc, run, file)
+		for _, want := range []string{"**Result: something broke; do not merge yet", "click closed the menu", "recorder stopped"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lost %q:\n%s", file, want, body)
+			}
+		}
+	}
+}
+
+func TestSubmitBlockedKeepsPerBugFailure(t *testing.T) {
+	svc, now := newSvc(t)
+	svc.media = &fakeMedia{}
+	run := Run{ID: "run_s1", SessionID: "s1", Repo: "o/r", PRNumber: 7, State: RunRunning, CreatedAt: *now, Deadline: now.Add(RunBudget), Comment: CommentOff, Evidence: EvidenceOff}
+	is(t, "")(nil, svc.store.Save(run))
+	checks := []Check{
+		{ID: "c1", Name: "menu", State: CheckFail, Note: "click closed the menu", Receipts: []Receipt{{Action: "click", AfterPath: evidenceFile(t)}}},
+		{ID: "c2", Name: "menu", Leg: "base", State: CheckPass},
+		{ID: "c3", Name: "unfinished", State: CheckRunning},
+	}
+	is(t, "")(nil, svc.store.SaveChecks(run.ID, checks))
+	v, err := svc.SubmitBlocked(ctx, "s1", "recorder stopped")
+	if err != nil || v.Overall != CheckFail || v.StoppedEarly != "recorder stopped" {
+		t.Fatalf("verdict %+v, %v", v, err)
+	}
+	for _, file := range []string{"comment.md", "comments/1.md"} {
+		body := readRunFile(t, svc, run, file)
+		for _, want := range []string{"Bug 1 of 1:", "click closed the menu", "Stopped early: recorder stopped.", litmusCommentMarker()} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lost %q:\n%s", file, want, body)
+			}
+		}
 	}
 }
 

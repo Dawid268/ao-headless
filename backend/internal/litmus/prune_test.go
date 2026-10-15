@@ -392,3 +392,30 @@ func TestPruneRemovesHalfMadeMirrorsButNotOneBeingBuilt(t *testing.T) {
 		t.Fatalf("a dir no clone owns any more stayed: %v", err)
 	}
 }
+
+func TestPruneClearsClosedRunFramesEvenWhenEvidenceIsKept(t *testing.T) {
+	svc, _, recent := pruneFixture(t)
+	for _, id := range []string{recent.ID, "run_live"} {
+		for _, leg := range []string{"head", "base"} {
+			writeFile(t, filepath.Join(svc.store.root, id, leg, "frames", "000001.jpg"), "jpeg")
+		}
+	}
+	rep, err := svc.PruneDryRun(ctx, 20, 2)
+	if err != nil || !pathExists(filepath.Join(svc.store.root, recent.ID, "head", "frames")) || !strings.Contains(strings.Join(rep.Lines, "\n"), "would remove frames") {
+		t.Fatalf("dry prune %+v, %v", rep, err)
+	}
+	if _, err := svc.Prune(ctx, 20, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, leg := range []string{"head", "base"} {
+		if pathExists(filepath.Join(svc.store.root, recent.ID, leg, "frames")) {
+			t.Fatal("closed run kept frames")
+		}
+		if !pathExists(filepath.Join(svc.store.root, "run_live", leg, "frames")) {
+			t.Fatal("open run lost frames")
+		}
+	}
+	if !pathExists(filepath.Join(svc.store.root, recent.ID, "verdict.md")) {
+		t.Fatal("prune removed retained evidence")
+	}
+}

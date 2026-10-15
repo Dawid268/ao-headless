@@ -231,8 +231,11 @@ func TestLaunchScrubsSeedGapsAndKeepsBothBuilds(t *testing.T) {
 	is(t, "")(nil, err)
 	path := filepath.Join(home, ".ao", "litmus", "runs", "run_private", "head", "data")
 	svc.runner = &fakeRunner{sh: func(string) error { return os.ErrPermission }, shOut: "could not open " + path}
-	// A stopped shell stands in for the target. No app, daemon or browser process is started.
-	r := Recipe{Kind: "cli", Isolation: true, Run: Step{Cmd: "sh", Args: []string{"-c", "kill -STOP $$"}}, Ready: Ready{PageTargets: 1}, Seed: []SeedStep{{Cmd: "sample"}}}
+	// Keep $$ in a script: runArgs expands recipe arguments before the shell sees them.
+	// The stopped shell stays alive until cleanup kills its process group.
+	script := filepath.Join(t.TempDir(), "target.sh")
+	is(t, "")(nil, os.WriteFile(script, []byte("kill -STOP $$\n"), 0o600))
+	r := Recipe{Kind: "cli", Isolation: true, Run: Step{Cmd: "sh", Args: []string{script}}, Ready: Ready{PageTargets: 1}, Seed: []SeedStep{{Cmd: "sample"}}}
 	text, err := yaml.Marshal(r)
 	is(t, "")(nil, err)
 	recipePath := svc.store.recipePath("o/r")
@@ -258,13 +261,19 @@ func TestLaunchScrubsSeedGapsAndKeepsBothBuilds(t *testing.T) {
 		run, err = svc.Launch(ctx, "s1", name)
 		is(t, "")(nil, err)
 	}
-	if len(run.Gaps) != 2 {
-		t.Fatalf("identical seed failures merged across builds: %q", run.Gaps)
+	var seedGaps []string
+	for _, gap := range run.Gaps {
+		if strings.Contains(gap, "started without its sample content (seed step ") {
+			seedGaps = append(seedGaps, gap)
+		}
+	}
+	if len(seedGaps) != 2 {
+		t.Fatalf("identical seed failures merged across builds: %q", seedGaps)
 	}
 	for i, build := range []string{"PR", "main"} {
 		want := "The " + build + " build started without its sample content (seed step 1 failed: could not open ~/.ao/litmus/runs/run_private/head/data)."
-		if run.Gaps[i] != want {
-			t.Errorf("gap %q, want %q", run.Gaps[i], want)
+		if seedGaps[i] != want {
+			t.Errorf("gap %q, want %q", seedGaps[i], want)
 		}
 	}
 	comment := renderComment(run, commentVerdict(commentChecks(t)), evidence{}, time.Now())

@@ -158,7 +158,6 @@ func (s *Service) replayObservation(ctx context.Context, run Run, source Receipt
 	defer e.mu.Unlock()
 	target := refInfo{role: source.TargetRole, name: source.TargetName}
 	rec := s.receipt(ctx, run.ID, e, leg.Name, "observe", nil, target, nil, nil, 0, reason)
-	s.recordingReceipt(ctx, run.ID, leg.Name, e)
 	return rec, nil
 }
 

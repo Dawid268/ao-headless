@@ -263,7 +263,7 @@ func TestPushEvidenceRetriesOnceAfterGhAuthSetupGit(t *testing.T) {
 	}
 }
 
-// evSubmit is a submit with after-shots and, because submitSvc made no recordings, a slideshow cut per leg.
+// evSubmit is a submit with after-shots and no recordings.
 func evSubmit(t *testing.T, mode, private string) (*Service, *evGit, *commentGH, string) {
 	t.Helper()
 	svc, _, runDir, _ := submitSvc(t)
@@ -297,6 +297,15 @@ func TestSubmitPublishesEvidenceAndEmbedsIt(t *testing.T) {
 	for _, private := range []string{"false", "true"} {
 		t.Run("private="+private, func(t *testing.T) {
 			svc, g, gh, runDir := evSubmit(t, EvidencePost, private)
+			// A published check clip now requires a recording, rather than stills.
+			_, err := svc.update("run_s1", func(run *Run) {
+				run.Legs[0].RecordStartedAt = svc.clock()
+				run.Legs[0].RecordStoppedAt = svc.clock().Add(time.Minute)
+			})
+			is(t, "")(nil, err)
+			path := recordingPath(runDir, "head")
+			is(t, "")(nil, os.MkdirAll(filepath.Dir(path), 0o750))
+			is(t, "")(nil, os.WriteFile(path, []byte("mp4"), 0o600))
 			evidenceBug(t, svc)
 			v, err := svc.Submit(ctx, "s1", "", "")
 			run, _ := svc.store.Get("run_s1")
@@ -741,38 +750,9 @@ func TestRecordingOverTheCapUploadsItsCut(t *testing.T) {
 	}
 }
 
-// A leg whose live recording was lost still gets a player: its slideshow goes up, is read back like a recording, and the
-// caption says what it is. The other leg keeps its own label.
-func TestALostRecordingUploadsTheSlideshowAndSaysSo(t *testing.T) {
-	svc, gh, run, runDir := vidSvc(t)
-	is(t, "")(nil, os.Remove(recordingPath(runDir, "head"))) // lost: the file was dropped
-	is(t, "")(nil, os.WriteFile(cutPath(runDir, "head"), []byte("mp4"), 0o600))
-	is(t, "")(nil, os.WriteFile(filepath.Join(runDir, "slides-head.txt"), []byte("file 'a.png'\nduration 1\nfile 'b.png'\nduration 1\nfile 'c.png'\nduration 1\nfile 'c.png'\n"), 0o600))
-	videos := []legVideo{{leg: "head", cut: true}, {leg: "base", raw: true}}
-	items, state := svc.publishVideos(ctx, run, videos)
-	if state != "attached" || len(items) != 2 || !items[0].stitched || items[0].url != vid1 || items[0].span != 3*time.Second || items[1].stitched || items[1].url != vid2 || gh.argv[1][len(gh.argv[1])-1] != cutPath(runDir, "head") || gh.readBacks() != 2 {
-		t.Fatalf("state %q items %+v gh %q", state, items, gh.argv)
-	}
-	const note = "stitched from the step screenshots because the live recording was lost"
-	if got, want := strings.Join(videoParts(run, evidence{videos: items}), "|"), "PR build, 3 s, "+note+"\n\n"+vid1+"|Main, 15 s\n\n"+vid2; got != want {
-		t.Fatalf("the slideshow says what it is:\n%q\nwant %q", got, want)
-	}
-	body := renderComment(run, commentVerdict(commentChecks(t)), evidence{state: "published", videos: items}, run.CreatedAt)
-	noSlop(t, body)
-	if !strings.Contains(body, "<details><summary>Recordings and every screenshot</summary>\n\nPR build, 3 s, "+note+"\n\n"+vid1+"\n\nMain, 15 s\n\n"+vid2) {
-		t.Fatalf("comment:\n%s", body)
-	}
-
-	svc, _, run, runDir = vidSvc(t) // the slideshow file is missing: that leg fails, the other still goes up
-	is(t, "")(nil, os.Remove(recordingPath(runDir, "head")))
-	if items, state := svc.publishVideos(ctx, run, videos); state != "partial" || items[0].url != "" || items[1].url == "" {
-		t.Fatalf("state %q items %+v", state, items)
-	}
-}
-
 func TestNoRecordingsOrNoEvidenceMeansNoVideosAndNoCalls(t *testing.T) {
 	svc, gh, run, _ := vidSvc(t)
-	if items, state := svc.publishVideos(ctx, run, []legVideo{{leg: "head"}, {leg: "base"}}); state != "off" || items != nil || len(gh.argv) != 0 { // no recording and no slideshow
+	if items, state := svc.publishVideos(ctx, run, []legVideo{{leg: "head"}, {leg: "base"}}); state != "off" || items != nil || len(gh.argv) != 0 { // no recording
 		t.Fatalf("nothing to show: state %q items %+v gh %q", state, items, gh.argv)
 	}
 	run.Evidence = EvidenceOff // --no-evidence

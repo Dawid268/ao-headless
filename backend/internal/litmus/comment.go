@@ -227,6 +227,9 @@ func noteSentences(run Run, v Verdict, c Check) string {
 // publishing, or run-relative files while a draft waits for approval.
 func bugCommentBody(run Run, v Verdict, b bugComment, image, clip string, marker bool) string {
 	parts := []string{fmt.Sprintf("Bug %d of %d:", b.Number, b.Total), noteSentences(run, v, b.Check)}
+	if v.StoppedEarly != "" {
+		parts = append(parts, "Stopped early: "+plainSentence(plainTester(v.StoppedEarly, run, v.Checks), 300))
+	}
 	if image != "" {
 		parts = append(parts, "![The base build on the left and the PR build on the right]("+image+")")
 	} else {
@@ -927,9 +930,6 @@ func videoParts(run Run, ev evidence) (out []string) {
 			continue
 		}
 		how := map[bool]string{true: "only the moments around each step"}[v.cut]
-		if v.stitched {
-			how = "stitched from the step screenshots because the live recording was lost"
-		}
 		caption := slices.DeleteFunc([]string{side, spanText(v.span), how}, func(s string) bool { return s == "" })
 		out = append(out, strings.Join(caption, ", ")+"\n\n"+v.url)
 	}
@@ -1064,7 +1064,7 @@ func (s *Service) draftComments(run Run, v Verdict) ([]commentDoc, error) {
 	if len(bugs) == 0 {
 		marker := isMarker("summary", 0)
 		body := summaryCommentBody(run, plain, s.clock(), marker)
-		if plain.Overall == CheckBlocked {
+		if plain.Overall == CheckBlocked || plain.Overall == CheckFail {
 			body = renderComment(run, plain, evidence{}, s.clock())
 			body = strings.ReplaceAll(body, commentMarker(run.Repo, run.PRNumber), litmusCommentMarker())
 			if !marker {
