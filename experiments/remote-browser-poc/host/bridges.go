@@ -186,44 +186,14 @@ const uiShim = `(() => {
 })();`
 
 // basicRealm finds a Basic challenge among a header's challenges (Negotiate,
-// Basic realm="x"; headers sent twice are joined by a newline) and its realm.
+// Basic realm="x") and its realm. Fetch lists a header sent twice once per value.
 var basicRealm = regexp.MustCompile(`(?i)(?:^|[\s,])basic(?:\s+realm="([^"]*)")?(?:[\s,]|$)`)
 
 // onBridgeEvent handles the CDP events the bridges need. It runs on the CDP
 // read goroutine, so it only Notifies (never Calls).
 func (v *viewer) onBridgeEvent(sid string, m cdpMsg) {
 	switch m.Method {
-	case "Network.responseReceived":
-		var p struct {
-			Type     string `json:"type"`
-			Response struct {
-				URL     string            `json:"url"`
-				Status  int               `json:"status"`
-				Headers map[string]string `json:"headers"`
-			} `json:"response"`
-		}
-		if json.Unmarshal(m.Params, &p) != nil || p.Type != "Document" || p.Response.Status != http.StatusUnauthorized {
-			return
-		}
-		origin := originOf(p.Response.URL)
-		v.mu.Lock()
-		a, failed := v.auth[origin], v.authFailed[origin]
-		delete(v.authFailed, origin)
-		if a != nil && a.cancel { // after Cancel the server's 401 page stays, as in Chrome
-			delete(v.auth, origin)
-		}
-		v.mu.Unlock()
-		if a != nil && a.cancel {
-			return
-		}
-		for k, val := range p.Response.Headers {
-			if strings.EqualFold(k, "www-authenticate") {
-				if mm := basicRealm.FindStringSubmatch(val); mm != nil {
-					v.sendJSON(map[string]any{"t": "auth", "origin": origin, "url": p.Response.URL, "realm": mm[1], "failed": failed})
-				}
-			}
-		}
-	case "Fetch.requestPaused":
+	case "Fetch.requestPaused": // a document's response (fetchPatterns), or a signed-in origin's request
 		var p struct {
 			RequestID          string     `json:"requestId"`
 			ResponseStatusCode int        `json:"responseStatusCode"`
@@ -233,13 +203,30 @@ func (v *viewer) onBridgeEvent(sid string, m cdpMsg) {
 			} `json:"request"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
+		realm, basic := "", false
+		for _, h := range p.ResponseHeaders {
+			if mm := basicRealm.FindStringSubmatch(h.Value); mm != nil && strings.EqualFold(h.Name, "www-authenticate") {
+				realm, basic = mm[1], true
+				break
+			}
+		}
+		if p.ResponseStatusCode != http.StatusUnauthorized || !basic {
+			v.h.cdp.Notify(sid, "Fetch.continueRequest", map[string]any{"requestId": p.RequestID})
+			return
+		}
+		origin := originOf(p.Request.URL)
 		v.mu.Lock()
-		a := v.auth[originOf(p.Request.URL)]
+		a, failed := v.auth[origin], v.authFailed[origin]
+		delete(v.authFailed, origin)
+		if a != nil && a.cancel { // after Cancel the server's 401 page stays, as in Chrome
+			delete(v.auth, origin)
+		}
 		v.mu.Unlock()
-		if p.ResponseStatusCode == http.StatusUnauthorized && a != nil && a.cancel {
+		if a != nil && a.cancel {
 			go v.show401(sid, p.RequestID, p.ResponseHeaders)
 			return
 		}
+		v.sendJSON(map[string]any{"t": "auth", "origin": origin, "url": p.Request.URL, "realm": realm, "failed": failed})
 		v.h.cdp.Notify(sid, "Fetch.continueRequest", map[string]any{"requestId": p.RequestID})
 	case "Fetch.authRequired":
 		var p struct {
@@ -416,7 +403,7 @@ func (v *viewer) answerPermission(ctxKey, id, name, origin string, granted bool,
 	v.evalIn(ctxKey, "window.__rbPermAnswer && window.__rbPermAnswer("+string(idJSON)+", "+map[bool]string{true: "true", false: "false"}[granted]+")", false)
 }
 
-// answerAuth intercepts only the challenging origin's requests, answers its
+// answerAuth intercepts the challenging origin's requests, answers its
 // challenge with the person's credentials (or cancels it), and reloads.
 func (v *viewer) answerAuth(origin string, a *authEntry) {
 	v.mu.Lock()
@@ -424,20 +411,30 @@ func (v *viewer) answerAuth(origin string, a *authEntry) {
 		v.auth, v.authTried, v.authFailed = map[string]*authEntry{}, map[string]bool{}, map[string]bool{}
 	}
 	v.auth[origin] = a
-	origins := make([]map[string]any, 0, len(v.auth))
-	for o, e := range v.auth {
-		p := map[string]any{"urlPattern": o + "/*"}
-		if e.cancel { // its 401 page is caught as a response (show401)
-			p["requestStage"], p["resourceType"] = "Response", "Document"
-		}
-		origins = append(origins, p)
-	}
 	v.mu.Unlock()
-	if _, err := v.call("Fetch.enable", map[string]any{"handleAuthRequests": true, "patterns": origins}); err != nil {
+	if _, err := v.call("Fetch.enable", v.fetchPatterns()); err != nil {
 		log.Printf("basic auth: %v", err)
 		return
 	}
 	_, _ = v.call("Page.reload", nil)
+}
+
+// fetchPatterns pauses every document's response, where a Basic challenge
+// opens the sign-in card (Network.enable sent each view an event for every
+// request the page made), and every request to an origin the person signed in
+// to, whose challenges then get their credentials.
+// ponytail: a paused document commits a few ms later (Chrome's interception),
+// once per view of its tab; pause in one view per tab if that shows.
+func (v *viewer) fetchPatterns() map[string]any {
+	patterns := []map[string]any{{"urlPattern": "*", "requestStage": "Response", "resourceType": "Document"}}
+	v.mu.Lock()
+	for o, e := range v.auth {
+		if !e.cancel { // a cancelled origin's 401 page is a document response (show401)
+			patterns = append(patterns, map[string]any{"urlPattern": o + "/*"})
+		}
+	}
+	v.mu.Unlock()
+	return map[string]any{"handleAuthRequests": true, "patterns": patterns}
 }
 
 func originOf(u string) string {

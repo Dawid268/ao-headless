@@ -297,7 +297,7 @@ func (v *viewer) attach(targetID string) error {
 	v.targetID, v.session, v.unsub = targetID, sid, unsub
 	v.mu.Unlock()
 	v.runSteps(ctx, sid, append(append([]cdpStep{{"Inspector.enable", nil}}, frameSteps...),
-		cdpStep{"Network.enable", nil})) // a 401 document with a Basic challenge opens the viewer's login prompt
+		cdpStep{"Fetch.enable", v.fetchPatterns()})) // a 401 document with a Basic challenge opens the viewer's login prompt
 	// Headless Chrome stops painting a background tab: the one shown comes to
 	// the front, before its size is set (a size set while the tab is behind
 	// another leaves Chrome capturing its whole window, every frame the wrong
@@ -914,7 +914,7 @@ func (v *viewer) onEvent(sid string, m cdpMsg) {
 		case v.shimQ <- func() { v.relayShim(sid, kind, p.Payload, p.ContextID) }:
 		default:
 		}
-	case "Network.responseReceived", "Fetch.requestPaused", "Fetch.authRequired":
+	case "Fetch.requestPaused", "Fetch.authRequired":
 		v.onBridgeEvent(sid, m)
 	case "Inspector.targetCrashed":
 		if top {

@@ -1,6 +1,106 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+)
+
+// Every paused request and response goes on at once, but a document's Basic
+// challenge: it opens the sign-in card (saying so when the password was
+// refused), and after Cancel it is the server's own 401 page, without the
+// challenge Chrome would show an empty error page for.
+func TestBasicChallengePaused(t *testing.T) {
+	sent := make(chan cdpMsg, 16)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		for {
+			_, data, err := c.Read(r.Context())
+			var m cdpMsg
+			if err != nil || json.Unmarshal(data, &m) != nil {
+				return
+			}
+			sent <- m
+			_ = c.Write(r.Context(), websocket.MessageText, fmt.Appendf(nil, `{"id":%d,"result":{"body":"401 page"}}`, m.ID))
+		}
+	}))
+	defer srv.Close()
+	cdp, err := dialCDP(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	v := &viewer{h: &host{cdp: cdp}, ctx: ctx, cancel: cancel, session: "S", out: make(chan []byte, 8)}
+	event := func(method, params string) {
+		v.onEvent("S", cdpMsg{Method: method, Params: json.RawMessage(params), SessionID: "S"})
+	}
+	paused := func(status int, challenge string) {
+		event("Fetch.requestPaused", fmt.Sprintf(`{"requestId":"R","request":{"url":"https://a.test/x"},"responseStatusCode":%d,
+			"responseHeaders":[{"name":"Content-Type","value":"text/html"},{"name":"WWW-Authenticate","value":%q}]}`, status, challenge))
+	}
+	check := func(name, card string, cmds ...string) {
+		t.Helper()
+		got := ""
+		select {
+		case b := <-v.out:
+			got = string(b)
+		default:
+		}
+		if got != card {
+			t.Errorf("%s: card %s, want %s", name, got, card)
+		}
+		for _, want := range cmds {
+			select {
+			case m := <-sent:
+				if got := m.Method + " " + string(m.Params); got != want {
+					t.Errorf("%s: sent %s, want %s", name, got, want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Errorf("%s: never sent %s", name, want)
+			}
+		}
+	}
+	const (
+		next  = `Fetch.continueRequest {"requestId":"R"}`
+		card  = `{"failed":false,"origin":"https://a.test","realm":"rb","t":"auth","url":"https://a.test/x"}`
+		basic = `Basic realm="rb"`
+	)
+	paused(0, "")
+	check("a signed-in origin's request", "", next)
+	paused(200, basic)
+	check("a page", "", next)
+	paused(401, `Bearer realm="api"`)
+	check("another scheme's challenge", "", next)
+	paused(401, basic)
+	check("a Basic challenge", card, next)
+
+	v.auth, v.authTried, v.authFailed = map[string]*authEntry{"https://a.test": {user: "u", pass: "p"}}, map[string]bool{}, map[string]bool{}
+	for _, answer := range []string{`{"password":"p","response":"ProvideCredentials","username":"u"}`, `{"response":"CancelAuth"}`} {
+		event("Fetch.authRequired", `{"requestId":"R","authChallenge":{"origin":"https://a.test","scheme":"basic"}}`)
+		check("signing in", "", `Fetch.continueWithAuth {"authChallengeResponse":`+answer+`,"requestId":"R"}`)
+	}
+	paused(401, basic)
+	check("a refused password", strings.Replace(card, "false", "true", 1), next)
+
+	v.auth["https://a.test"] = &authEntry{cancel: true}
+	paused(401, basic)
+	check("Cancel", "", `Fetch.getResponseBody {"requestId":"R"}`,
+		`Fetch.fulfillRequest {"body":"NDAxIHBhZ2U=","requestId":"R","responseCode":401,"responseHeaders":[{"name":"Content-Type","value":"text/html"}]}`)
+	paused(401, basic)
+	check("a challenge after Cancel", card, next)
+}
 
 // A page on the internet may not name a local address as its icon, in any
 // form Chrome reads as one.
