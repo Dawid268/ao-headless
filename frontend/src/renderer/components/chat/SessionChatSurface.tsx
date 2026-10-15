@@ -475,6 +475,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
+	const settingsLoading = waking || Boolean(renderSnapshot && can(renderSnapshot, "config_options") && !configOptions.loaded && !configOptions.error);
 	// Keep the project marked as starting until its controller is ready, so
 	// sidebar actions cannot launch a duplicate orchestrator.
 	useEffect(() => {
@@ -634,10 +635,12 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
 				shellError={shellError}
-				settingsReady={!optimisticChat && (targetChatControllerReady || agentResuming || waking)}
 				// Until the agent's own settings arrive the bar shows the saved ones,
 				// disabled, rather than nothing: asleep, waking, or its list still loading.
-				settingsLoading={waking || (can(renderSnapshot, "config_options") && !configOptions.loaded && !configOptions.error)}
+				// With none saved yet it waits, so defaults never pass for the chat's own.
+				settingsReady={!optimisticChat && (targetChatControllerReady || agentResuming || waking) &&
+					(!settingsLoading || Boolean(renderSnapshot.settings?.model || renderSnapshot.settings?.approvalMode))}
+				settingsLoading={settingsLoading}
 				models={models}
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
 				onRememberPermissions={can(renderSnapshot, "config_options") && !configOptions.loaded
