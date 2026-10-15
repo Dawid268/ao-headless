@@ -230,6 +230,21 @@ type ArtifactFileQuery struct {
 	Path string `query:"path" description:"Artifact-directory-relative file path, as listed in the session's artifactFiles."`
 }
 
+// UpdateArtifactFileRequest replaces one listed artifact file after verifying
+// that the viewer's loaded copy is still current.
+type UpdateArtifactFileRequest struct {
+	Path                    string `json:"path" description:"Artifact-directory-relative file path, as listed in the session's artifactFiles."`
+	Content                 string `json:"content" description:"The file's new UTF-8 text content."`
+	ExpectedFileFingerprint string `json:"expectedFileFingerprint" description:"Hex SHA-256 of the file content the edit started from."`
+}
+
+// ArtifactFileResponse describes an artifact file after a write.
+type ArtifactFileResponse struct {
+	Path            string `json:"path"`
+	Size            int64  `json:"size"`
+	FileFingerprint string `json:"fileFingerprint" description:"Hex SHA-256 of the file's content."`
+}
+
 // WorkspaceFileQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
@@ -1376,6 +1391,7 @@ type SetActivityRequest struct {
 	SubmissionID                 string                              `json:"submissionId,omitempty" maxLength:"36" description:"AO prompt-hook context correlation UUID, when supported."`
 	TranscriptPath               string                              `json:"transcriptPath,omitempty" maxLength:"4096" description:"Read-only provider-native transcript path exposed by the hook."`
 	LaunchID                     string                              `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	Entrypoint                   string                              `json:"entrypoint,omitempty" description:"Provider process-kind marker (Claude's CLAUDE_CODE_ENTRYPOINT) of the process that fired the hook."`
 	Usage                        *UsageHookMetadata                  `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
 }
 
