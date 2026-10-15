@@ -3,9 +3,6 @@ package cursoracp
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,63 +40,22 @@ func (f *fakeExtensionBridge) RequestApproval(
 
 func (f *fakeExtensionBridge) UpdatePlan(plan *domain.ConversationPlan) { f.plan = plan }
 
-func TestConfigureWritesManagedStandingRuleForStartAndResume(t *testing.T) {
-	dataDir := t.TempDir()
-	cfg := acpdriver.LaunchConfig{
-		SessionID: "worker-1", DataDir: dataDir,
-		SystemPrompt: "AO standing instructions for start",
+func TestStandingInstructionsLeadTheFirstPromptAsText(t *testing.T) {
+	if got := sessionPreamble(acpdriver.LaunchConfig{}); got != nil {
+		t.Fatalf("preamble without instructions = %#v, want none", got)
 	}
-	args, env, err := configure(context.Background(), cfg)
+	cfg := acpdriver.LaunchConfig{SystemPrompt: "AO standing instructions\n<ao-handoff-request>note</ao-handoff-request>"}
+	args, _, err := configure(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("configure start: %v", err)
+		t.Fatalf("configure: %v", err)
 	}
-	if len(args) != 3 || args[0] != "--plugin-dir" || args[2] != "acp" || !filepath.IsAbs(args[1]) {
-		t.Fatalf("args = %#v, want --plugin-dir <absolute-path> acp", args)
+	if len(args) != 1 || args[0] != "acp" {
+		t.Fatalf("args = %#v, want only acp: Cursor's chat ignores --plugin-dir rules", args)
 	}
-	if env != nil {
-		t.Fatalf("env = %#v, want nil", env)
-	}
-	rulePath := filepath.Join(args[1], "rules", "ao-standing.mdc")
-	rule, err := os.ReadFile(rulePath)
-	if err != nil {
-		t.Fatalf("read managed rule: %v", err)
-	}
-	if !strings.Contains(string(rule), "alwaysApply: true") || !strings.Contains(string(rule), cfg.SystemPrompt) {
-		t.Fatalf("managed rule = %q", rule)
-	}
-	if _, err := os.Stat(filepath.Join(args[1], ".cursor-plugin", "plugin.json")); err != nil {
-		t.Fatalf("managed plugin manifest: %v", err)
-	}
-
-	// Resume re-runs Configure for the same AO session. It must replace the
-	// standing rule with the newly generated role instead of retaining launch
-	// context from the previous process.
-	cfg.SystemPrompt = "AO standing instructions recomputed for resume"
-	resumeArgs, _, err := configure(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("configure resume: %v", err)
-	}
-	if !reflect.DeepEqual(resumeArgs, args) {
-		t.Fatalf("resume args = %#v, want stable plugin path %#v", resumeArgs, args)
-	}
-	rule, err = os.ReadFile(rulePath)
-	if err != nil {
-		t.Fatalf("read resumed rule: %v", err)
-	}
-	if !strings.Contains(string(rule), cfg.SystemPrompt) || strings.Contains(string(rule), "instructions for start") {
-		t.Fatalf("resumed managed rule = %q", rule)
-	}
-}
-
-func TestConfigureStopsStandingRuleWriteWhenContextCancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	dataDir := t.TempDir()
-	_, _, err := configure(ctx, acpdriver.LaunchConfig{
-		SessionID: "cancelled", DataDir: dataDir, SystemPrompt: "must not be written",
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("configure error = %v, want context.Canceled", err)
+	got := sessionPreamble(cfg)
+	if len(got) != 1 || got[0].Text == nil || !strings.Contains(got[0].Text.Text, cfg.SystemPrompt) ||
+		!strings.HasPrefix(got[0].Text.Text, "<ao-standing-instructions>") {
+		t.Fatalf("preamble = %#v, want the instructions as one wrapped text block", got)
 	}
 }
 
