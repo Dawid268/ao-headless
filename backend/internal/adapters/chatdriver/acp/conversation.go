@@ -508,9 +508,6 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		if option.ID == "" || option.Value == "" {
 			return nil
 		}
-		if offered, _ := c.configOptionOffers(option.ID, option.Value); option.Optional && !offered {
-			return nil
-		}
 		if (option.ID == "model" && legacyModel) || (option.ID == "mode" && legacyMode) {
 			return nil
 		}
@@ -521,6 +518,11 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			},
 		})
 		if err != nil {
+			// An optional setting the chosen model lacks is skipped. The catalog cannot
+			// say in advance: session/set_model does not return the new model's options.
+			if option.Optional && isACPInvalidParams(err) {
+				return nil
+			}
 			if isACPMethodNotFound(err) {
 				return fmt.Errorf("%w: session/set_config_option %q", ErrACPSetterUnsupported, option.ID)
 			}

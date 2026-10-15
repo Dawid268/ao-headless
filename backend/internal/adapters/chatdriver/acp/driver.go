@@ -127,7 +127,7 @@ type PermissionPolicy func(
 type SessionOption struct {
 	ID    string
 	Value string
-	// Optional settings are skipped when the session does not offer them, such
+	// Optional settings are skipped when the session rejects them, such
 	// as a thinking setting on a model that has none.
 	Optional bool
 }
@@ -802,6 +802,11 @@ func isACPResourceNotFound(err error) bool {
 func isACPMethodNotFound(err error) bool {
 	var requestErr *acpsdk.RequestError
 	return errors.As(err, &requestErr) && requestErr.Code == -32601
+}
+
+func isACPInvalidParams(err error) bool {
+	var requestErr *acpsdk.RequestError
+	return errors.As(err, &requestErr) && requestErr.Code == -32602
 }
 
 // isACPInternalError reports whether err is a JSON-RPC -32603 "Internal error"
