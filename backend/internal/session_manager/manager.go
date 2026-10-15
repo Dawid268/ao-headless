@@ -3082,7 +3082,7 @@ func (m *Manager) WakeHibernatedChat(ctx context.Context, id domain.SessionID) e
 		if rec.HibernatedAt == nil && m.chat != nil && m.chat.HasLiveChatController(id) {
 			return nil
 		}
-		_, err = m.ResumeAgentWithMode(ctx, id)
+		result, err := m.ResumeAgentWithMode(ctx, id)
 		if errors.Is(err, ErrResumeInProgress) {
 			m.agentOpMu.Lock()
 			operation = m.agentOperations[id]
@@ -3091,7 +3091,15 @@ func (m *Manager) WakeHibernatedChat(ctx context.Context, id domain.SessionID) e
 				continue
 			}
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		// Soft-queued for warm capacity: not an error to the user, but Drain must
+		// not treat this as a successful wake (no controller was started).
+		if result.Queued {
+			return ErrChatHostQueued
+		}
+		return nil
 	}
 }
 

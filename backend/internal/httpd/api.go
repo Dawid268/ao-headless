@@ -75,6 +75,8 @@ type APIDeps struct {
 	// LinkPreview unfurls external URLs for the renderer's hover cards; nil
 	// leaves the route answering 501.
 	LinkPreview controllers.LinkPreviewService
+	// ProjectTransfer packs and restores portable projects between hosts.
+	ProjectTransfer controllers.ProjectTransferService
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
@@ -140,11 +142,12 @@ type API struct {
 	system        *controllers.SystemController
 	identity      *controllers.IdentityController
 	endpoints     *controllers.EndpointsController
-	systemInstall *controllers.SystemInstallController
-	agentAuth     *controllers.AgentAuthController
-	linkPreview   *controllers.LinkPreviewController
-	github        *controllers.GitHubController
-	events        *EventsController
+	systemInstall   *controllers.SystemInstallController
+	agentAuth       *controllers.AgentAuthController
+	linkPreview     *controllers.LinkPreviewController
+	github          *controllers.GitHubController
+	projectTransfer *controllers.ProjectTransferController
+	events          *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -198,11 +201,12 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 		system:        &controllers.SystemController{Checks: deps.SystemChecks},
 		identity:      &controllers.IdentityController{HostID: deps.HostID},
 		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
-		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
-		agentAuth:     &controllers.AgentAuthController{Svc: deps.AgentAuth},
-		linkPreview:   &controllers.LinkPreviewController{Svc: deps.LinkPreview},
-		github:        &controllers.GitHubController{Svc: deps.GitHub},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		systemInstall:   &controllers.SystemInstallController{Installer: deps.Installer},
+		agentAuth:       &controllers.AgentAuthController{Svc: deps.AgentAuth},
+		linkPreview:     &controllers.LinkPreviewController{Svc: deps.LinkPreview},
+		github:          &controllers.GitHubController{Svc: deps.GitHub},
+		projectTransfer: &controllers.ProjectTransferController{Svc: deps.ProjectTransfer},
+		events:          &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -262,6 +266,7 @@ func (a *API) Register(root chi.Router) {
 			a.agentAuth.Register(r)
 			a.linkPreview.Register(r)
 			a.github.Register(r)
+			a.projectTransfer.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
@@ -277,6 +282,9 @@ func attachmentUploadRoute(req *http.Request) bool {
 		return false
 	}
 	route := chi.RouteContext(req.Context()).RoutePattern()
+	if route == "/api/v1/projects/import-jobs" || route == "/api/v1/projects/seed" {
+		return true
+	}
 	// This route only accepts attachments, including from older clients.
 	if route == "/api/v1/sessions/{sessionId}/attachments" {
 		return true

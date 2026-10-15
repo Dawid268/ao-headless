@@ -27,6 +27,7 @@ const approvedLiterals: Record<string, readonly string[]> = {
 	"components/DaemonStartupLoader.tsx": ["Agent Orchestrator"],
 	// Technical branch/prefix examples moved with the common settings fields.
 	"components/ProjectSettingsEditor.tsx": ["auto", "ao"],
+	"components/ProjectTransferDialog.tsx": ["/home/you/code", "/home/you/code/project"],
 	"components/RemoteDirectoryPicker.tsx": ["/home/you/code"],
 	"components/SessionInspector.tsx": ["PR #"],
 	"components/Sidebar.tsx": ["Orchestrator.inc", "daemon"],

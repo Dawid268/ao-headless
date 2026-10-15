@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/githubpat"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/projectxfer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
@@ -568,6 +569,12 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
+	"ControllersSeedProjectQuery":       "SeedProjectQuery",
+	"ControllersStartExportJobRequest":  "StartExportJobRequest",
+	"ControllersStartTransferJobAccepted": "StartTransferJobAccepted",
+	"ControllersProjectTransferJobIDParam": "ProjectTransferJobIDParam",
+	"ControllersProjectImportJobQuery":  "ProjectImportJobQuery",
+	"ProjectxferProgress":               "ProjectTransferProgress",
 	// httpd/controllers: GitHub PAT wire envelopes
 	"ControllersPutGitHubPATRequest": "PutGitHubPATRequest",
 	"GithubpatRepo":                  "GitHubRepo",
@@ -2438,14 +2445,72 @@ func projectOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/projects/seed", id: "seedProject", tag: "projects",
 			summary: "Unpack a gzipped tar onto the host, initialize git, and register the project",
-			// Metadata is query-string (destDir, includeSecrets, name, projectId);
-			// the body is the raw gzipped tar stream.
-			reqBody: projectsvc.SeedAndRegisterInput{},
+			// Metadata is query-string; the body is the raw gzipped tar stream
+			// (application/gzip). OpenAPI documents the query; clients send octets.
+			pathParams: []any{controllers.SeedProjectQuery{}},
 			resps: []respUnit{
 				{http.StatusCreated, projectsvc.SeedAndRegisterResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/export-jobs", id: "startProjectExportJob", tag: "projects",
+			summary:    "Start an async portable project export job",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    controllers.StartExportJobRequest{},
+			optionalReqBody: true,
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.StartTransferJobAccepted{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/import-jobs", id: "startProjectImportJob", tag: "projects",
+			summary: "Start an async portable project import from an ao-project-export package",
+			pathParams: []any{controllers.ProjectImportJobQuery{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.StartTransferJobAccepted{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/project-transfer-jobs/{jobId}", id: "getProjectTransferJob", tag: "projects",
+			summary:    "Poll export/import job progress",
+			pathParams: []any{controllers.ProjectTransferJobIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, projectxfer.Progress{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/project-transfer-jobs/{jobId}/artifact", id: "getProjectTransferArtifact", tag: "projects",
+			summary:    "Download a completed export package (application/gzip)",
+			pathParams: []any{controllers.ProjectTransferJobIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "application/gzip"},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/project-transfer-jobs/{jobId}", id: "cancelProjectTransferJob", tag: "projects",
+			summary:    "Cancel an in-flight export or import job",
+			pathParams: []any{controllers.ProjectTransferJobIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

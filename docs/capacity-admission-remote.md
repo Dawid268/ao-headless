@@ -34,6 +34,12 @@ an already-held host (Drain peer / warm adopt) must not steal that reservation.
 `reservationGrace` is 90s so the 30s dead-PID sweep cannot clear an in-flight
 cold wake before the 60s drain wake timeout.
 
+When the fair wake queue is blocked at capacity, pressure reclaim first
+hibernates eligible Chat workers, then shuts down one review/side/background
+host per sweep (they occupy `MaxWorker`/`MaxTotal` but cannot `HibernateChat`).
+Orchestrators are never auto-stopped; a queued orchestrator waits for an orch
+slot (`MaxOrch`) or a freed total slot after aux reclaim.
+
 Inventory is **live `chat-hosts/*/host.json` PIDs**, not SQLite session rows.
 Adopt of an existing host does not consume a new slot; a failed spawn that
 leaves a live PID keeps the slot charged.

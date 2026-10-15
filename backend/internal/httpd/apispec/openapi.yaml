@@ -2938,6 +2938,106 @@ paths:
       summary: Start a worker task and refine its title in the background
       tags:
       - sessions
+  /api/v1/project-transfer-jobs/{jobId}:
+    delete:
+      operationId: cancelProjectTransferJob
+      parameters:
+      - description: Export or import job identifier.
+        in: path
+        name: jobId
+        required: true
+        schema:
+          description: Export or import job identifier.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel an in-flight export or import job
+      tags:
+      - projects
+    get:
+      operationId: getProjectTransferJob
+      parameters:
+      - description: Export or import job identifier.
+        in: path
+        name: jobId
+        required: true
+        schema:
+          description: Export or import job identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectTransferProgress'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Poll export/import job progress
+      tags:
+      - projects
+  /api/v1/project-transfer-jobs/{jobId}/artifact:
+    get:
+      operationId: getProjectTransferArtifact
+      parameters:
+      - description: Export or import job identifier.
+        in: path
+        name: jobId
+        required: true
+        schema:
+          description: Export or import job identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/gzip:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Download a completed export package (application/gzip)
+      tags:
+      - projects
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -3151,6 +3251,56 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Replace a project's per-project config
+      tags:
+      - projects
+  /api/v1/projects/{id}/export-jobs:
+    post:
+      operationId: startProjectExportJob
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartExportJobRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartTransferJobAccepted'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start an async portable project export job
       tags:
       - projects
   /api/v1/projects/{id}/permissions:
@@ -3439,6 +3589,68 @@ paths:
       summary: Clone a project without registering it so Git setup can be completed
       tags:
       - projects
+  /api/v1/projects/import-jobs:
+    post:
+      operationId: startProjectImportJob
+      parameters:
+      - description: Absolute destination directory on this host.
+        in: query
+        name: destDir
+        schema:
+          description: Absolute destination directory on this host.
+          type: string
+      - description: Allow .env and key material from the package.
+        in: query
+        name: includeSecrets
+        schema:
+          description: Allow .env and key material from the package.
+          type: boolean
+      - description: Optional display name override.
+        in: query
+        name: name
+        schema:
+          description: Optional display name override.
+          type: string
+      - description: Optional project id override.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id override.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartTransferJobAccepted'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start an async portable project import from an ao-project-export package
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -3479,12 +3691,31 @@ paths:
   /api/v1/projects/seed:
     post:
       operationId: seedProject
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SeedAndRegisterInput'
-        required: true
+      parameters:
+      - description: Absolute destination directory on this host.
+        in: query
+        name: destDir
+        schema:
+          description: Absolute destination directory on this host.
+          type: string
+      - description: Allow .env and key material in the archive.
+        in: query
+        name: includeSecrets
+        schema:
+          description: Allow .env and key material in the archive.
+          type: boolean
+      - description: Optional display name.
+        in: query
+        name: name
+        schema:
+          description: Optional display name.
+          type: string
+      - description: Optional project id.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id.
+          type: string
       responses:
         "201":
           content:
@@ -15436,6 +15667,37 @@ components:
       - sessionPrefix
       - folderMissing
       type: object
+    ProjectTransferProgress:
+      properties:
+        bytesDone:
+          format: int64
+          type: integer
+        bytesTotal:
+          format: int64
+          type: integer
+        detail:
+          type: string
+        done:
+          type: boolean
+        error:
+          type: string
+        jobId:
+          type: string
+        kind:
+          type: string
+        percent:
+          type: integer
+        phase:
+          type: string
+        projectId:
+          type: string
+      required:
+      - jobId
+      - kind
+      - phase
+      - percent
+      - done
+      type: object
     PromoteQueuedTurnResponse:
       properties:
         activityId:
@@ -15996,24 +16258,6 @@ components:
       required:
       - path
       - name
-      type: object
-    SeedAndRegisterInput:
-      properties:
-        destDir:
-          minLength: 1
-          type: string
-        includeSecrets:
-          type: boolean
-        name:
-          type:
-          - "null"
-          - string
-        projectId:
-          type:
-          - "null"
-          - string
-      required:
-      - destDir
       type: object
     SeedAndRegisterResult:
       properties:
@@ -17725,6 +17969,11 @@ components:
       - targetAccountId
       - idempotencyKey
       type: object
+    StartExportJobRequest:
+      properties:
+        includeSecrets:
+          type: boolean
+      type: object
     StartPreviewServerRequest:
       properties:
         configuration:
@@ -17765,6 +18014,13 @@ components:
       - ok
       - sessionId
       - transition
+      type: object
+    StartTransferJobAccepted:
+      properties:
+        jobId:
+          type: string
+      required:
+      - jobId
       type: object
     SteerConversationRequest:
       properties:

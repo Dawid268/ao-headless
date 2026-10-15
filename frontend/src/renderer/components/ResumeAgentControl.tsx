@@ -1,8 +1,16 @@
-import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Play } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import { apiErrorMessage } from "../lib/api-client";
+import {
+  clearCapacityWakeQueued,
+  markCapacityWakeQueued,
+} from "../lib/capacity-wake-queue";
 import { clientForSessionHost } from "../lib/host-clients";
 import { workspaceQueryKeyForHost } from "../hooks/useWorkspaceQuery";
 import { useCanResumeAgent } from "../hooks/useCanResumeAgent";
@@ -18,71 +26,88 @@ import { Button } from "./ui/button";
  * the terminal strip can both mount it unconditionally.
  */
 export function ResumeAgentControl({
-	className,
-	containerClassName,
-	session,
-	hostId,
+  className,
+  containerClassName,
+  session,
+  hostId,
 }: {
-	className?: string;
-	containerClassName?: string;
-	session: WorkspaceSession;
-	hostId?: string;
+  className?: string;
+  containerClassName?: string;
+  session: WorkspaceSession;
+  hostId?: string;
 }) {
-	const { t } = useTranslation();
-	const queryClient = useQueryClient();
-	const canResume = useCanResumeAgent(session, hostId);
-	const resuming = useIsMutating({ mutationKey: ["resume-agent", hostId ?? "local", session.id] }) > 0;
-	const resume = useMutation({
-		mutationKey: ["resume-agent", hostId ?? "local", session.id],
-		mutationFn: async () => {
-			if (usePreviewData) return;
-			const { data, error, response } = await clientForSessionHost(hostId).POST("/api/v1/sessions/{sessionId}/resume-agent", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
-			return data;
-		},
-		onSuccess: async (data) => {
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKeyForHost(hostId) });
-			if (data?.resumeMode === "saved_prompt") {
-				void aoBridge.notifications
-					.show({
-						id: `resume-agent-fallback:${hostId ?? "local"}:${session.id}:${Date.now()}`,
-						title: t("inspector.startedFromPrompt"),
-						body: t("inspector.resumeFallbackBody"),
-					})
-					.catch((err) => {
-						console.warn("Unable to show resume fallback notification", err);
-					});
-			}
-		},
-	});
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const canResume = useCanResumeAgent(session, hostId);
+  const resuming =
+    useIsMutating({
+      mutationKey: ["resume-agent", hostId ?? "local", session.id],
+    }) > 0;
+  const resume = useMutation({
+    mutationKey: ["resume-agent", hostId ?? "local", session.id],
+    mutationFn: async () => {
+      if (usePreviewData) return;
+      const { data, error, response } = await clientForSessionHost(hostId).POST(
+        "/api/v1/sessions/{sessionId}/resume-agent",
+        {
+          params: { path: { sessionId: session.id } },
+        },
+      );
+      if (error)
+        throw new Error(
+          apiErrorMessage(error, `Failed to resume agent (${response.status})`),
+        );
+      return data;
+    },
+    onSuccess: async (data) => {
+      if (data?.queued) markCapacityWakeQueued(session.id, hostId);
+      else clearCapacityWakeQueued(session.id, hostId);
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeyForHost(hostId),
+      });
+      if (data?.resumeMode === "saved_prompt") {
+        void aoBridge.notifications
+          .show({
+            id: `resume-agent-fallback:${hostId ?? "local"}:${session.id}:${Date.now()}`,
+            title: t("inspector.startedFromPrompt"),
+            body: t("inspector.resumeFallbackBody"),
+          })
+          .catch((err) => {
+            console.warn("Unable to show resume fallback notification", err);
+          });
+      }
+    },
+  });
 
-	// Cloud sessions re-provision through the control plane (useRestoreSession),
-	// not this local-daemon route — the local daemon has never heard of them and
-	// would answer "Unknown session".
-	if (!canResume) return null;
+  // Cloud sessions re-provision through the control plane (useRestoreSession),
+  // not this local-daemon route — the local daemon has never heard of them and
+  // would answer "Unknown session".
+  if (!canResume) return null;
 
-	const error = resume.error instanceof Error ? resume.error.message : null;
-	const control = (
-		<>
-			<Button
-				className={cn("shrink-0", className)}
-				disabled={resuming}
-				onClick={() => resume.mutate()}
-				size="sm"
-				type="button"
-				variant="outline"
-			>
-				<Play className="size-icon-sm" aria-hidden="true" />
-				{t("inspector.resumeAgent")}
-			</Button>
-			{error ? (
-				<p className="mt-2 text-xs leading-normal text-error" role="status">
-					{error}
-				</p>
-			) : null}
-		</>
-	);
-	return containerClassName ? <div className={containerClassName}>{control}</div> : control;
+  const error = resume.error instanceof Error ? resume.error.message : null;
+  const control = (
+    <>
+      <Button
+        className={cn("shrink-0", className)}
+        disabled={resuming}
+        onClick={() => resume.mutate()}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <Play className="size-icon-sm" aria-hidden="true" />
+        {t("inspector.resumeAgent")}
+      </Button>
+      {error ? (
+        <p className="mt-2 text-xs leading-normal text-error" role="status">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+  return containerClassName ? (
+    <div className={containerClassName}>{control}</div>
+  ) : (
+    control
+  );
 }

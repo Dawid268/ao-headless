@@ -126,13 +126,16 @@ func wireChatHostWakeAdmit(budget *chathostbudget.Budget, mgr chatHostWakeAdmitt
 	})
 }
 
-// reclaimChatHostsUnderPressure hibernates reclaimable warm workers when memory
-// pressure (or over-cap holdings) requires free slots. Orchestrators are never
-// auto-hibernated.
+// reclaimChatHostsUnderPressure frees warm slots when memory pressure or a
+// blocked wake queue requires capacity. Orchestrators are never auto-stopped.
+// Session workers hibernate first; review/side/background hosts (which count
+// toward MaxWorker/MaxTotal but cannot HibernateChat) are shut down one per
+// sweep so a soft-queued orchestrator or worker can Drain.
 func reclaimChatHostsUnderPressure(
 	ctx context.Context,
 	budget *chathostbudget.Budget,
 	hibernator pressureHibernator,
+	dataDir string,
 	log *slog.Logger,
 ) {
 	if budget == nil || hibernator == nil {
@@ -145,9 +148,6 @@ func reclaimChatHostsUnderPressure(
 		if ctx.Err() != nil {
 			return
 		}
-		// Side/review/background hosts are not Chat sessions; HibernateChat
-		// would only spam errors. They still count toward the worker sub-cap
-		// and become reclaimable when their PID dies (ReleaseIfDead).
 		if chathostbudget.ClassifyHostID(hostID) != chathostbudget.ClassWorker {
 			continue
 		}
@@ -156,9 +156,36 @@ func reclaimChatHostsUnderPressure(
 			log.Warn("pressure chat-host reclaim failed", "hostID", hostID, "err", err)
 			continue
 		}
-		if stopped && log != nil {
-			log.Info("pressure reclaim hibernated chat host", "hostID", hostID)
+		if stopped {
+			if log != nil {
+				log.Info("pressure reclaim hibernated chat host", "hostID", hostID)
+			}
+			return
 		}
+	}
+	if dataDir == "" {
+		return
+	}
+	for _, hostID := range budget.WorkerHostIDs() {
+		if ctx.Err() != nil {
+			return
+		}
+		switch chathostbudget.ClassifyHostID(hostID) {
+		case chathostbudget.ClassReview, chathostbudget.ClassSide, chathostbudget.ClassBackground:
+		default:
+			continue
+		}
+		if err := persistenthost.Shutdown(ctx, dataDir, hostID); err != nil {
+			if log != nil && ctx.Err() == nil {
+				log.Warn("pressure reclaim aux host shutdown failed", "hostID", hostID, "err", err)
+			}
+			continue
+		}
+		budget.ForceRelease(hostID)
+		if log != nil {
+			log.Info("pressure reclaim shut down aux chat host", "hostID", hostID)
+		}
+		return
 	}
 }
 
@@ -180,8 +207,8 @@ func drainChatHostWakeQueue(
 			defer cancel()
 			if err := wake.WakeHibernatedChat(wakeCtx, domain.SessionID(w.HostID)); err != nil {
 				budget.ForceRelease(w.HostID)
-				// Only requeue transient failures. Permanent miss (not found /
-				// terminated) would loop forever on the fair queue.
+				// Soft capacity deferral and other transient failures stay on the
+				// fair queue. Permanent miss (not found / terminated) would loop.
 				if shouldRequeueWake(err) {
 					budget.Enqueue(w)
 					if log != nil {
@@ -206,5 +233,6 @@ func shouldRequeueWake(err error) bool {
 		errors.Is(err, sessionmanager.ErrNotResumable) {
 		return false
 	}
+	// ErrChatHostQueued means SoftAdmit deferred again — keep fair-queueing.
 	return true
 }

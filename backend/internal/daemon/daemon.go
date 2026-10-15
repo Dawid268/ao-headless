@@ -65,6 +65,7 @@ import (
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/projectxfer"
 	reportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/report"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
@@ -653,6 +654,25 @@ func Run() error {
 	lcStack.LCM.SetSessionOperationGate(sessMgr)
 	termMgr.SetSessionInputLease(sessMgr)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log, OnModelScopeChanged: agentSvc.InvalidateProjectModelCatalogs})
+	projectTransferSvc := projectxfer.New(projectxfer.Deps{
+		DataDir:  cfg.DataDir,
+		Projects: projectSvc,
+		Cues:     store,
+		Sessions: store,
+		Chats: projectxfer.ChatAdapter{
+			ProjectConv: store.ProjectConversation,
+			SessionConv: store.ConversationForSession,
+			LoadSnap: func(ctx context.Context, conversationID string) ([]domain.ConversationMessage, []domain.ConversationActivity, error) {
+				snap, err := store.LoadConversationSnapshot(ctx, conversationID)
+				if err != nil {
+					return nil, nil, err
+				}
+				return snap.Messages, snap.Activities, nil
+			},
+		},
+		Writer:   projectxfer.ProjectServiceWriter{Mgr: projectSvc},
+		CueWrite: store,
+	})
 	reportSessions, ok := sessMgr.(reportSemanticSession)
 	if !ok {
 		return errors.New("wire report delivery: session manager lacks semantic send support")
@@ -944,6 +964,7 @@ func Run() error {
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		ProjectTransfer:    projectTransferSvc,
 		HostID:             hostIdentity.HostID,
 		Endpoints:          bs,
 		Agents:             agentSvc,
@@ -1127,7 +1148,7 @@ func Run() error {
 						chatHostBudget.ReleaseIfDead(hostID)
 					}
 					// Pressure reclaim ignores the idle-hibernation Dev Mode toggle.
-					reclaimChatHostsUnderPressure(ctx, chatHostBudget, chatSvc, log)
+					reclaimChatHostsUnderPressure(ctx, chatHostBudget, chatSvc, cfg.DataDir, log)
 					for hostID := range chatHostBudget.Snapshot().Held {
 						chatHostBudget.ReleaseIfDead(hostID)
 					}

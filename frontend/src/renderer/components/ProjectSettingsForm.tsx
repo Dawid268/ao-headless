@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { components } from "../../api/schema";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { useRemoteProjectQuery, workspaceQueryKeyForHost, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
@@ -22,6 +22,9 @@ import { buildIntake } from "./IntakeFields";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { ProjectSettingsEditor, type ProjectAgentPickerProps, type ProjectSettingsDraft } from "./ProjectSettingsEditor";
 import { CloudProjectSettingsAdapter } from "./CloudProjectSettingsForm";
+import { ProjectTransferDialog } from "./ProjectTransferDialog";
+import { ProjectSettingsSection } from "@aoagents/product-ui";
+import { Button } from "./ui/button";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -133,6 +136,7 @@ function SettingsBody({ project, projectId, hostId, hostConnected, onSaved, sect
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const [transferOpen, setTransferOpen] = useState(false);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const workspaceQuery = useQuery({ ...workspaceQueryOptions, enabled: !hostId });
 	const remoteProjectQuery = useRemoteProjectQuery(hostId ?? "", projectId);
@@ -323,14 +327,34 @@ function SettingsBody({ project, projectId, hostId, hostConnected, onSaved, sect
 			throw error;
 		}
 	};
-	return <ProjectSettingsEditor initialValues={initialValues} section={section} disabled={!hostConnected}
-		capabilities={{ workflow: !isScratchProject, sessionPrefix: !isScratchProject, intake: intakeVisible, reviewer: !isScratchProject, requiredAgents: true, workersRequestReview: !isScratchProject }}
-		details={[{ label: t("settings.project.path"), value: project.path, href: hostId ? undefined : `file://${encodeURI(project.path)}` }, { label: t("settings.project.repo"), value: project.repo || "—", href: project.repo ? repositoryHref(project.repo) : undefined }]}
-		workspaceRepos={project.kind === "workspace" ? project.workspaceRepos ?? [] : undefined} repository={project.repo}
-		modelScope={() => projectId} defaultReviewer={(draft) => WORKER_DEFAULT_REVIEWERS[draft.workerAgent] ?? "claude-code"}
-		reviewerWarning={reviewerTrustWarning} save={save} saveUnchanged onSaveState={onSaveState}
-		modelHostId={hostId}
-		renderAgent={(props) => <LocalAgentPicker {...props} projectId={projectId} hostId={hostId} agentsQuery={agentsQuery} />} />;
+	return <>
+		<ProjectSettingsEditor initialValues={initialValues} section={section} disabled={!hostConnected}
+			capabilities={{ workflow: !isScratchProject, sessionPrefix: !isScratchProject, intake: intakeVisible, reviewer: !isScratchProject, requiredAgents: true, workersRequestReview: !isScratchProject }}
+			details={[{ label: t("settings.project.path"), value: project.path, href: hostId ? undefined : `file://${encodeURI(project.path)}` }, { label: t("settings.project.repo"), value: project.repo || "—", href: project.repo ? repositoryHref(project.repo) : undefined }]}
+			workspaceRepos={project.kind === "workspace" ? project.workspaceRepos ?? [] : undefined} repository={project.repo}
+			modelScope={() => projectId} defaultReviewer={(draft) => WORKER_DEFAULT_REVIEWERS[draft.workerAgent] ?? "claude-code"}
+			reviewerWarning={reviewerTrustWarning} save={save} saveUnchanged onSaveState={onSaveState}
+			modelHostId={hostId}
+			renderAgent={(props) => <LocalAgentPicker {...props} projectId={projectId} hostId={hostId} agentsQuery={agentsQuery} />}
+			generalExtra={section === "general" ? (
+				<ProjectSettingsSection title={t("projectTransfer.section")} grouped>
+					<p className="text-sm text-settings-muted">{t("projectTransfer.sectionHint")}</p>
+					<div className="flex justify-end pt-2">
+						<Button type="button" variant="outline" disabled={!hostConnected} onClick={() => setTransferOpen(true)}>
+							{t("projectTransfer.open")}
+						</Button>
+					</div>
+				</ProjectSettingsSection>
+			) : undefined}
+		/>
+		<ProjectTransferDialog
+			open={transferOpen}
+			onOpenChange={setTransferOpen}
+			projectId={projectId}
+			projectName={project.name}
+			sourceHostId={hostId}
+		/>
+	</>;
 }
 
 function LocalAgentPicker({ role, draft, value, invalid, onChange, projectId, hostId, agentsQuery }: ProjectAgentPickerProps & { projectId: string; hostId?: string; agentsQuery: ReturnType<typeof useAgentReadinessQuery> }) {

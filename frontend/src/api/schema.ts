@@ -1138,6 +1138,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/project-transfer-jobs/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll export/import job progress */
+        get: operations["getProjectTransferJob"];
+        put?: never;
+        post?: never;
+        /** Cancel an in-flight export or import job */
+        delete: operations["cancelProjectTransferJob"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/project-transfer-jobs/{jobId}/artifact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a completed export package (application/gzip) */
+        get: operations["getProjectTransferArtifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -1186,6 +1221,23 @@ export interface paths {
         /** Replace a project's per-project config */
         put: operations["setProjectConfig"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/export-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an async portable project export job */
+        post: operations["startProjectExportJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1289,6 +1341,23 @@ export interface paths {
         put?: never;
         /** Clone a project without registering it so Git setup can be completed */
         post: operations["prepareCloneProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/import-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an async portable project import from an ao-project-export package */
+        post: operations["startProjectImportJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5305,6 +5374,20 @@ export interface components {
             resolveError?: string;
             sessionPrefix: string;
         };
+        ProjectTransferProgress: {
+            /** Format: int64 */
+            bytesDone?: number;
+            /** Format: int64 */
+            bytesTotal?: number;
+            detail?: string;
+            done: boolean;
+            error?: string;
+            jobId: string;
+            kind: string;
+            percent: number;
+            phase: string;
+            projectId?: string;
+        };
         PromoteQueuedTurnResponse: {
             activityId: string;
             providerTurnId: string;
@@ -5536,12 +5619,6 @@ export interface components {
             name: string;
             /** @description The file, relative to the session's artifact directory. */
             path: string;
-        };
-        SeedAndRegisterInput: {
-            destDir: string;
-            includeSecrets?: boolean;
-            name?: null | string;
-            projectId?: null | string;
         };
         SeedAndRegisterResult: {
             path: string;
@@ -6209,6 +6286,9 @@ export interface components {
             idempotencyKey: string;
             targetAccountId: string;
         };
+        StartExportJobRequest: {
+            includeSecrets?: boolean;
+        };
         StartPreviewServerRequest: {
             /** @description Named preview configuration. Optional when exactly one configuration exists. */
             configuration?: string;
@@ -6225,6 +6305,9 @@ export interface components {
             ok: boolean;
             sessionId: string;
             transition: components["schemas"]["SessionInterfaceTransition"];
+        };
+        StartTransferJobAccepted: {
+            jobId: string;
         };
         SteerConversationRequest: {
             attachments?: components["schemas"]["ConversationImageContentRequest"][];
@@ -10500,6 +10583,136 @@ export interface operations {
             };
         };
     };
+    getProjectTransferJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Export or import job identifier. */
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectTransferProgress"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelProjectTransferJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Export or import job identifier. */
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getProjectTransferArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Export or import job identifier. */
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     listProjects: {
         parameters: {
             query?: never;
@@ -10770,6 +10983,69 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startProjectExportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartExportJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartTransferJobAccepted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11156,6 +11432,71 @@ export interface operations {
             };
         };
     };
+    startProjectImportJob: {
+        parameters: {
+            query?: {
+                /** @description Absolute destination directory on this host. */
+                destDir?: string;
+                /** @description Allow .env and key material from the package. */
+                includeSecrets?: boolean;
+                /** @description Optional display name override. */
+                name?: string;
+                /** @description Optional project id override. */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartTransferJobAccepted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     initializeProjectRepository: {
         parameters: {
             query?: never;
@@ -11209,16 +11550,21 @@ export interface operations {
     };
     seedProject: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Absolute destination directory on this host. */
+                destDir?: string;
+                /** @description Allow .env and key material in the archive. */
+                includeSecrets?: boolean;
+                /** @description Optional display name. */
+                name?: string;
+                /** @description Optional project id. */
+                projectId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SeedAndRegisterInput"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Created */
             201: {
