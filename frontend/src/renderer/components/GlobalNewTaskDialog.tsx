@@ -46,7 +46,6 @@ export function GlobalNewTaskDialog() {
 			hostId={hostId}
 			onProjectChange={setProjectId}
 			onCreated={(sessionId) => void handleCreated(sessionId)}
-			onLitmusStarted={(litmusProjectId) => void navigate({ to: "/projects/$projectId/litmus", params: { projectId: litmusProjectId } })}
 			onOpenChange={setOpen}
 		/>
 	);

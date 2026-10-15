@@ -60,11 +60,10 @@ type NewTaskDialogProps = {
 	hostId?: string;
 	onProjectChange?: (projectId: string) => void;
 	onCreated: (sessionId: string) => void;
-	onLitmusStarted?: (projectId: string) => void;
 	onOpenChange: (open: boolean) => void;
 };
 
-export function NewTaskDialog({ open, projectId, hostId, onProjectChange, onCreated, onLitmusStarted, onOpenChange }: NewTaskDialogProps) {
+export function NewTaskDialog({ open, projectId, hostId, onProjectChange, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const { t } = useTranslation();
 	// Settings opens as a page in the center pane; step aside so it is not hidden behind this modal.
 	const settingsOpen = useUiStore((state) => state.settingsModal?.scope === "global");
@@ -188,10 +187,6 @@ export function NewTaskDialog({ open, projectId, hostId, onProjectChange, onCrea
 							onCreated(sessionId);
 							onOpenChange(false);
 						}}
-						onLitmusStarted={onLitmusStarted && ((litmusProjectId) => {
-							onLitmusStarted(litmusProjectId);
-							onOpenChange(false);
-						})}
 					/>
 				</Dialog.Content>
 			</Dialog.Portal>

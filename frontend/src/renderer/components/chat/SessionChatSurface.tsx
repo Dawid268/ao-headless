@@ -32,7 +32,6 @@ import {
 } from "../../hooks/useConversation";
 import { useAgentSwitchProviderCatalogs } from "../../hooks/useAgentSwitchProviderCatalogs";
 import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
-import { useLitmusChatCommand } from "../../hooks/useLitmusChatCommand";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import { isWebLink, isWorkspaceHtmlLink } from "../../lib/external-link-policy";
 import { sessionUiKey } from "../../lib/hosts";
@@ -50,7 +49,6 @@ import type { ConversationSnapshot } from "../../types/conversation";
 import type { TerminalTarget } from "../../types/terminal";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { AgentSwitchProgressTrack } from "../AgentSwitchProgressTrack";
-import { LitmusChatNotice } from "../litmus/LitmusChatNotice";
 import { useUiStore } from "../../stores/ui-store";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { startingConversationSnapshot } from "./OrchestratorStartingChat";
@@ -135,7 +133,6 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	newWorkDisabled,
 	arriving,
 	onConversationWorkChange,
-	onOpenLitmus,
 }: {
 	session: WorkspaceSession;
 	/** Owning daemon for a remote session; omitted for the local daemon. */
@@ -191,8 +188,6 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	arriving?: boolean;
 	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
 	onConversationWorkChange?: (state: ConversationWorkState) => void;
-	/** Opens the project's Litmus view; the link in the "test PR" status line calls it. */
-	onOpenLitmus?: (projectId: string) => void;
 }) {
 	const uiSessionId = sessionUiKey(session.id, hostId);
 	const {
@@ -210,7 +205,6 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	// boundary that decides whether switching to Terminal needs user consent.
 	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id, hostId);
-	const litmus = useLitmusChatCommand(session, hostId);
 	const projectPermissions = useRememberProjectPermissions(session.workspaceId, snapshot?.harness, hostId);
 	const {
 		acknowledgeAcceptedTurn,
@@ -591,9 +585,8 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				onLoadOlder={loadOlder}
 				busy={commands.busy}
 				excerptsEnabled
-				onSend={async (text, attachments, clientMessageId, excerpts) => {
-					if (await litmus.intercept(text, Boolean(attachments?.length || excerpts?.length))) return;
-					return commands.send({
+				onSend={(text, attachments, clientMessageId, excerpts) =>
+					commands.send({
 						text,
 						attachments,
 						clientMessageId,
@@ -603,8 +596,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 							revision: excerpt.revision,
 							text: excerpt.text,
 						})),
-					});
-				}}
+					})}
 				commandError={commands.error}
 				onDecide={commands.resolve}
 				onResolveInput={commands.resolveInput}
@@ -670,14 +662,6 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				cancelQueuedTurnPendingTurnId={commands.cancelQueuedTurnPendingTurnId}
 				editQueuedTurnPendingTurnId={commands.editQueuedTurnPendingTurnId}
 			/>
-			{litmus.notice ? (
-				<LitmusChatNotice
-					notice={litmus.notice}
-					projectId={session.workspaceId}
-					onOpenLitmus={onOpenLitmus}
-					onDismiss={litmus.dismiss}
-				/>
-			) : null}
 			{shownSwitchPresentation ? (
 				<ChatAgentSwitchStatus
 					auxiliaryActive={Boolean(reviewerTarget || shellTarget)}

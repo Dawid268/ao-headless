@@ -448,59 +448,6 @@ describe("TaskComposer", () => {
 		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("GPT-6-Astra");
 	});
 
-	describe("Litmus command", () => {
-		beforeEach(() => {
-			h.agentCatalog = { agents: [agentReadiness("codex", "Codex")] };
-			h.get.mockImplementation(async (path: string) => {
-				if (path.includes("/models")) return { data: { agent: "codex", selectionMode: "text", models: [], allowCustom: true } };
-				if (path === "/api/v1/testing/runs") return { data: { repo: "acme/app" } };
-				return { data: { status: "ok", project: { agent: "codex", config: {} } } };
-			});
-		});
-
-		it("starts a Litmus run instead of a session for a 'test PR' prompt", async () => {
-			h.post.mockImplementation(async (path: string) => path === "/api/v1/testing/start"
-				? { data: { sessionId: "litmus-1" } }
-				: { data: { workerId: "worker-1" } });
-			const onCreated = vi.fn();
-			const onLitmusStarted = vi.fn();
-			render(<Wrap><TaskComposer projectId="project-a" onCreated={onCreated} onLitmusStarted={onLitmusStarted} /></Wrap>);
-			await waitForTaskReady();
-			fireEvent.change(task(), { target: { value: "test PR 6588 please" } });
-			fireEvent.click(startTask());
-			await waitFor(() => expect(onLitmusStarted).toHaveBeenCalledWith("project-a"));
-			expect(h.post).toHaveBeenCalledTimes(1);
-			expect(h.post).toHaveBeenCalledWith("/api/v1/testing/start", {
-				body: { projectId: "project-a", prUrl: "https://github.com/acme/app/pull/6588" },
-			});
-			expect(onCreated).not.toHaveBeenCalled();
-		});
-
-		it("shows the failure and stays open when the Litmus run cannot start", async () => {
-			h.post.mockResolvedValue({ error: { message: "Litmus is offline" } });
-			const onLitmusStarted = vi.fn();
-			render(<Wrap><TaskComposer projectId="project-a" onCreated={vi.fn()} onLitmusStarted={onLitmusStarted} /></Wrap>);
-			await waitForTaskReady();
-			fireEvent.change(task(), { target: { value: "test PR 6588" } });
-			fireEvent.click(startTask());
-			await screen.findByText("Litmus is offline");
-			expect(onLitmusStarted).not.toHaveBeenCalled();
-		});
-
-		it("still creates a session for an ordinary prompt", async () => {
-			h.post.mockResolvedValue({ data: { workerId: "worker-1" } });
-			const onCreated = vi.fn();
-			const onLitmusStarted = vi.fn();
-			render(<Wrap><TaskComposer projectId="project-a" onCreated={onCreated} onLitmusStarted={onLitmusStarted} /></Wrap>);
-			await waitForTaskReady();
-			fireEvent.change(task(), { target: { value: "fix the failing test in PR 6588" } });
-			fireEvent.click(startTask());
-			await waitFor(() => expect(onCreated).toHaveBeenCalledWith("worker-1"));
-			expect(h.post.mock.calls.some(([path]) => path === "/api/v1/testing/start")).toBe(false);
-			expect(onLitmusStarted).not.toHaveBeenCalled();
-		});
-	});
-
 	it("does not persist a standalone preference when task creation fails", async () => {
 		h.agentCatalog = { agents: [agentReadiness("codex", "Codex")] };
 		h.get.mockImplementation(async (path: string) => {

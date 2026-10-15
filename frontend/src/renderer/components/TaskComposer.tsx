@@ -24,9 +24,6 @@ import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFile
 import { useSettings } from "../hooks/useSettings";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudOrg } from "../hooks/useCloudOrg";
-import { startLitmusFromCommand } from "../hooks/useLitmusChatCommand";
-import { useStartLitmusRun } from "../hooks/useLitmus";
-import { matchLitmusChatCommand } from "./litmus/litmus-chat-command";
 import { useCloudSandboxProviders } from "../hooks/useCloudSandboxProviders";
 import { useProviderConnections } from "../hooks/useProviderConnections";
 import { cloudAgentInfos, connectedCredentialType, credentialModelScope } from "../lib/cloud-agents";
@@ -119,8 +116,6 @@ export type TaskComposerProps = {
 	projectId?: string;
 	hostId?: string;
 	onCreated: (sessionId: string) => void;
-	/** Set by surfaces that can open the Litmus view: a local-project "test PR #N" prompt then starts a Litmus run instead of a session. */
-	onLitmusStarted?: (projectId: string) => void;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
 	autoFocusTitle?: boolean;
@@ -131,7 +126,6 @@ export function TaskComposer({
 	projectId,
 	hostId,
 	onCreated,
-	onLitmusStarted,
 	onDirtyChange,
 	onSubmittingChange,
 	autoFocusTitle,
@@ -182,7 +176,6 @@ export function TaskComposer({
 	const cloudProject = (cloudProjects.data ?? []).find((project) => project.id === projectId);
 	const isCloudProject = !hostId && Boolean(cloudProject);
 	const isStandalone = projectId === STANDALONE_WORKSPACE_ID;
-	const startLitmusRun = useStartLitmusRun(projectId ?? "").mutateAsync;
 	const preferenceContext = hostId ? `${hostId}:${projectId ?? ""}` : projectId ?? "";
 	const persistedPreferences = useMemo(
 		() => readTaskComposerPreferences(preferenceContext),
@@ -630,16 +623,6 @@ export function TaskComposer({
 		setIsSubmitting(true);
 		setError(undefined);
 		setFallbackAction(undefined);
-		const litmusCommand = onLitmusStarted && !hostId && !isCloudProject && !isStandalone && attachments.length === 0
-			? matchLitmusChatCommand(brief)
-			: null;
-		if (litmusCommand) {
-			const result = await startLitmusFromCommand(litmusCommand, projectId, startLitmusRun, t);
-			if (result.kind === "error") setError(result.message);
-			else onLitmusStarted?.(projectId);
-			setIsSubmitting(false);
-			return;
-		}
 		try {
 			if (!isCloudProject && selectedAgent) {
 				try {

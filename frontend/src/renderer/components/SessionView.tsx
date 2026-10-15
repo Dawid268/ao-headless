@@ -1,6 +1,6 @@
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe2, Loader2, PanelRight, Plus } from "lucide-react";
-import { useBlocker, useNavigate } from "@tanstack/react-router";
+import { useBlocker } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import {
 	useCallback,
@@ -451,11 +451,6 @@ export function SessionView({ sessionId, cloudOrgId, projectId, hostId }: Sessio
 	const interfaceContext = hostId ?? (session ? session.cloud ?? null : cloudOrgId && projectId ? { orgId: cloudOrgId } : undefined);
 	const interfaceUi = useSessionInterfaceSwitch(sessionId, session, interfaceContext);
 	const { draftBoundaries: chatDraftBoundaries, confirmUnsafeDraftLeave } = interfaceUi;
-	const navigate = useNavigate();
-	const openLitmus = useCallback(
-		(litmusProjectId: string) => void navigate({ to: "/projects/$projectId/litmus", params: { projectId: litmusProjectId } }),
-		[navigate],
-	);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const remoteHostsEnabled = useUiStore((state) => state.remoteHosts);
 	const setRemoteHosts = useUiStore((state) => state.setRemoteHosts);
@@ -1927,7 +1922,6 @@ export function SessionView({ sessionId, cloudOrgId, projectId, hostId }: Sessio
 									agentResuming={quietResume}
 									newWorkDisabled={interfaceUi.newWorkDisabled}
 									onConversationWorkChange={interfaceUi.onConversationWorkChange}
-									onOpenLitmus={openLitmus}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
 									shellError={

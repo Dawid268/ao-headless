@@ -32,7 +32,6 @@ import {
 	RefreshCw,
 	Search,
 	Settings,
-	FlaskConical,
 	Smartphone,
 	Trash2,
 	User,
@@ -527,7 +526,6 @@ function useSelection() {
 	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
 	const goAutomations = useCallback(() => void navigate({ to: "/automations" }), [navigate]);
 	const goStandaloneBoard = useCallback(() => void navigate({ to: "/sessions" }), [navigate]);
-	const goLitmus = useCallback((projectId: string) => void navigate({ to: "/projects/$projectId/litmus", params: { projectId } }), [navigate]);
 	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
 	const goConnectMobile = useCallback(() => openGlobalSettings("mobile"), [openGlobalSettings]);
 	const goSettings = useCallback((projectId: string, cloudOrgId?: string) => openProjectSettings(projectId, { cloudOrgId }), [openProjectSettings]);
@@ -559,7 +557,6 @@ function useSelection() {
 		goHome,
 		goAutomations,
 		goStandaloneBoard,
-		goLitmus,
 		// Settings is a modal — open it in place so the current page (session
 		// terminal, board, etc.) stays underneath.
 		goGlobalSettings,
@@ -567,7 +564,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goAutomations, goConnectMobile, goGlobalSettings, goHome, goLitmus, goProject, goSession, goSettings, goStandaloneBoard, params.hostId, params.projectId, params.sessionId, pathname]);
+	}), [goAutomations, goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, goStandaloneBoard, params.hostId, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -1759,10 +1756,6 @@ const ProjectItem = memo(function ProjectItem({
 											<Plus aria-hidden="true" />
 											{t("shell.newTask")}
 										</DropdownMenuItem>
-						{!isStandalone && !workspace.hostId && <DropdownMenuItem onSelect={() => selection.goLitmus(workspace.id)}>
-							<FlaskConical aria-hidden="true" />
-							{t("litmus.title")}
-						</DropdownMenuItem>}
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id, workspace.cloudOrgId)}>
 											<Settings aria-hidden="true" />
 											{t("shell.projectSettings")}
@@ -1881,10 +1874,6 @@ const ProjectItem = memo(function ProjectItem({
 					<Plus aria-hidden="true" />
 					{t("shell.newTask")}
 				</ContextMenuItem>
-				{!isStandalone && !workspace.hostId && <ContextMenuItem onSelect={() => selection.goLitmus(workspace.id)}>
-					<FlaskConical aria-hidden="true" />
-					{t("litmus.title")}
-				</ContextMenuItem>}
 				{!isStandalone && <ContextMenuItem onSelect={() => selection.goSettings(workspace.id, workspace.cloudOrgId)}>
 					<Settings aria-hidden="true" />
 					{t("shell.projectSettings")}
