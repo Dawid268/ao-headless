@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/githubpat"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -155,6 +156,8 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
+	"DomainHarnessDefault":                                 "HarnessDefault",
+	"ControllersUpdateHarnessDefaultRequest":               "UpdateHarnessDefaultRequest",
 	"ControllersSettingsResponse":                          "SettingsResponse",
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
 	"ControllersDesktopArtifactLocationResponse":           "DesktopArtifactLocationResponse",
@@ -392,6 +395,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersEnsureAgentReadinessRequest":              "EnsureAgentReadinessRequest",
 	"DomainAgentReadinessSnapshot":                        "AgentReadinessSnapshot",
 	"DomainAgentInstallationObservation":                  "AgentInstallationObservation",
+	"DomainAgentAuthDiagnostic":                           "AgentAuthDiagnostic",
+	"DomainAgentAccountIdentity":                          "AgentAccountIdentity",
 	"DomainAgentAuthenticationObservation":                "AgentAuthenticationObservation",
 	// service/systemcheck: "SystemcheckReport" is a generic default name that
 	// reads like an internal type, not a wire response — rename to match the
@@ -405,6 +410,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"SysteminstallJob":                            "InstallJob",
 	"SysteminstallAgentPlan":                      "AgentInstallPlan",
 	"SysteminstallAgentInstallMethod":             "AgentInstallMethod",
+	"SysteminstallUpdateAdvisory":                 "AgentUpdateAdvisory",
+	"ControllersAgentUpdateAdvisoryQuery":         "AgentUpdateAdvisoryQuery",
 	"ControllersAgentInstallerCatalogResponse":    "AgentInstallerCatalogResponse",
 	"ControllersStartAgentInstallRequest":         "StartAgentInstallRequest",
 	"ControllersAgentInstallJobsResponse":         "AgentInstallJobsResponse",
@@ -929,6 +936,19 @@ func shellTerminalOperations() []operation {
 			summary: "Read the daemon-owned user preferences",
 			resps: []respUnit{
 				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/settings/harness-defaults/{agent}", id: "updateHarnessDefault", tag: "settings",
+			summary:    "Choose which models one harness's pickers offer",
+			pathParams: []any{controllers.AgentIDParam{}},
+			reqBody:    controllers.UpdateHarnessDefaultRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -1656,6 +1676,17 @@ func agentOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/logout", id: "logoutAgent", tag: "agents",
+			summary:    "Open the fixed native logout flow for one agent",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.StartAgentAuthResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
 			summary: "Return cached supported and locally installed agent adapters",
 			resps: []respUnit{
@@ -1714,8 +1745,19 @@ func agentOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/agents/{agent}/update-advisory", id: "getAgentUpdateAdvisory", tag: "agents",
+			summary:    "Compare an installed harness version with its known package source",
+			pathParams: []any{controllers.AgentIDParam{}, controllers.AgentUpdateAdvisoryQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, systeminstall.UpdateAdvisory{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/agents/{agent}/install", id: "startAgentInstall", tag: "agents",
-			summary:    "Start an asynchronous install for one fixed agent harness",
+			summary:    "Start an asynchronous install, reinstall, or update for one fixed agent harness",
 			pathParams: []any{controllers.AgentIDParam{}},
 			reqBody:    controllers.StartAgentInstallRequest{}, optionalReqBody: true,
 			resps: []respUnit{

@@ -116,18 +116,19 @@ func TestManagedAccountDoesNotBypassMissingInstallation(t *testing.T) {
 	}
 }
 
-func managedCatalogService(managed *managedProviderFake, agentID string, models ...string) (*Service, *fakeModelDiscoverer) {
+// managedCatalogService serves models of a managed account; a nil clock is time.Now.
+func managedCatalogService(managed *managedProviderFake, agentID string, clock func() time.Time, models ...string) (*Service, *fakeModelDiscoverer) {
 	managed.catalog = ports.AgentModelCatalog{AgentID: agentID, SelectionMode: ports.ModelSelectionCatalog, Source: ports.ModelCatalogSourceManagedAccount}
 	for _, id := range models {
 		managed.catalog.Models = append(managed.catalog.Models, ports.AgentModelInfo{ID: id, Label: id})
 	}
 	native := successfulModelDiscoverer()
-	return NewWithDeps(Deps{Cache: &fakeModelCache{}, Discoverer: native, Context: context.Background(), ManagedAccountProvider: managed}), native
+	return NewWithDeps(Deps{Cache: &fakeModelCache{}, Discoverer: native, Context: context.Background(), ManagedAccountProvider: managed, Clock: clock}), native
 }
 
 func TestManagedModelCatalogueServesDefaultAndAccountScopesSeparately(t *testing.T) {
 	managed := &managedProviderFake{}
-	svc, native := managedCatalogService(managed, "codex", "account-model")
+	svc, native := managedCatalogService(managed, "codex", nil, "account-model")
 	for i, scope := range []string{"", ports.ModelCatalogAccountScope("account-2")} {
 		got, err := svc.Models(context.Background(), "codex", scope, true)
 		if err != nil || len(got.Models) != 1 || got.Models[0].ID != "account-model" || got.Source != ports.ModelCatalogSourceManagedAccount {
@@ -148,7 +149,9 @@ func TestManagedModelCatalogueServesDefaultAndAccountScopesSeparately(t *testing
 
 func TestManagedModelCatalogueRefreshesWhenItsFingerprintChanges(t *testing.T) {
 	managed := &managedProviderFake{}
-	svc, native := managedCatalogService(managed, "claude-code", "old-model")
+	var elapsed atomic.Int64
+	start := time.Now()
+	svc, native := managedCatalogService(managed, "claude-code", func() time.Time { return start.Add(time.Duration(elapsed.Load())) }, "old-model")
 	if _, err := svc.Models(context.Background(), "claude-code", "", true); err != nil {
 		t.Fatal(err)
 	}
@@ -159,9 +162,18 @@ func TestManagedModelCatalogueRefreshesWhenItsFingerprintChanges(t *testing.T) {
 	if got, err := svc.Models(context.Background(), "claude-code", "", false); err != nil || got.Models[0].ID != "old-model" || managed.calls.Load() != 1 {
 		t.Fatalf("during an outage: catalog=%+v calls=%d err=%v", got.Models, managed.calls.Load(), err)
 	}
+	// Once the helper answers, a cached read rechecks in the background, at most once per
+	// catalogInputCheckTTL, and a later read has the new list.
 	managed.change(func() { managed.fingerprintErr = nil })
-	if got, err := svc.Models(context.Background(), "claude-code", "", false); err != nil || len(got.Models) != 1 || got.Models[0].ID != "new-model" {
-		t.Fatalf("after the change: catalog=%+v err=%v", got.Models, err)
+	elapsed.Add(int64(catalogInputCheckTTL + time.Second))
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		got, err := svc.Models(context.Background(), "claude-code", "", false)
+		if err == nil && len(got.Models) == 1 && got.Models[0].ID == "new-model" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after the change: catalog=%+v err=%v", got.Models, err)
+		}
 	}
 	if native.discoverCalls.Load() != 0 || native.fingerprintRequests.Load() != 0 {
 		t.Fatalf("native discovery was consulted: discover=%d fingerprint=%d", native.discoverCalls.Load(), native.fingerprintRequests.Load())
@@ -170,7 +182,7 @@ func TestManagedModelCatalogueRefreshesWhenItsFingerprintChanges(t *testing.T) {
 
 func TestManagedModelDiscoveryLeavesCloudCredentialScopesAlone(t *testing.T) {
 	managed := &managedProviderFake{}
-	svc, native := managedCatalogService(managed, "claude-code", "managed")
+	svc, native := managedCatalogService(managed, "claude-code", nil, "managed")
 	if _, err := svc.Models(context.Background(), "claude-code", "@cred:anthropic_api_key", true); err != nil {
 		t.Fatal(err)
 	}

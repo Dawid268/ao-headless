@@ -25,7 +25,7 @@ import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } f
 import { useQuery } from "@tanstack/react-query";
 import { agentModelsQueryOptions } from "../../hooks/useAgentModelsQuery";
 import { accountModelScope, sessionAccountQueryOptions } from "../../hooks/useProviderAccounts";
-import { accountChatModels, claudeRowRunsAccountModel } from "../../lib/agent-model-choices";
+import { useOfferedModels } from "../../hooks/useOfferedModels";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
 	useConversation,
@@ -40,6 +40,7 @@ import { useAgentSwitchProviderCatalogs } from "../../hooks/useAgentSwitchProvid
 import { useConversationPromptSuggestion } from "../../hooks/useConversationPromptSuggestion";
 import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
+import { accountChatModels, claudeChoiceModel, claudeRowRunsAccountModel } from "../../lib/agent-model-choices";
 import { isWebLink, isWorkspaceHtmlLink } from "../../lib/external-link-policy";
 import { sessionUiKey } from "../../lib/hosts";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
@@ -383,7 +384,8 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 		enabled: accountScope !== "" || (isClaude && !sessionAccount.isLoading),
 	}).data;
 	const accountModels = accountScope ? catalog?.models : undefined;
-	const models = useMemo(() => {
+	const claudeCatalog = isClaude ? catalog : undefined;
+	const catalogModels = useMemo(() => {
 		if (isCodex && accountModels?.length) return accountChatModels(accountModels, controllerModels);
 		if (!isClaude || !catalog?.models.length) return controllerModels;
 		return catalog.models
@@ -401,6 +403,39 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 			? { ...option, choices: option.choices.filter((choice) => choice.value === option.currentValue || claudeRowRunsAccountModel(choice, accountModels)) }
 			: option));
 	}, [isClaude, accountModels, configOptions.options]);
+	// A provider's own model option (ACP config) replaces the native list above,
+	// so the same setting narrows its choices; other options pass through as is.
+	const providerModelOption = chatConfigOptions?.find(
+		(option) => option.type === "select" && (option.category === "model" || option.id === "model"),
+	);
+	const providerModelChoices = useMemo(
+		() => providerModelOption?.choices.map((choice) => ({ id: choice.value })),
+		[providerModelOption],
+	);
+	// Resolve current Claude aliases before filtering so their labels cannot move
+	// to an older enabled model when the current concrete entry is switched off.
+	const resolveClaudeChoice = useMemo(
+		() => isClaude && claudeCatalog ? claudeChoiceModel(claudeCatalog.models) : undefined,
+		[isClaude, claudeCatalog],
+	);
+	const currentModels = [snapshot?.settings?.model, providerModelOption?.currentValue];
+	const { models } = useOfferedModels(snapshot?.harness, catalogModels, {
+		hostId,
+		keep: [...currentModels, ...currentModels.map((id) => id ? resolveClaudeChoice?.(id)?.id : undefined)],
+	});
+	// Claude's choices are family aliases ("sonnet"); Settings names catalog ids.
+	const claudeChoiceID = useMemo(
+		() => resolveClaudeChoice && ((choice: { id: string }) => resolveClaudeChoice(choice.id)?.id ?? choice.id),
+		[resolveClaudeChoice],
+	);
+	const { models: offeredProviderModels } = useOfferedModels(snapshot?.harness, providerModelChoices, { hostId, keep: [providerModelOption?.currentValue], modelID: claudeChoiceID });
+	const offeredConfigOptions = useMemo(() => {
+		if (!providerModelOption) return chatConfigOptions;
+		const offered = new Set(offeredProviderModels.map((choice) => choice.id));
+		return chatConfigOptions?.map((option) => option === providerModelOption
+			? { ...option, choices: option.choices.filter((choice) => offered.has(choice.value)) }
+			: option);
+	}, [chatConfigOptions, offeredProviderModels, providerModelOption]);
 	const { skills } = useConversationSkills(
 		session.id,
 		Boolean(controllerCatalogsEnabled && catalogsEnabled && snapshot),
@@ -702,7 +737,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				rememberPermissionsPending={projectPermissions.pending}
 				rememberPermissionsError={projectPermissions.error}
 				rememberedPermissionMode={projectPermissions.savedMode}
-				configOptions={chatConfigOptions}
+				configOptions={offeredConfigOptions}
 				onChooseConfigOption={configOptions.setOption}
 				configOptionPending={configOptions.pending || commands.choosingSettings}
 				configOptionError={controllerCatalogsEnabled ? configOptions.error : undefined}

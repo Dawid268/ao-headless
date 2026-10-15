@@ -33,7 +33,7 @@ import {
 import { fallbackEffort, useApplyEffortDefault } from "../../lib/effort";
 import { cn } from "../../lib/utils";
 import { effortDisplayLabel, EffortMenuItems, EffortPicker, formatEffortLabel } from "../settings/EffortPicker";
-import { agentModelDisplayLabel, isDefaultPlaceholderLabel, splitClaudeModels } from "../../lib/agent-model-choices";
+import { agentModelDisplayLabel, claudeChoiceModel, isDefaultPlaceholderLabel, splitClaudeModels } from "../../lib/agent-model-choices";
 import { Switch } from "../ui/switch";
 import { ModelMenuChoices } from "./ModelMenuChoices";
 import type {
@@ -356,21 +356,18 @@ export function TurnSettingsBar({
 
 /**
  * The provider's model option offers family aliases ("opus") and bare ids. The new-task
- * picker names them by version, so the chat does too: an alias is the newest model of
- * its family in the catalog, and an id is its catalog entry.
+ * picker names them by version, so the chat does too.
  */
 function claudeChoiceLabels(catalog: { id: string; displayName: string }[]) {
-	if (catalog.length === 0) return undefined;
-	const entries = catalog.map((model) => ({ id: model.id, label: model.displayName }));
-	const newest = splitClaudeModels(entries).current;
-	return (value: string): string | undefined => {
-		const id = value.replace(/\[.*?\]$/, "").toLowerCase();
-		const exact = entries.find((model) => model.id.toLowerCase() === id);
-		const label = exact?.label ?? newest.find((model) => model.id.toLowerCase().includes(`-${id}-`) || model.label.toLowerCase().startsWith(id))?.label;
-		// A larger-context row runs the same model; without its mark it would
-		// read as a second copy of that model.
-		return label && /\[1m\]$/i.test(value) && !/1m/i.test(label) ? `${label} (1M context)` : label;
-	};
+	const choiceModel = claudeChoiceModel(catalog.map((model) => ({ id: model.id, label: model.displayName })));
+	return choiceModel && ((value: string) => {
+		const label = choiceModel(value)?.label;
+		if (label || !/\[1m\]$/i.test(value)) return label;
+		// An account lists no larger-context variants. Such a row runs the model it
+		// names; without its mark it would read as a second copy of that model.
+		const base = choiceModel(value.replace(/\[1m\]$/i, ""))?.label;
+		return base && !/1m/i.test(base) ? `${base} (1M context)` : base;
+	});
 }
 
 function ModelEffortPicker({
