@@ -2281,6 +2281,11 @@ type ListDirsQuery struct {
 	Path string `query:"path,omitempty" description:"Absolute directory on the daemon host to list. When omitted, the daemon user's home directory."`
 }
 
+// CreateDirRequest is the JSON body for POST /api/v1/fs/dirs.
+type CreateDirRequest struct {
+	Path string `json:"path" minLength:"1" description:"Absolute directory to create on the daemon host (parents included)."`
+}
+
 // FSEntry is one directory in a /api/v1/fs/dirs listing.
 type FSEntry struct {
 	Name    string `json:"name" description:"Directory name."`

@@ -683,7 +683,8 @@ export interface paths {
         /** List the subdirectories of a directory on the daemon host */
         get: operations["listDirs"];
         put?: never;
-        post?: never;
+        /** Create a directory on the daemon host (parents included) */
+        post: operations["createDir"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4694,6 +4695,10 @@ export interface components {
         };
         CreateConversationSideChatResponse: {
             side: components["schemas"]["SideConversation"];
+        };
+        CreateDirRequest: {
+            /** @description Absolute directory to create on the daemon host (parents included). */
+            path: string;
         };
         CreateReportRequest: {
             message?: string;
@@ -9174,6 +9179,66 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createDir: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDirRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListDirsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

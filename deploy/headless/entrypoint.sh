@@ -25,6 +25,7 @@ export PATH="$AO_HOME/.local/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/bin:/usr/bin:
 
 mkdir -p \
 	"$AO_DATA_DIR" \
+	"$AO_DATA_DIR/projects" \
 	"$AO_HOME" \
 	"$AO_HOME/.local/bin" \
 	"$NPM_CONFIG_PREFIX/bin" \

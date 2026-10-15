@@ -282,6 +282,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersProjectOrDegraded":                        "ProjectOrDegraded",
 	"ControllersListSessionsQuery":                        "ListSessionsQuery",
 	"ControllersListDirsQuery":                            "ListDirsQuery",
+	"ControllersCreateDirRequest":                         "CreateDirRequest",
 	"ControllersListDirsResponse":                         "ListDirsResponse",
 	"ControllersFSEntry":                                  "FSEntry",
 	"ControllersCleanupSessionsQuery":                     "CleanupSessionsQuery",
@@ -2090,8 +2091,8 @@ func importOperations() []operation {
 	}
 }
 
-// fsOperations declares the read-only filesystem-browsing operations. Must stay
-// 1:1 with the routes FSController.Register mounts (enforced by the parity test).
+// fsOperations declares filesystem-browsing operations. Must stay 1:1 with the
+// routes FSController.Register mounts (enforced by the parity test).
 func fsOperations() []operation {
 	return []operation{
 		{
@@ -2104,6 +2105,18 @@ func fsOperations() []operation {
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/fs/dirs", id: "createDir", tag: "fs",
+			summary: "Create a directory on the daemon host (parents included)",
+			reqBody: controllers.CreateDirRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListDirsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 	}

@@ -1921,6 +1921,48 @@ paths:
       summary: List the subdirectories of a directory on the daemon host
       tags:
       - fs
+    post:
+      operationId: createDir
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDirRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDirsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create a directory on the daemon host (parents included)
+      tags:
+      - fs
   /api/v1/github/pat:
     delete:
       operationId: deleteGitHubPAT
@@ -13839,6 +13881,15 @@ components:
           $ref: '#/components/schemas/SideConversation'
       required:
       - side
+      type: object
+    CreateDirRequest:
+      properties:
+        path:
+          description: Absolute directory to create on the daemon host (parents included).
+          minLength: 1
+          type: string
+      required:
+      - path
       type: object
     CreateReportRequest:
       properties:

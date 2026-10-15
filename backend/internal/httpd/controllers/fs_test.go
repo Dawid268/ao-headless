@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -169,5 +170,49 @@ func TestListDirsCapsEntries(t *testing.T) {
 	}
 	if len(body.Entries) != maxDirEntries || !body.Truncated {
 		t.Errorf("entries = %d truncated = %v, want %d/true", len(body.Entries), body.Truncated, maxDirEntries)
+	}
+}
+
+func TestCreateDirMakesNestedPath(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(home, "projects", "demo-app")
+	body, _ := json.Marshal(CreateDirRequest{Path: target})
+	resp, err := http.Post(newFSRig(t).URL+"/fs/dirs", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var listing ListDirsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
+		t.Fatal(err)
+	}
+	if listing.Path != target {
+		t.Fatalf("path = %q, want %q", listing.Path, target)
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("dest not created: %v", err)
+	}
+}
+
+func TestCreateDirRejectsExistingFile(t *testing.T) {
+	home := t.TempDir()
+	file := filepath.Join(home, "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(CreateDirRequest{Path: file})
+	resp, err := http.Post(newFSRig(t).URL+"/fs/dirs", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var apiErr envelope.APIError
+	_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+	if resp.StatusCode != http.StatusBadRequest || apiErr.Code != "FS_EXISTS_NOT_DIR" {
+		t.Fatalf("status/code = %d/%q", resp.StatusCode, apiErr.Code)
 	}
 }
