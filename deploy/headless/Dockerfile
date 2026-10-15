@@ -5,7 +5,7 @@
 # Primary listener stays on 127.0.0.1 inside the container. Pair via the
 # authenticated remote-host listener (or reach it over Tailscale). Never publish
 # the unauthenticated primary port to the public internet.
-FROM golang:1.27-bookworm AS build
+FROM golang:1.27.1-bookworm AS build
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download

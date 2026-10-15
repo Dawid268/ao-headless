@@ -1,6 +1,9 @@
 package controllers_test
 
 import (
+	"compress/gzip"
+	"bytes"
+	"archive/tar"
 	"context"
 
 	"encoding/json"
@@ -344,6 +347,58 @@ func TestProjectsAPI_InitializeRepository(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(committed)+`}`)
 	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_ALREADY_INITIALIZED")
 }
+
+func TestProjectsAPI_Seed(t *testing.T) {
+	srv := newTestServer(t)
+	base := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", base)
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	body := []byte("package main\n")
+	hdr := &tar.Header{Name: "main.go", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(base, "seeded-app")
+	path := "/api/v1/projects/seed?destDir=" + url.QueryEscape(dest) + "&name=Seeded&projectId=seeded"
+	resp, status, _ := doRequest(t, srv, "POST", path, buf.String())
+	if status != http.StatusCreated {
+		t.Fatalf("POST seed = %d, want 201; body=%s", status, resp)
+	}
+	var out struct {
+		Path    string `json:"path"`
+		Project struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		} `json:"project"`
+	}
+	mustJSON(t, resp, &out)
+	if out.Project.ID != "seeded" || out.Path != dest {
+		t.Fatalf("seed result = %#v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/seed", "")
+	assertErrorCode(t, resp, status, http.StatusBadRequest, "SEED_DEST_REQUIRED")
+}
+
 func TestProjectsAPI_Delete(t *testing.T) {
 
 	srv := newTestServer(t)

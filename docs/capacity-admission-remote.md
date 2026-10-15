@@ -21,7 +21,9 @@ Env overlays (optional):
 
 Under memory pressure (available &lt; ~6 GiB) caps shrink further. Spawns that
 cannot acquire a slot fail closed with capacity exhausted and are enqueued for
-a later drain after hosts die / hibernate.
+a later drain after hosts die / hibernate. Cold `ResumeAgent` soft-queues
+(`queued: true`) *before* clearing `HibernatedAt`, and a successful soft-admit
+**reserves** the warm slot so concurrent spawns cannot steal it.
 
 Inventory is **live `chat-hosts/*/host.json` PIDs**, not SQLite session rows.
 Adopt of an existing host does not consume a new slot; a failed spawn that
@@ -66,5 +68,7 @@ deny filters, initializes git, and registers the project.
 ao preview publish --port 4200
 ```
 
-Opens the port in the desktop browser panel and prints a LAN/tunnel URL when
-`ao remote-host` endpoints are available.
+Opens the port in the desktop browser panel. When a LAN/Tailscale endpoint is
+advertised by `ao remote-host status`, prints `http://<host>:<port>`. Cloudflare
+quick tunnels front only the authenticated AO listener — they are **not** used
+as the published app URL.

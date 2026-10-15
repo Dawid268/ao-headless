@@ -134,12 +134,18 @@ func reclaimChatHostsUnderPressure(
 	if budget == nil || hibernator == nil {
 		return
 	}
-	if !budget.PressureActive() && !budget.OverPressureCap() {
+	if !budget.ShouldReclaim() {
 		return
 	}
 	for _, hostID := range budget.WorkerHostIDs() {
 		if ctx.Err() != nil {
 			return
+		}
+		// Side/review/background hosts are not Chat sessions; HibernateChat
+		// would only spam errors. They still count toward the worker sub-cap
+		// and become reclaimable when their PID dies (ReleaseIfDead).
+		if chathostbudget.ClassifyHostID(hostID) != chathostbudget.ClassWorker {
+			continue
 		}
 		stopped, err := hibernator.HibernateChatForPressure(ctx, domain.SessionID(hostID))
 		if err != nil && log != nil && ctx.Err() == nil {
@@ -170,11 +176,31 @@ func drainChatHostWakeQueue(
 			defer cancel()
 			if err := wake.WakeHibernatedChat(wakeCtx, domain.SessionID(w.HostID)); err != nil {
 				budget.ForceRelease(w.HostID)
-				budget.Enqueue(w)
+				// Only requeue transient failures. Permanent miss (not found /
+				// terminated) would loop forever on the fair queue.
+				if shouldRequeueWake(err) {
+					budget.Enqueue(w)
+					if log != nil {
+						log.Info("queued chat host wake failed; requeued", "hostID", w.HostID, "err", err.Error())
+					}
+					return
+				}
 				if log != nil {
-					log.Info("queued chat host wake failed; requeued", "hostID", w.HostID, "err", err.Error())
+					log.Info("queued chat host wake dropped", "hostID", w.HostID, "err", err.Error())
 				}
 			}
 		}(item)
 	}
+}
+
+func shouldRequeueWake(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, sessionmanager.ErrNotFound) ||
+		errors.Is(err, sessionmanager.ErrTerminated) ||
+		errors.Is(err, sessionmanager.ErrNotResumable) {
+		return false
+	}
+	return true
 }

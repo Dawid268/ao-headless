@@ -355,3 +355,35 @@ func TestPreview_BlankSessionIDIsUsageError(t *testing.T) {
 		t.Fatal("daemon should not be contacted when AO_SESSION_ID is blank")
 	}
 }
+
+func TestPreviewPublishURLPrefersLANAndIgnoresTunnel(t *testing.T) {
+	status := remoteHostStatus{}
+	status.Endpoints = append(status.Endpoints,
+		struct {
+			Kind   string `json:"kind"`
+			Host   string `json:"host"`
+			Port   int    `json:"port"`
+			Secure bool   `json:"secure"`
+		}{Kind: "tunnel", Host: "abc.trycloudflare.com", Port: 443, Secure: true},
+		struct {
+			Kind   string `json:"kind"`
+			Host   string `json:"host"`
+			Port   int    `json:"port"`
+			Secure bool   `json:"secure"`
+		}{Kind: "lan", Host: "100.64.1.2", Port: 8787, Secure: false},
+	)
+	got := previewPublishURL(status, 4200)
+	if got != "http://100.64.1.2:4200" {
+		t.Fatalf("got %q", got)
+	}
+	tunnelOnly := remoteHostStatus{}
+	tunnelOnly.Endpoints = append(tunnelOnly.Endpoints, struct {
+		Kind   string `json:"kind"`
+		Host   string `json:"host"`
+		Port   int    `json:"port"`
+		Secure bool   `json:"secure"`
+	}{Kind: "tunnel", Host: "abc.trycloudflare.com", Port: 443, Secure: true})
+	if previewPublishURL(tunnelOnly, 4200) != "" {
+		t.Fatal("tunnel must not pretend to publish agent ports")
+	}
+}

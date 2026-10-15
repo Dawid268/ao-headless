@@ -246,24 +246,29 @@ func (b *Budget) enqueueLocked(wake QueuedWake) {
 	b.queue = append(b.queue, wake)
 }
 
-// SoftAdmitWake returns nil when hostID may proceed to resume/spawn now
-// (already held, or capacity available). On capacity miss it enqueues and
+// SoftAdmitWake reserves a spawn slot when capacity is available so callers can
+// clear HibernatedAt without racing another spawn into the last slot. Already
+// held hosts return nil. On capacity miss (or before Seed) it enqueues and
 // returns ErrQueued so callers soft-defer without clearing hibernation.
 func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.seeded {
-		return ErrNotSeeded
-	}
 	if _, ok := b.held[hostID]; ok {
 		return nil
 	}
-	b.refreshPressureLocked()
-	if b.canAdmitLocked(class) {
-		return nil
+	wake := QueuedWake{HostID: hostID, ProjectID: projectID, Class: class}
+	if !b.seeded {
+		b.enqueueLocked(wake)
+		return ErrQueued
 	}
-	b.enqueueLocked(QueuedWake{HostID: hostID, ProjectID: projectID, Class: class})
-	return ErrQueued
+	b.refreshPressureLocked()
+	if !b.canAdmitLocked(class) {
+		b.enqueueLocked(wake)
+		return ErrQueued
+	}
+	// Reserve now — BeforeSpawn's TryAcquireSpawn is idempotent for this host.
+	b.held[hostID] = class
+	return nil
 }
 
 // PressureActive reports whether MemAvailable hysteresis is in the pressure band.
@@ -287,8 +292,7 @@ func (b *Budget) WorkerHostIDs() []string {
 	return out
 }
 
-// OverPressureCap reports whether current holdings exceed the pressure (or
-// normal) total cap — used to trigger reclaim even before MemAvailable dips.
+// OverPressureCap reports whether holdings overflow the effective total cap.
 func (b *Budget) OverPressureCap() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -298,6 +302,22 @@ func (b *Budget) OverPressureCap() bool {
 		maxTotal = b.caps.PressureTotal
 	}
 	return len(b.held) > maxTotal
+}
+
+// ShouldReclaim is true under MemAvailable pressure, when holdings overflow the
+// cap, or when the wake queue is blocked because the machine is at capacity.
+func (b *Budget) ShouldReclaim() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refreshPressureLocked()
+	if b.pressure {
+		return true
+	}
+	maxTotal := b.caps.MaxTotal
+	if len(b.held) > maxTotal {
+		return true
+	}
+	return len(b.queue) > 0 && len(b.held) >= maxTotal
 }
 
 // Drain tries to admit queued wakes with round-robin rotation. Returns hosts

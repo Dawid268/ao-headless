@@ -215,12 +215,63 @@ func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
 		t.Fatalf("got %v, want ErrQueued", err)
 	}
 	if _, ok := b.Snapshot().Held["waiting"]; ok {
-		t.Fatal("soft admit must not hold a slot")
+		t.Fatal("soft admit must not hold a slot when queued")
 	}
 	if b.Snapshot().Queued != 1 {
 		t.Fatalf("queued = %d", b.Snapshot().Queued)
 	}
 	if err := b.SoftAdmitWake("held", ClassWorker, ""); err != nil {
 		t.Fatalf("already-held soft admit: %v", err)
+	}
+}
+
+func TestSoftAdmitWakeReservesSlotBeforeClear(t *testing.T) {
+	b := New(Caps{
+		MaxTotal: 1, MaxOrchestrator: 1, MaxWorker: 1,
+		PressureTotal: 1, PressureOrch: 1, PressureWorker: 1,
+	}, func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	if err := b.SoftAdmitWake("cold", ClassWorker, "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Snapshot().Held["cold"]; !ok {
+		t.Fatal("soft admit must reserve the slot")
+	}
+	// Concurrent admit for another host must see the reservation.
+	if err := b.SoftAdmitWake("other", ClassWorker, "p"); !errors.Is(err, ErrQueued) {
+		t.Fatalf("got %v, want ErrQueued", err)
+	}
+	// BeforeSpawn idempotency: already reserved.
+	if err := b.TryAcquireSpawn("cold", ClassWorker); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSoftAdmitWakeBeforeSeedQueues(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return false }, nil)
+	if err := b.SoftAdmitWake("early", ClassWorker, ""); !errors.Is(err, ErrQueued) {
+		t.Fatalf("got %v, want ErrQueued", err)
+	}
+	if b.Snapshot().Queued != 1 {
+		t.Fatalf("queued = %d", b.Snapshot().Queued)
+	}
+}
+
+func TestShouldReclaimAtCapWithQueue(t *testing.T) {
+	b := New(Caps{
+		MaxTotal: 1, MaxOrchestrator: 1, MaxWorker: 1,
+		PressureTotal: 1, PressureOrch: 1, PressureWorker: 1,
+	}, func(string) bool { return true }, func() (uint64, error) { return 16 << 30, nil })
+	b.MarkSeededForTest()
+	if b.ShouldReclaim() {
+		t.Fatal("empty budget should not reclaim")
+	}
+	_ = b.TryAcquireSpawn("held", ClassWorker)
+	if b.ShouldReclaim() {
+		t.Fatal("at-cap without queue should not reclaim")
+	}
+	b.Enqueue(QueuedWake{HostID: "waiting", Class: ClassWorker})
+	if !b.ShouldReclaim() {
+		t.Fatal("at-cap with queue must reclaim")
 	}
 }

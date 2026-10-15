@@ -169,36 +169,27 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
-// previewPublishURL picks a LAN or tunnel base from remote-host status and
-// appends the published port. Empty means fall back to loopback.
+// previewPublishURL picks a LAN/tailscale endpoint and appends the published
+// port. Cloudflare quick tunnels only front the authenticated AO listener, not
+// arbitrary agent ports — so tunnel-only status returns "" (caller keeps
+// loopback / prints local).
 func previewPublishURL(status remoteHostStatus, port int) string {
-	var lan, tunnel string
+	var lan string
 	for _, ep := range status.Endpoints {
 		host := strings.TrimSpace(ep.Host)
 		if host == "" {
 			continue
 		}
-		switch strings.ToLower(ep.Kind) {
-		case "tunnel":
-			scheme := "https"
-			if !ep.Secure {
-				scheme = "http"
-			}
-			// Quick tunnels terminate TLS on 443; published app ports stay on the
-			// host's advertised address when LAN/tailscale is present instead.
-			tunnel = fmt.Sprintf("%s://%s", scheme, host)
-		default:
-			scheme := "http"
-			if ep.Secure {
-				scheme = "https"
-			}
-			lan = fmt.Sprintf("%s://%s:%d", scheme, host, port)
+		if strings.EqualFold(ep.Kind, "tunnel") {
+			continue
 		}
+		scheme := "http"
+		if ep.Secure {
+			scheme = "https"
+		}
+		lan = fmt.Sprintf("%s://%s:%d", scheme, host, port)
 	}
-	if lan != "" {
-		return lan
-	}
-	return tunnel
+	return lan
 }
 
 func (c *commandContext) openPreview(ctx context.Context, target string) error {
