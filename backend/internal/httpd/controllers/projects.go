@@ -6,7 +6,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -30,6 +33,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Post("/projects/clone/prepare", c.prepareClone)
 	r.Post("/projects/clone/cleanup", c.cleanupPreparedClone)
 	r.Post("/projects/initialize", c.initialize)
+	r.Post("/projects/seed", c.seed)
 	r.Get("/projects/{id}", c.get)
 	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
@@ -140,6 +144,38 @@ func (c *ProjectsController) initialize(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, result)
+}
+
+// seed accepts a gzipped tar body (application/gzip or application/x-gzip) and
+// query params destDir (required), includeSecrets, name, projectId.
+func (c *ProjectsController) seed(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/seed")
+		return
+	}
+	dest := strings.TrimSpace(r.URL.Query().Get("destDir"))
+	if dest == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SEED_DEST_REQUIRED", "Query parameter destDir is required.", nil)
+		return
+	}
+	includeSecrets, _ := strconv.ParseBool(r.URL.Query().Get("includeSecrets"))
+	in := projectsvc.SeedAndRegisterInput{
+		DestDir:        dest,
+		IncludeSecrets: includeSecrets,
+	}
+	if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
+		in.Name = &name
+	}
+	if id := strings.TrimSpace(r.URL.Query().Get("projectId")); id != "" {
+		in.ProjectID = &id
+	}
+	body := io.LimitReader(r.Body, projectsvc.SeedMaxArchiveBytes())
+	result, err := c.Mgr.SeedAndRegister(r.Context(), body, in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, result)
 }
 func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	if c.Mgr == nil {

@@ -54,6 +54,20 @@ type InitializeRepositoryResult struct {
 	Path string `json:"path"`
 }
 
+// SeedAndRegisterInput seeds a host directory from a gzipped tar then registers it.
+type SeedAndRegisterInput struct {
+	DestDir        string  `json:"destDir" minLength:"1"`
+	IncludeSecrets bool    `json:"includeSecrets,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	ProjectID      *string `json:"projectId,omitempty"`
+}
+
+// SeedAndRegisterResult is the registered project after a successful seed.
+type SeedAndRegisterResult struct {
+	Path    string  `json:"path"`
+	Project Project `json:"project"`
+}
+
 // UpdateSettingsInput is the body shape for PUT /api/v1/projects/{id}. It
 // atomically replaces the user-facing display name and per-project config.
 type UpdateSettingsInput struct {

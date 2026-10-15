@@ -1312,6 +1312,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/seed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unpack a gzipped tar onto the host, initialize git, and register the project */
+        post: operations["seedProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/prs/{id}/merge": {
         parameters: {
             query?: never;
@@ -5461,6 +5478,7 @@ export interface components {
         };
         ResumeAgentResponse: {
             ok: boolean;
+            queued?: boolean;
             /** @enum {string} */
             resumeMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
@@ -5518,6 +5536,16 @@ export interface components {
             name: string;
             /** @description The file, relative to the session's artifact directory. */
             path: string;
+        };
+        SeedAndRegisterInput: {
+            destDir: string;
+            includeSecrets?: boolean;
+            name?: null | string;
+            projectId?: null | string;
+        };
+        SeedAndRegisterResult: {
+            path: string;
+            project: components["schemas"]["Project"];
         };
         SendConversationMessageRequest: {
             attachments?: components["schemas"]["ConversationImageContentRequest"][];
@@ -11148,6 +11176,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InitializeRepositoryResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    seedProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeedAndRegisterInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeedAndRegisterResult"];
                 };
             };
             /** @description Bad Request */

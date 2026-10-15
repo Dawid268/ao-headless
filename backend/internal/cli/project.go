@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -186,8 +187,69 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectListCommand(ctx))
 	cmd.AddCommand(newProjectGetCommand(ctx))
 	cmd.AddCommand(newProjectAddCommand(ctx))
+	cmd.AddCommand(newProjectSeedCommand(ctx))
 	cmd.AddCommand(newProjectSetConfigCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
+	return cmd
+}
+
+func newProjectSeedCommand(ctx *commandContext) *cobra.Command {
+	var destDir, name, projectID, archivePath string
+	var includeSecrets, asJSON bool
+	cmd := &cobra.Command{
+		Use:   "seed",
+		Short: "Upload a gzipped tar and register it as a project on this host",
+		Long: "Unpack a .tar.gz onto an absolute host path (filters node_modules and secrets),\n" +
+			"initialize git, and register the project. Intended for git-less laptop→remote import.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(destDir) == "" {
+				return usageError{fmt.Errorf("--dest is required")}
+			}
+			if strings.TrimSpace(archivePath) == "" {
+				return usageError{fmt.Errorf("--archive is required")}
+			}
+			f, err := os.Open(archivePath)
+			if err != nil {
+				return fmt.Errorf("open archive: %w", err)
+			}
+			defer f.Close()
+			q := url.Values{}
+			q.Set("destDir", destDir)
+			if includeSecrets {
+				q.Set("includeSecrets", "true")
+			}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if projectID != "" {
+				q.Set("projectId", projectID)
+			}
+			var res struct {
+				Path    string `json:"path"`
+				Project struct {
+					ID   string `json:"id"`
+					Path string `json:"path"`
+					Name string `json:"name"`
+				} `json:"project"`
+			}
+			path := "projects/seed?" + q.Encode()
+			if err := ctx.postRawBody(cmd.Context(), path, "application/gzip", f, &res); err != nil {
+				return err
+			}
+			if asJSON {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "seeded project %s at %s\n", res.Project.ID, res.Path)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&destDir, "dest", "", "Absolute host path for the unpacked project root")
+	cmd.Flags().StringVar(&archivePath, "archive", "", "Path to a .tar.gz of the source folder")
+	cmd.Flags().StringVar(&name, "name", "", "Optional display name")
+	cmd.Flags().StringVar(&projectID, "id", "", "Optional project id")
+	cmd.Flags().BoolVar(&includeSecrets, "include-secrets", false, "Allow .env / key material in the archive")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return cmd
 }
 

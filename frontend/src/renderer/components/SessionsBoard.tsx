@@ -246,7 +246,16 @@ export function SessionsBoard({ projectId, hostId }: SessionsBoardProps) {
 						>
 							<LayoutDashboard aria-hidden="true" className="size-icon-md" />
 							{boardLabel}
-							{hostId ? <span className="truncate text-muted-foreground">· {labelForHost(hostId) ?? hostId}</span> : null}
+							{hostId ? (
+								<span
+									className="inline-flex max-w-[12rem] items-center gap-1 truncate rounded-md border border-border bg-surface px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+									data-testid="board-remote-badge"
+									title={labelForHost(hostId) ?? hostId}
+								>
+									<span className="text-foreground">{t("remote.badge", { defaultValue: "Remote" })}</span>
+									<span className="truncate">{labelForHost(hostId) ?? hostId}</span>
+								</span>
+							) : null}
 						</span>
 					) : null}
 					<div className="min-w-0 flex-1" />

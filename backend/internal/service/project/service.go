@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -47,6 +48,10 @@ type Manager interface {
 
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
+
+	// SeedAndRegister unpacks a gzipped tar onto DestDir, initializes git, and
+	// registers the project. Used for git-less laptop→remote host import.
+	SeedAndRegister(ctx context.Context, archive io.Reader, in SeedAndRegisterInput) (SeedAndRegisterResult, error)
 
 	// UpdateSettings atomically replaces a project's user-facing display name
 	// and per-project config, returning the updated read-model.
@@ -371,6 +376,31 @@ const (
 	repositorySetupPlainFolder repositorySetupTarget = iota
 	repositorySetupUnbornRepo
 )
+
+// SeedAndRegister unpacks archive into DestDir, initializes a git repo, and
+// registers the project. The archive filters strip node_modules/secrets before
+// InitializeRepository runs git add -A.
+func (m *Service) SeedAndRegister(ctx context.Context, archive io.Reader, in SeedAndRegisterInput) (SeedAndRegisterResult, error) {
+	seeded, err := SeedArchive(ctx, archive, SeedArchiveInput{
+		DestDir:        in.DestDir,
+		IncludeSecrets: in.IncludeSecrets,
+	})
+	if err != nil {
+		return SeedAndRegisterResult{}, err
+	}
+	if _, err := m.InitializeRepository(ctx, InitializeRepositoryInput{Path: seeded.Path}); err != nil {
+		return SeedAndRegisterResult{}, err
+	}
+	project, err := m.Add(ctx, AddInput{
+		Path:      seeded.Path,
+		Name:      in.Name,
+		ProjectID: in.ProjectID,
+	})
+	if err != nil {
+		return SeedAndRegisterResult{}, err
+	}
+	return SeedAndRegisterResult{Path: seeded.Path, Project: project}, nil
+}
 
 // InitializeRepository prepares a selected folder for project registration by ensuring it has an initial Git commit.
 func (m *Service) InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (result InitializeRepositoryResult, retErr error) {

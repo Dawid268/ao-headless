@@ -19,7 +19,12 @@ const (
 	seedMaxBytes     = 512 << 20 // 512 MiB uncompressed budget
 	seedMaxFiles     = 50000
 	seedMaxFileBytes = 64 << 20 // 64 MiB per file
+	// SeedMaxUploadBytes caps the compressed HTTP upload body (gzip tar).
+	SeedMaxUploadBytes = 600 << 20
 )
+
+// SeedMaxArchiveBytes is the HTTP body limit for POST /projects/seed.
+func SeedMaxArchiveBytes() int64 { return SeedMaxUploadBytes }
 
 var seedDenyDirNames = map[string]struct{}{
 	"node_modules": {}, ".next": {}, "dist": {}, "build": {}, "coverage": {},

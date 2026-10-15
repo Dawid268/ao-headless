@@ -3476,6 +3476,44 @@ paths:
       summary: Initialize a selected folder as a Git repository with an initial commit
       tags:
       - projects
+  /api/v1/projects/seed:
+    post:
+      operationId: seedProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeedAndRegisterInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeedAndRegisterResult'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Unpack a gzipped tar onto the host, initialize git, and register the
+        project
+      tags:
+      - projects
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -15805,6 +15843,8 @@ components:
       properties:
         ok:
           type: boolean
+        queued:
+          type: boolean
         resumeMode:
           enum:
           - native
@@ -15956,6 +15996,34 @@ components:
       required:
       - path
       - name
+      type: object
+    SeedAndRegisterInput:
+      properties:
+        destDir:
+          minLength: 1
+          type: string
+        includeSecrets:
+          type: boolean
+        name:
+          type:
+          - "null"
+          - string
+        projectId:
+          type:
+          - "null"
+          - string
+      required:
+      - destDir
+      type: object
+    SeedAndRegisterResult:
+      properties:
+        path:
+          type: string
+        project:
+          $ref: '#/components/schemas/Project'
+      required:
+      - path
+      - project
       type: object
     SendConversationMessageRequest:
       properties:

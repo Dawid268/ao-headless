@@ -162,6 +162,14 @@ func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projects
 	return projectsvc.InitializeRepositoryResult(in), nil
 }
 
+func (f *fakeProjectManager) SeedAndRegister(_ context.Context, _ io.Reader, in projectsvc.SeedAndRegisterInput) (projectsvc.SeedAndRegisterResult, error) {
+	project, err := f.Add(context.Background(), projectsvc.AddInput{Path: in.DestDir, Name: in.Name, ProjectID: in.ProjectID})
+	if err != nil {
+		return projectsvc.SeedAndRegisterResult{}, err
+	}
+	return projectsvc.SeedAndRegisterResult{Path: in.DestDir, Project: project}, nil
+}
+
 func (f *fakeProjectManager) UpdateSettings(_ context.Context, id domain.ProjectID, in projectsvc.UpdateSettingsInput) (projectsvc.Project, error) {
 	cfg := in.Config
 	return projectsvc.Project{ID: id, Name: in.DisplayName, Config: &cfg}, nil

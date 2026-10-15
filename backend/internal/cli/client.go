@@ -108,6 +108,51 @@ func (c *commandContext) postJSON(ctx context.Context, path string, body, out an
 	return c.doJSON(ctx, http.MethodPost, path, body, out)
 }
 
+// postRawBody POSTs an arbitrary body with the given Content-Type to
+// /api/v1/<path> and decodes a JSON 2xx response into out.
+func (c *commandContext) postRawBody(ctx context.Context, path string, contentType string, body io.Reader, out any) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	info, err := runfile.Read(cfg.RunFilePath)
+	if err != nil {
+		return err
+	}
+	if info == nil {
+		return daemonUnavailableError{message: "AO daemon is not running — start it with `ao start`", cause: errDaemonNotRunning}
+	}
+	if !c.deps.ProcessAlive(info.PID) {
+		return daemonUnavailableError{message: fmt.Sprintf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath), cause: errDaemonNotRunning}
+	}
+	url := fmt.Sprintf("http://%s:%d/api/v1/%s", config.LoopbackHost, info.Port, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body) // #nosec G704 -- loopback daemon URL.
+	if err != nil {
+		return err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	client := *c.deps.HTTPClient
+	client.Timeout = 10 * time.Minute // seed uploads can be large
+	resp, err := client.Do(req)       // #nosec G704 -- loopback daemon URL.
+	if err != nil {
+		return daemonUnavailableError{message: fmt.Sprintf("call daemon: %v", err), cause: err}
+	}
+	resp.Body = daemonResponseBody{ReadCloser: resp.Body}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var e apiError
+		_ = json.NewDecoder(resp.Body).Decode(&e)
+		return apiResponseError{StatusCode: resp.StatusCode, ErrorBody: e}
+	}
+	if out == nil {
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrainedBodyBytes)
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // patchJSON sends body as JSON to PATCH /api/v1/<path> on the running daemon
 // and decodes a 2xx response into out.
 func (c *commandContext) patchJSON(ctx context.Context, path string, body, out any) error {

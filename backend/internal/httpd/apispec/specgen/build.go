@@ -560,6 +560,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ProjectClonePreparationResult":     "ClonePreparationResult",
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
+	"ProjectSeedAndRegisterInput":       "SeedAndRegisterInput",
+	"ProjectSeedAndRegisterResult":      "SeedAndRegisterResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetPermissionsInput":        "SetProjectPermissionsInput",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
@@ -2432,7 +2434,21 @@ func projectOperations() []operation {
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
-		}, {
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/seed", id: "seedProject", tag: "projects",
+			summary: "Unpack a gzipped tar onto the host, initialize git, and register the project",
+			// Metadata is query-string (destDir, includeSecrets, name, projectId);
+			// the body is the raw gzipped tar stream.
+			reqBody: projectsvc.SeedAndRegisterInput{},
+			resps: []respUnit{
+				{http.StatusCreated, projectsvc.SeedAndRegisterResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject", tag: "projects",
 			summary:    "Fetch one project; discriminates ok vs degraded",
 			pathParams: []any{controllers.ProjectIDParam{}},

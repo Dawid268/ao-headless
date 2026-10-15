@@ -50,4 +50,21 @@ unauthenticated primary daemon.
 `InitializeRepository` + `Add` path registers the project. There is no live
 per-file tunnel: sessions and worktrees stay host-local after the one-shot seed.
 
-HTTP/CLI upload surface for seed is follow-up wiring on top of `SeedArchive`.
+### Seed upload
+
+```bash
+# On the remote host (or via paired CLI pointing at that daemon):
+ao project seed --dest /var/lib/ao/projects/my-app --archive ./my-app.tar.gz
+```
+
+`POST /api/v1/projects/seed?destDir=...` accepts a gzipped tar body, unpacks with
+deny filters, initializes git, and registers the project.
+
+### Preview publish
+
+```bash
+ao preview publish --port 4200
+```
+
+Opens the port in the desktop browser panel and prints a LAN/tunnel URL when
+`ao remote-host` endpoints are available.

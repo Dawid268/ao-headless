@@ -126,7 +126,79 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 	}
 	stopCmd.Flags().BoolVar(&stopJSON, "json", false, "print JSON")
 	cmd.AddCommand(stopCmd)
+
+	var publishPort int
+	var publishJSON bool
+	publishCmd := &cobra.Command{
+		Use:   "publish",
+		Short: "Publish a localhost port for this session and print a reachable URL",
+		Long: "Open http://127.0.0.1:<port> in the desktop browser panel and print the best\n" +
+			"shareable URL from this host's remote endpoints (LAN or tunnel) when remote-host\n" +
+			"is enabled. Requires AO_SESSION_ID.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if publishPort <= 0 || publishPort > 65535 {
+				return usageError{fmt.Errorf("--port must be between 1 and 65535")}
+			}
+			target := fmt.Sprintf("http://127.0.0.1:%d", publishPort)
+			if err := ctx.openPreview(cmd.Context(), target); err != nil {
+				return err
+			}
+			url := target
+			var status remoteHostStatus
+			if err := ctx.getJSON(cmd.Context(), "mobile/status", &status); err == nil {
+				if share := previewPublishURL(status, publishPort); share != "" {
+					url = share
+				}
+			}
+			if publishJSON {
+				return writeJSON(cmd.OutOrStdout(), map[string]any{
+					"port": publishPort,
+					"url":  url,
+					"local": target,
+				})
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Preview: %s\n", url)
+			return err
+		},
+	}
+	publishCmd.Flags().IntVar(&publishPort, "port", 0, "Localhost port the agent is serving")
+	publishCmd.Flags().BoolVar(&publishJSON, "json", false, "print JSON")
+	_ = publishCmd.MarkFlagRequired("port")
+	cmd.AddCommand(publishCmd)
 	return cmd
+}
+
+// previewPublishURL picks a LAN or tunnel base from remote-host status and
+// appends the published port. Empty means fall back to loopback.
+func previewPublishURL(status remoteHostStatus, port int) string {
+	var lan, tunnel string
+	for _, ep := range status.Endpoints {
+		host := strings.TrimSpace(ep.Host)
+		if host == "" {
+			continue
+		}
+		switch strings.ToLower(ep.Kind) {
+		case "tunnel":
+			scheme := "https"
+			if !ep.Secure {
+				scheme = "http"
+			}
+			// Quick tunnels terminate TLS on 443; published app ports stay on the
+			// host's advertised address when LAN/tailscale is present instead.
+			tunnel = fmt.Sprintf("%s://%s", scheme, host)
+		default:
+			scheme := "http"
+			if ep.Secure {
+				scheme = "https"
+			}
+			lan = fmt.Sprintf("%s://%s:%d", scheme, host, port)
+		}
+	}
+	if lan != "" {
+		return lan
+	}
+	return tunnel
 }
 
 func (c *commandContext) openPreview(ctx context.Context, target string) error {

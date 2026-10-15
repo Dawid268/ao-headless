@@ -2812,6 +2812,7 @@
 	"settings.models.effortLevel.max": "Max",
 	"settings.models.effortNotReported": "Effort not reported",
 	"settings.models.modeNotReported": "Mode not reported",
+	"remote.badge": "Remote",
 	"remote.hosts": "Remote hosts",
 	"remote.openExistingProjectDesc": "Use a project already on {{label}}",
 	"remote.cloneDescription": "Paste a Git URL and choose where AO should create the checkout on the host.",
