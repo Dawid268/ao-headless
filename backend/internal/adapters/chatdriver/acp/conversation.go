@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,38 +92,40 @@ type conversation struct {
 	canDeleteFork        bool
 	unadoptedForkID      string
 
-	mu                 sync.Mutex
-	sessionID          string
-	reportedSessionID  string
-	capabilities       ports.ChatCapabilities
-	prepared           *preparedTurn
-	activeTurn         string
-	settlingTurn       string
-	turnCancel         context.CancelFunc
-	interrupt          *interruptAttempt
-	pending            map[string]*parkedPermission
-	pendingInputs      map[string]*parkedInput
-	accepted           map[string]persistentInteractionCommand
-	messages           map[string]string
-	thoughts           map[string]string
-	nestedMessages     map[string]nestedMessageState
-	tools              map[string]*toolState
-	turnDiffs          *turnDiffAccumulator
-	turnDiffTurnID     string
-	providerFailure    *ports.ChatEvent
-	configOptions      []ports.ChatConfigOption
-	skills             []ports.ChatSkill
-	skillsKnown        bool
-	closed             bool
-	modeFor            func(ports.PermissionMode) string
-	optionsFor         func(ports.ChatTurnSettings) []SessionOption
-	permissionMode     ports.PermissionMode
-	permissionFor      PermissionPolicy
-	initialPermission  ports.PermissionMode
-	validateSettings   TurnSettingsValidator
-	extensionFor       ClientExtensionHandler
-	extensionMethods   map[string]string
-	legacyModel        bool
+	mu                sync.Mutex
+	sessionID         string
+	reportedSessionID string
+	capabilities      ports.ChatCapabilities
+	prepared          *preparedTurn
+	activeTurn        string
+	settlingTurn      string
+	turnCancel        context.CancelFunc
+	interrupt         *interruptAttempt
+	pending           map[string]*parkedPermission
+	pendingInputs     map[string]*parkedInput
+	accepted          map[string]persistentInteractionCommand
+	messages          map[string]string
+	thoughts          map[string]string
+	nestedMessages    map[string]nestedMessageState
+	tools             map[string]*toolState
+	turnDiffs         *turnDiffAccumulator
+	turnDiffTurnID    string
+	providerFailure   *ports.ChatEvent
+	configOptions     []ports.ChatConfigOption
+	skills            []ports.ChatSkill
+	skillsKnown       bool
+	closed            bool
+	modeFor           func(ports.PermissionMode) string
+	optionsFor        func(ports.ChatTurnSettings) []SessionOption
+	permissionMode    ports.PermissionMode
+	permissionFor     PermissionPolicy
+	initialPermission ports.PermissionMode
+	validateSettings  TurnSettingsValidator
+	extensionFor      ClientExtensionHandler
+	extensionMethods  map[string]string
+	legacyModel       bool
+	// The agent lists model among its own config options, as well as the older model list.
+	modelConfigOption  bool
 	legacyMode         bool
 	liveState          *persistenthost.ACPState
 	detaching          bool
@@ -318,6 +321,9 @@ func (c *conversation) start(
 	c.permissionMode = c.initialPermission
 	c.validateSettings = validateSettings
 	c.legacyModel = models != nil
+	c.modelConfigOption = slices.ContainsFunc(configOptions, func(option acpsdk.SessionConfigOption) bool {
+		return option.Select != nil && option.Select.Id == "model"
+	})
 	c.legacyMode = modes != nil
 	c.mu.Unlock()
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerReady})

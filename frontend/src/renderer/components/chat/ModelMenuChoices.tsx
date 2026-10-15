@@ -40,8 +40,12 @@ export function ModelMenuChoices<T extends { id: string; label: string }>({
 		const element = scrollRef.current;
 		setCanScrollDown(Boolean(element && element.scrollHeight - element.scrollTop > element.clientHeight + 1));
 	}, []);
+	// A new search starts at the top. A refreshed list, such as a running chat's
+	// settings polled again, keeps the scroll where it is.
 	useLayoutEffect(() => {
 		if (scrollRef.current) scrollRef.current.scrollTop = 0;
+	}, [normalizedQuery]);
+	useLayoutEffect(() => {
 		updateScrollCue();
 		const element = scrollRef.current;
 		if (!element || typeof ResizeObserver === "undefined") return;

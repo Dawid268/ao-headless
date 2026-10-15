@@ -41,7 +41,9 @@ func (c *conversation) SetConfigOption(
 	c.mu.Lock()
 	sessionID := c.sessionID
 	closed := c.closed
-	legacyModel := c.legacyModel
+	// session/set_model returns nothing, while a config option change returns the
+	// new model's settings, such as Cursor's thinking and fast mode.
+	legacyModel := c.legacyModel && !c.modelConfigOption
 	legacyMode := c.legacyMode
 	var option *ports.ChatConfigOption
 	for i := range c.configOptions {

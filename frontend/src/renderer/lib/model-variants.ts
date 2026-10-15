@@ -55,6 +55,13 @@ function modelVendor(label: string): string {
 	return VENDORS.find(([pattern]) => pattern.test(trimmed))?.[1] ?? trimmed.split(/\s+/)[0] ?? "";
 }
 
+/** Models grouped by vendor, each group where its first model was. */
+export function groupModelsByVendor<T extends { label: string; group?: string }>(models: T[]): T[] {
+	const grouped = models.map((model) => ({ ...model, group: model.group || modelVendor(model.label) }));
+	const order = [...new Set(grouped.map((model) => model.group))];
+	return grouped.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+}
+
 function parseVariantId(id: string): { base: string; effort?: string; thinking: boolean; fast: boolean } {
 	const tokens = id.split("-");
 	let effort: string | undefined;

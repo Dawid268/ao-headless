@@ -23,6 +23,7 @@ import { CHAT_SWITCH_TARGETS, TERMINAL_SWITCH_TARGETS } from "../../lib/agent-sw
 import { toggleModelFavorite, useModelFavorites, type ModelFavorite } from "../../lib/model-favorites";
 import {
 	collapseModelVariants,
+	groupModelsByVendor,
 	findModelVariant,
 	listsModelVariants,
 	modelGroupLabel,
@@ -208,7 +209,7 @@ export function AgentModelPicker({
 	// Cursor chat reports them as its own settings, which are kept as they are.
 	const live = listsModelVariants(currentHarness) && current.efforts.length === 0 && current.thinking === undefined
 		? variantSource(current.models, current.modelId, current.modelLabel, current.onPickModel && ((variant) => current.onPickModel?.(variant.id)), t)
-		: current;
+		: listsModelVariants(currentHarness) ? { ...current, models: groupModelsByVendor(current.models) } : current;
 	const currentSource: PickerSource = disabled
 		? { ...live, onPickModel: undefined, onPickSetup: undefined, onPickEffort: undefined, onToggleFast: undefined, onToggleThinking: undefined }
 		: live;

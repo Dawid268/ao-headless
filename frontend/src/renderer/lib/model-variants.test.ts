@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseModelVariants, findModelVariant, pickModelVariant } from "./model-variants";
+import { collapseModelVariants, findModelVariant, groupModelsByVendor, pickModelVariant } from "./model-variants";
 
 // Shapes taken from a real Cursor catalog.
 const catalog = [
@@ -61,5 +61,18 @@ describe("collapseModelVariants", () => {
 		expect(pickModelVariant(opus, { effort: "high", thinking: true, fast: false }).id).toBe("claude-opus-4-7-thinking-high");
 		// No fast low variant exists, so effort wins and speed gives way.
 		expect(pickModelVariant(opus, { effort: "low", thinking: false, fast: true }).id).toBe("claude-opus-4-7-low");
+	});
+
+	it("groups a plain model list by vendor", () => {
+		const models = [
+			{ id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+			{ id: "gpt-5.5", label: "GPT-5.5" },
+			{ id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+		];
+		expect(groupModelsByVendor(models).map((model) => [model.id, model.group])).toEqual([
+			["claude-opus-4-8", "Anthropic"],
+			["claude-sonnet-5-5", "Anthropic"],
+			["gpt-5.5", "OpenAI"],
+		]);
 	});
 });
