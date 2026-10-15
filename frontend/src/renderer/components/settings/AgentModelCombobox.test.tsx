@@ -528,7 +528,7 @@ describe("AgentModelCombobox", () => {
 			{ id: "claude-opus-4-8-high", label: "Claude Opus 4.8 High", isDefault: true },
 			{ id: "claude-opus-4-8-thinking-high", label: "Claude Opus 4.8 High Thinking" },
 			{ id: "gpt-5.5-high", label: "GPT-5.5 High" },
-		], { agentId: "cursor", value: "claude-opus-4-8-high", compact: true });
+		], { agentId: "cursor", value: "claude-opus-4-8-high", compact: true, tuning: { effort: "", onEffortChange: vi.fn() } });
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
 		expect(screen.getAllByRole("menuitem", { name: /Claude Opus 4.8/ })).toHaveLength(1);
 		expect(screen.queryByText("Fast mode")).not.toBeInTheDocument();

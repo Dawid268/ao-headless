@@ -258,7 +258,7 @@ export function AgentModelCombobox({
 	const selectCatalogModel = (event: Event, item: IndexedModel) => {
 		const family = families?.find((entry) => entry.id === item.id);
 		const openEffort = family
-			? family.efforts.length > 1 || family.hasThinkingChoice
+			? Boolean(tuning) && (family.efforts.length > 1 || family.hasThinkingChoice)
 			: Boolean(tuning && item.model.efforts?.some((effort) => effort && effort.toLowerCase() !== "default"));
 		if (openEffort) event.preventDefault();
 		selectModel(item.id);
@@ -309,7 +309,7 @@ export function AgentModelCombobox({
 						<span className="min-w-0 truncate">{currentLabel}</span>
 					)}
 					{showEffort && showEffortInTrigger && <span className="shrink-0 text-settings-muted"> · {currentEffortLabel}</span>}
-					{variant?.variant.effort && showEffortInTrigger && <span className="shrink-0 text-settings-muted"> · {formatEffortLabel(variant.variant.effort, t)}</span>}
+					{variant?.variant.effort && tuning && showEffortInTrigger && <span className="shrink-0 text-settings-muted"> · {formatEffortLabel(variant.variant.effort, t)}</span>}
 					<ChevronDown
 						className="size-icon-sm shrink-0 opacity-70 transition-transform duration-300 ease-out group-data-[state=open]/agent-model-trigger:rotate-180"
 						aria-hidden="true"
@@ -521,9 +521,9 @@ export function AgentModelCombobox({
 						aria-hidden="true"
 					/>
 				</div>
-				{/* Cursor's effort and thinking open beside the model, like the other agents'
-				    effort. New Task has no fast mode for any agent, so Cursor's keeps its current speed. */}
-				{variant && (variant.family.efforts.length > 1 || variant.family.hasThinkingChoice) && (
+				{/* Where effort sits in this menu, Cursor's effort and thinking open beside the
+				    model like the other agents'. Its fast mode is not offered here, as for them. */}
+				{variant && tuning && (variant.family.efforts.length > 1 || variant.family.hasThinkingChoice) && (
 					<div className="shrink-0">
 						<DropdownMenuSeparator />
 						<OptionMenuSub open={effortMenuOpen} onOpenChange={(open) => {

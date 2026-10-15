@@ -6,7 +6,7 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -28,6 +28,8 @@ import { useCloudOrg } from "../hooks/useCloudOrg";
 import { useProviderConnections } from "../hooks/useProviderConnections";
 import { cloudAgentInfos, connectedCredentialType, credentialModelScope, isCloudHarnessConnected } from "../lib/cloud-agents";
 import { agentModelDisplayLabel, isConcreteModelID, modelChoiceLabel, splitClaudeModels } from "../lib/agent-model-choices";
+import { collapseModelVariants, findModelVariant, listsModelVariants, pickModelVariant } from "../lib/model-variants";
+import { ToggleRow } from "./chat/AgentSwitchPicker";
 import { fallbackEffort } from "../lib/effort";
 import {
 	buildRankedAgentOptions,
@@ -545,6 +547,17 @@ export function TaskComposer({
 	// selected, and sends it, so the picker matches what the task runs with.
 	const aoDefaultEffort = requiresTuiFallback ? undefined : fallbackEffort(effortOptions, implicitEffort);
 	const effectiveEffort = effort && effort !== "default" ? effort : aoDefaultEffort ?? "";
+	// Cursor's effort and thinking are part of its model id. They get the same effort
+	// button as other agents, and a pick there swaps the model id.
+	const cursorFamilies = listsModelVariants(selectedAgent)
+		? collapseModelVariants((modelCatalog?.models ?? []).filter((item) => isConcreteModelID(item.id)))
+		: undefined;
+	const cursorChoice = cursorFamilies ? findModelVariant(cursorFamilies, selectedModel) : undefined;
+	const pickCursorVariant = (want: { effort?: string; thinking?: boolean }) => {
+		if (!cursorChoice) return;
+		setModel(pickModelVariant(cursorChoice.family, { ...cursorChoice.variant, ...want }).id);
+		setModelTouched(true);
+	};
 	const requestedEffort = isCloudProject
 		? effort || cloudDefaultEffort || undefined
 		: effortTouched || rememberedEffortIsExplicit
@@ -776,7 +789,12 @@ export function TaskComposer({
 					setEffort("");
 				},
 			}}
-			effort={{
+			effort={cursorChoice ? {
+				disabled: isSubmitting,
+				options: cursorChoice.family.efforts,
+				value: cursorChoice.variant.effort ?? "",
+				onChange: (value) => pickCursorVariant({ effort: value }),
+			} : {
 				disabled: isSubmitting,
 				options: effortOptions,
 				value: effectiveEffort,
@@ -803,10 +821,11 @@ export function TaskComposer({
 				onSubmit: (brief) => void submitTask(brief, selectedAgent === "unreal-agent" ? "chat" : requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} hostId={hostId} manageView={isCloudProject ? "cloud" : "local"} />}
-			renderEffortControl={(control) => <TaskEffortPicker {...control} value={control.value || cloudDefaultEffort} defaultEffort={inheritedEffort || effortModel?.defaultEffort} availability={effortAvailability} />}
+			renderEffortControl={(control) => <TaskEffortPicker {...control} value={control.value || cloudDefaultEffort} defaultEffort={cursorChoice ? undefined : inheritedEffort || effortModel?.defaultEffort} availability={cursorChoice ? "supported" : effortAvailability}
+				footer={cursorChoice?.family.hasThinkingChoice ? <ToggleRow label="Thinking" checked={cursorChoice.variant.thinking} onChange={(thinking) => pickCursorVariant({ thinking })} /> : undefined} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} onRefresh={refreshSelectedModels}
 				showFollowAgentAction={Boolean(catalogDefaultOption || !isConcreteModelID(projectModelOrMode))} />}
-			showEffort={!requiresTuiFallback && (effortOptions.length > 0 || Boolean(effort && effort !== "default"))}
+			showEffort={cursorChoice ? cursorChoice.family.efforts.length > 1 : !requiresTuiFallback && (effortOptions.length > 0 || Boolean(effort && effort !== "default"))}
 		/>
 	);
 }
@@ -822,7 +841,8 @@ function TaskEffortPicker({
 	value,
 	defaultEffort,
 	availability,
-}: TaskComposerEffortControl & { defaultEffort?: string; availability: EffortAvailability }) {
+	footer,
+}: TaskComposerEffortControl & { defaultEffort?: string; availability: EffortAvailability; footer?: ReactNode }) {
 	return (
 		<EffortPicker
 			label={label}
@@ -834,6 +854,7 @@ function TaskEffortPicker({
 			onChange={onChange}
 			triggerClassName="composer-chip composer-toolbar-option w-fit"
 			menuClassName={COMPOSER_MENU_WIDTH}
+			footer={footer}
 		/>
 	);
 }
