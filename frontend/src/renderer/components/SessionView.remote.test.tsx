@@ -1,3 +1,4 @@
+import type { BrowserTabsState } from "../../main/browser-view-host";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -407,15 +408,15 @@ it("automatically reveals a remote preview after session data finishes loading",
 	let sessionReads = 0;
 	let releaseInitialSessions!: () => void;
 	const initialSessions = new Promise<void>((resolve) => { releaseInitialSessions = resolve; });
-	let emitTabs: ((state: { viewId: string; activeTabId: string; tabs: { id: string; url: string; title: string; active: boolean }[] }) => void) | undefined;
+	const tabsListeners = new Set<(state: BrowserTabsState) => void>();
 	const resolvePreview = vi.spyOn(aoBridge.remotes, "previewUrl").mockResolvedValue("http://ao-preview.localhost/");
 	const ensure = vi.spyOn(window.ao!.browser, "ensure");
 	const onTabsState = vi.spyOn(window.ao!.browser, "onTabsState").mockImplementation((listener) => {
-		emitTabs = listener;
-		return () => { emitTabs = undefined; };
+		tabsListeners.add(listener);
+		return () => { tabsListeners.delete(listener); };
 	});
 	const navigate = vi.spyOn(window.ao!.browser, "navigate").mockImplementation(async ({ viewId, url }) => {
-		emitTabs?.({ viewId, activeTabId: "t1", tabs: [{ id: "t1", url, title: "QA preview", active: true }] });
+		for (const listener of tabsListeners) listener({ viewId, activeTabId: "t1", tabs: [{ id: "t1", url, title: "QA preview", active: true }] });
 		return { viewId, url, title: "AO preview", canGoBack: false, canGoForward: false, isLoading: false };
 	});
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -432,7 +433,7 @@ it("automatically reveals a remote preview after session data finishes loading",
 	await connectHost("http://box-a:3001");
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	renderRemoteSession(queryClient);
-	await waitFor(() => expect(ensure).toHaveBeenCalledWith("remote:box-a:session-1"));
+	await waitFor(() => expect(ensure).toHaveBeenCalledWith("remote:box-a:session-1", false));
 	await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 	releaseInitialSessions();
 	await screen.findByRole("combobox", { name: "Message the agent" });

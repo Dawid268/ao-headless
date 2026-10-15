@@ -10,7 +10,7 @@ import { useFilesTopbarHost } from "./files-topbar-host";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { TooltipProvider } from "./ui/tooltip";
 import type { SessionInterfaceTransitionStatus } from "../hooks/useSessionInterfaceTransition";
-import type { BrowserAgentActivityState } from "../../main/browser-view-host";
+import type { BrowserTabsState, BrowserAgentActivityState } from "../../main/browser-view-host";
 import { inspectorIsOpen, rememberedFileDisplayMode, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useTerminalResetStore } from "../stores/terminal-reset-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -5530,6 +5530,23 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-2" />);
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 		expect(browserUnseen("sess-2")).toBe(false);
+	});
+
+	it("switches to Summary when the final browser tab closes", () => {
+		let tabsListener: ((state: BrowserTabsState) => void) | undefined;
+		vi.spyOn(window.ao!.browser, "onTabsState").mockImplementation((listener) => {
+			tabsListener = listener;
+			return () => undefined;
+		});
+		render(<SessionView sessionId="sess-1" />);
+		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		act(() => tabsListener!({ viewId: "browser:other", activeTabId: "", tabs: [], change: { kind: "closed", tabId: "t1" } }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		act(() => tabsListener!({ viewId: "browser:sess-1", activeTabId: "", tabs: [], change: { kind: "closed", tabId: "t1" } }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(inspectorOpen("sess-1")).toBe(true);
+		vi.mocked(window.ao!.browser.onTabsState).mockRestore();
 	});
 
 	it.each(["open", "tab-new"])("reveals Browser once for explicit %s commands", (action) => {
