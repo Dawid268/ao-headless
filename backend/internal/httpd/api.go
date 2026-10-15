@@ -19,6 +19,7 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/updatedrain"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
@@ -60,6 +61,7 @@ type APIDeps struct {
 	SessionCapabilities      controllers.SessionCapabilityValidator
 	ShellPreviewCapabilities controllers.ShellPreviewCapabilityValidator
 	SystemChecks             controllers.SystemChecker
+	UpdateDrain              *updatedrain.Service
 	// HostID is this machine's stable, machine-bound identity, served by the
 	// unauthenticated GET /api/v1/identity probe so a phone can confirm which
 	// machine answered before presenting a credential.
@@ -117,31 +119,31 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	deps          APIDeps
-	agents        *controllers.AgentsController
-	codexAccounts *controllers.CodexAccountsController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	automations   *controllers.AutomationsController
-	desktop       *controllers.DesktopWorkspaceController
-	usage         *controllers.UsageController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	reports       *controllers.ReportsController
-	push          *controllers.PushController
-	imports       *controllers.ImportController
-	fs            *controllers.FSController
-	shellTerms    *controllers.ShellTerminalsController
-	cues          *controllers.CuesController
-	conversations *controllers.ConversationsController
-	settings      *controllers.SettingsController
-	dev           *controllers.DevController
-	browser       *controllers.BrowserController
-	system        *controllers.SystemController
-	identity      *controllers.IdentityController
-	endpoints     *controllers.EndpointsController
+	cfg             config.Config
+	deps            APIDeps
+	agents          *controllers.AgentsController
+	codexAccounts   *controllers.CodexAccountsController
+	projects        *controllers.ProjectsController
+	sessions        *controllers.SessionsController
+	automations     *controllers.AutomationsController
+	desktop         *controllers.DesktopWorkspaceController
+	usage           *controllers.UsageController
+	prs             *controllers.PRsController
+	reviews         *controllers.ReviewsController
+	notifications   *controllers.NotificationsController
+	reports         *controllers.ReportsController
+	push            *controllers.PushController
+	imports         *controllers.ImportController
+	fs              *controllers.FSController
+	shellTerms      *controllers.ShellTerminalsController
+	cues            *controllers.CuesController
+	conversations   *controllers.ConversationsController
+	settings        *controllers.SettingsController
+	dev             *controllers.DevController
+	browser         *controllers.BrowserController
+	system          *controllers.SystemController
+	identity        *controllers.IdentityController
+	endpoints       *controllers.EndpointsController
 	systemInstall   *controllers.SystemInstallController
 	agentAuth       *controllers.AgentAuthController
 	linkPreview     *controllers.LinkPreviewController
@@ -182,25 +184,25 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 			Capabilities:             deps.SessionCapabilities,
 			ShellPreviewCapabilities: deps.ShellPreviewCapabilities,
 		},
-		automations:   &controllers.AutomationsController{Svc: deps.Automations},
-		desktop:       &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
-		usage:         &controllers.UsageController{Svc: deps.UsageSummary, Log: loggerOrDefault(log), Memory: deps.SessionMemory, Steps: deps.SessionSteps, Pressure: memoryPressure(deps.SessionMemory)},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
-		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
-		reports:       &controllers.ReportsController{Svc: deps.Reports},
-		push:          &controllers.PushController{Registry: deps.Push},
-		imports:       &controllers.ImportController{Svc: deps.Import},
-		fs:            &controllers.FSController{Svc: deps.Directories},
-		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
-		cues:          &controllers.CuesController{Svc: deps.Cues},
-		conversations: &controllers.ConversationsController{Svc: deps.Conversations, Renders: attachmentstore.New(cfg.DataDir)},
-		settings:      &controllers.SettingsController{Svc: deps.Settings},
-		dev:           &controllers.DevController{Import: deps.DevImport},
-		browser:       &controllers.BrowserController{Svc: deps.Browser},
-		system:        &controllers.SystemController{Checks: deps.SystemChecks},
-		identity:      &controllers.IdentityController{HostID: deps.HostID},
-		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
+		automations:     &controllers.AutomationsController{Svc: deps.Automations},
+		desktop:         &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
+		usage:           &controllers.UsageController{Svc: deps.UsageSummary, Log: loggerOrDefault(log), Memory: deps.SessionMemory, Steps: deps.SessionSteps, Pressure: memoryPressure(deps.SessionMemory)},
+		prs:             &controllers.PRsController{Svc: deps.PRs},
+		reviews:         &controllers.ReviewsController{Svc: deps.Reviews},
+		notifications:   &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		reports:         &controllers.ReportsController{Svc: deps.Reports},
+		push:            &controllers.PushController{Registry: deps.Push},
+		imports:         &controllers.ImportController{Svc: deps.Import},
+		fs:              &controllers.FSController{Svc: deps.Directories},
+		shellTerms:      &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		cues:            &controllers.CuesController{Svc: deps.Cues},
+		conversations:   &controllers.ConversationsController{Svc: deps.Conversations, Renders: attachmentstore.New(cfg.DataDir)},
+		settings:        &controllers.SettingsController{Svc: deps.Settings},
+		dev:             &controllers.DevController{Import: deps.DevImport},
+		browser:         &controllers.BrowserController{Svc: deps.Browser},
+		system:          &controllers.SystemController{Checks: deps.SystemChecks, Drain: deps.UpdateDrain, DataDir: cfg.DataDir},
+		identity:        &controllers.IdentityController{HostID: deps.HostID},
+		endpoints:       &controllers.EndpointsController{Source: deps.Endpoints},
 		systemInstall:   &controllers.SystemInstallController{Installer: deps.Installer},
 		agentAuth:       &controllers.AgentAuthController{Svc: deps.AgentAuth},
 		linkPreview:     &controllers.LinkPreviewController{Svc: deps.LinkPreview},

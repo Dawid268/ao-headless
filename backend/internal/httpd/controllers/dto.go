@@ -17,6 +17,7 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/updatedrain"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
@@ -1944,6 +1945,9 @@ type SystemRequirementsResponse = systemcheck.Report
 
 // GitHubAuthRequirementResponse is the advisory GitHub credential probe.
 type GitHubAuthRequirementResponse = systemcheck.Requirement
+
+// UpdateDrainStatusResponse is the host quiesce state for an image replace.
+type UpdateDrainStatusResponse = updatedrain.Status
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {

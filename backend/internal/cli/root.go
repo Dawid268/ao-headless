@@ -200,6 +200,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newDaemonCommand())
 	root.AddCommand(newStartCommand(ctx))
 	root.AddCommand(newStopCommand(ctx))
+	root.AddCommand(newUpdateDrainCommand(ctx))
 	root.AddCommand(newStatusCommand(ctx))
 	root.AddCommand(newRemoteHostCommand(ctx))
 	root.AddCommand(newDoctorCommand(ctx))

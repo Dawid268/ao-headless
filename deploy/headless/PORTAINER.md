@@ -7,6 +7,12 @@ stacks, private GHCR pull credentials already configured.
 **Do not** point Traefik or a public port at AO’s primary daemon (`127.0.0.1:3001`).
 Only the **authenticated remote listener (3011)** is routed.
 
+## Safe image update
+
+1. In desktop **Settings → Remote hosts**, choose **Prepare for update** on the Live host. That pauses new work. It does not stop projects.
+2. Re-pull `:latest` and update the stack. **Never** remove volumes.
+3. Wait until the host is Live again. A hung daemon (loopback `/healthz` dead) exits so Swarm restarts the task. Traefik blips do not.
+
 ## Hard rule: durable volume
 
 Harness CLI installs (Codex, Cursor, …) and logins must survive image updates.

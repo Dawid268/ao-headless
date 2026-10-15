@@ -826,6 +826,42 @@ func systemOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/system/update-drain", id: "getUpdateDrain", tag: "system",
+			summary: "Report whether new chat admits are paused for an image replace",
+			resps: []respUnit{
+				{http.StatusOK, controllers.UpdateDrainStatusResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/system/update-drain", id: "beginUpdateDrain", tag: "system",
+			summary: "Pause new chat admits so this host can be replaced without stopping projects",
+			resps: []respUnit{
+				{http.StatusOK, controllers.UpdateDrainStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/system/gitlab-token", id: "getGitLabTokenStatus", tag: "system",
+			summary: "Report whether a GitLab token is stored on this host",
+			resps: []respUnit{
+				{http.StatusOK, controllers.GitLabTokenStatusResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/system/gitlab-token", id: "putGitLabToken", tag: "system",
+			summary: "Store a GitLab personal access token on this host",
+			reqBody: controllers.PutGitLabTokenRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.GitLabTokenStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/system/install/{target}", id: "startSystemInstall", tag: "system",
 			summary:    "Start (or return the already-running) install job for a fixed system target",
 			pathParams: []any{controllers.InstallTargetParam{}},

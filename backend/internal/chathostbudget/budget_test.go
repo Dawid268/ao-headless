@@ -228,6 +228,23 @@ func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
 	}
 }
 
+func TestSoftAdmitWakeQueuesWhenAdmitsClosed(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	b.SetAdmitsClosed(true)
+	if !b.AdmitsClosed() {
+		t.Fatal("admits should be closed")
+	}
+	if _, err := b.SoftAdmitWake("fresh", ClassWorker, "p"); !errors.Is(err, ErrQueued) {
+		t.Fatalf("got %v, want ErrQueued", err)
+	}
+	b.SetAdmitsClosed(false)
+	reserved, err := b.SoftAdmitWake("fresh", ClassWorker, "p")
+	if err != nil || !reserved {
+		t.Fatalf("after reopen: reserved=%v err=%v", reserved, err)
+	}
+}
+
 func TestReleaseIfDeadProtectsInFlightReservation(t *testing.T) {
 	b := New(DefaultCaps(), func(string) bool { return false }, nil)
 	b.MarkSeededForTest()

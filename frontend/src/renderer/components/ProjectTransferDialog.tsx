@@ -1,9 +1,17 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "@tanstack/react-router";
 import { connectedHosts, labelForHost } from "../lib/host-clients";
 import { LOCAL_HOST, type HostId } from "../lib/hosts";
+import { projectNavigateTarget } from "../lib/navigate-to-session";
+import {
+  remoteWorkspaceQueryKey,
+  workspaceQueryKey,
+} from "../hooks/useWorkspaceQuery";
+import { useUiStore } from "../stores/ui-store";
 import {
   type MergedTransferStatus,
   runProjectTransfer,
@@ -35,6 +43,9 @@ export function ProjectTransferDialog({
   sourceHostId,
 }: Props) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const closeSettings = useUiStore((state) => state.closeSettings);
   const { hosts: remoteHosts } = useRemoteHosts();
   const connected = connectedHosts();
   const source =
@@ -44,8 +55,6 @@ export function ProjectTransferDialog({
     const out: DestChoice[] = [];
     if (source) out.push({ kind: "local" });
     for (const host of remoteHosts) {
-      if (host.status !== "connected" || !connected.includes(host.hostId))
-        continue;
       if (source && host.hostId === source) continue;
       if (!source && host.hostId === sourceHostId) continue;
       out.push({
@@ -55,7 +64,7 @@ export function ProjectTransferDialog({
       });
     }
     return out;
-  }, [connected, remoteHosts, source, sourceHostId]);
+  }, [remoteHosts, source, sourceHostId]);
 
   const [destKey, setDestKey] = useState("");
   const [destDir, setDestDir] = useState("");
@@ -87,6 +96,34 @@ export function ProjectTransferDialog({
   const selected: DestChoice | undefined = destinations.find((d) =>
     d.kind === "local" ? destKey === "local" : d.hostId === destKey,
   );
+  const selectedRemote =
+    selected?.kind === "remote"
+      ? remoteHosts.find((host) => host.hostId === selected.hostId)
+      : undefined;
+  const destLive =
+    !selected ||
+    selected.kind === "local" ||
+    (selectedRemote?.status === "connected" &&
+      connected.includes(selected.hostId));
+
+  useEffect(() => {
+    if (
+      !open ||
+      running ||
+      status?.phase === "done" ||
+      !selected ||
+      destDir.trim()
+    )
+      return;
+    if (selected.kind !== "remote") return;
+    const slug =
+      projectName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "project";
+    setDestDir(`/ao-data/projects/${slug}`);
+  }, [open, running, status?.phase, selected, destDir, projectName]);
 
   const start = async () => {
     if (!selected || !destDir.trim() || running) return;
@@ -100,7 +137,7 @@ export function ProjectTransferDialog({
       detail: t("projectTransfer.starting"),
     });
     try {
-      await runProjectTransfer({
+      const finished = await runProjectTransfer({
         sourceHostId: source,
         destHostId,
         projectId,
@@ -110,6 +147,12 @@ export function ProjectTransferDialog({
         signal: controller.signal,
         onStatus: setStatus,
       });
+      void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+      if (destHostId && finished.phase === "done") {
+        void queryClient.invalidateQueries({
+          queryKey: remoteWorkspaceQueryKey(destHostId),
+        });
+      }
     } catch {
       /* status already set by runProjectTransfer */
     } finally {
@@ -123,8 +166,31 @@ export function ProjectTransferDialog({
   };
 
   const canStart = Boolean(
-    selected && destDir.trim() && !running && status?.phase !== "done",
+    selected &&
+    destDir.trim() &&
+    destLive &&
+    !running &&
+    status?.phase !== "done",
   );
+  const destLabel =
+    selected?.kind === "remote"
+      ? selected.label
+      : t("projectTransfer.thisComputer");
+
+  const openTransferred = () => {
+    const project = status?.projectId;
+    if (!project || !selected) return;
+    const host = selected.kind === "remote" ? selected.hostId : LOCAL_HOST;
+    void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+    if (selected.kind === "remote") {
+      void queryClient.invalidateQueries({
+        queryKey: remoteWorkspaceQueryKey(selected.hostId),
+      });
+    }
+    closeSettings();
+    onOpenChange(false);
+    void navigate(projectNavigateTarget(project, host));
+  };
   const failed = status?.phase === "failed";
   const done = status?.phase === "done";
 
@@ -183,16 +249,22 @@ export function ProjectTransferDialog({
                       setDestDir("");
                     }}
                   >
-                    {destinations.map((d) => (
-                      <option
-                        key={d.kind === "local" ? "local" : d.hostId}
-                        value={d.kind === "local" ? "local" : d.hostId}
-                      >
-                        {d.kind === "local"
-                          ? t("projectTransfer.thisComputer")
-                          : d.label}
-                      </option>
-                    ))}
+                    {destinations.map((d) => {
+                      const live =
+                        d.kind === "local" ||
+                        remoteHosts.find((host) => host.hostId === d.hostId)
+                          ?.status === "connected";
+                      return (
+                        <option
+                          key={d.kind === "local" ? "local" : d.hostId}
+                          value={d.kind === "local" ? "local" : d.hostId}
+                        >
+                          {d.kind === "local"
+                            ? t("projectTransfer.thisComputer")
+                            : `${d.label} · ${live ? t("remote.statusLive") : t("remote.statusOffline")}`}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
               )}
@@ -221,6 +293,11 @@ export function ProjectTransferDialog({
                 <span className="text-xs text-muted-foreground">
                   {t("projectTransfer.destHint")}
                 </span>
+                {selected && !destLive ? (
+                  <span role="alert" className="text-xs text-destructive">
+                    {t("projectTransfer.destOffline")}
+                  </span>
+                ) : null}
               </label>
 
               <label className="flex items-center gap-2 text-sm">
@@ -264,9 +341,22 @@ export function ProjectTransferDialog({
                     </p>
                   ) : null}
                   {done ? (
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {t("projectTransfer.successHint")}
-                    </p>
+                    <div className="mt-2 flex flex-col gap-1 text-sm">
+                      <p>
+                        {t("projectTransfer.successOn", { host: destLabel })}
+                      </p>
+                      <p className="truncate font-mono text-xs text-muted-foreground">
+                        {destDir}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {selected?.kind === "remote"
+                          ? t("projectTransfer.successRemoteHint")
+                          : t("projectTransfer.successHint")}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("projectTransfer.sourceRemains")}
+                      </p>
+                    </div>
                   ) : null}
                 </div>
               )}
@@ -299,9 +389,12 @@ export function ProjectTransferDialog({
                 <Button
                   type="button"
                   variant="primary"
-                  onClick={() => onOpenChange(false)}
+                  disabled={!status?.projectId}
+                  onClick={openTransferred}
                 >
-                  {t("projectTransfer.done")}
+                  {selected?.kind === "remote"
+                    ? t("projectTransfer.openOnHost", { host: destLabel })
+                    : t("projectTransfer.openProject")}
                 </Button>
               ) : (
                 <Button

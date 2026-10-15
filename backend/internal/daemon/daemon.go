@@ -70,6 +70,7 @@ import (
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/updatedrain"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
@@ -827,10 +828,10 @@ func Run() error {
 		}()
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, sessionSvc, cfg.GitLab, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, sessionSvc, cfg.GitLab, cfg.DataDir, log)
 	var prActions prsvc.ActionManager
-	prReader := newMultiSCMProvider(cfg.GitLab, log)
-	prMerger := newMultiSCMMerger(cfg.GitLab, log)
+	prReader := newMultiSCMProvider(cfg.GitLab, cfg.DataDir, log)
+	prMerger := newMultiSCMMerger(cfg.GitLab, cfg.DataDir, log)
 	if prReader != nil && prMerger != nil {
 		prActions = prsvc.NewActionService(prsvc.ActionDeps{
 			Store:        store,
@@ -970,6 +971,7 @@ func Run() error {
 		Agents:             agentSvc,
 		CodexAccounts:      agentSvc,
 		SystemChecks:       systemChecks,
+		UpdateDrain:        &updatedrain.Service{DataDir: cfg.DataDir, Gate: chatHostBudget},
 		Installer:          systemInstall,
 		Sessions:           sessionSvc,
 		Automations:        automationSvc,
@@ -1096,6 +1098,11 @@ func Run() error {
 			defer close(done)
 			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store, cfg.AppRunID); reconcileErr != nil {
 				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
+			}
+			// A previous process may have left an update-drain flag. This boot is the
+			// replacement, so reopen admits.
+			if clearErr := (&updatedrain.Service{DataDir: cfg.DataDir, Gate: chatHostBudget}).Clear(); clearErr != nil {
+				log.Warn("update drain clear on boot failed", "err", clearErr)
 			}
 			if seedErr := chatHostBudget.Seed(cfg.DataDir, func(hostID string) chathostbudget.Class {
 				rec, found, err := store.GetSession(context.Background(), domain.SessionID(hostID))

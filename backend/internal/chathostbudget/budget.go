@@ -30,21 +30,21 @@ type Class int
 const (
 	ClassWorker Class = iota
 	ClassOrchestrator
-	ClassSide    // btw-*
-	ClassReview  // review-*
+	ClassSide   // btw-*
+	ClassReview // review-*
 	ClassBackground
 )
 
 // Caps are the concurrent warm limits. Zero means use DefaultCaps.
 type Caps struct {
-	MaxTotal         int
-	MaxOrchestrator  int
-	MaxWorker        int // workers + side + review + background
-	PressureTotal    int
-	PressureOrch     int
-	PressureWorker   int
-	EnterAvailableB  uint64 // refuse/admit pressure when MemAvailable below this
-	ExitAvailableB   uint64 // leave pressure when MemAvailable above this
+	MaxTotal        int
+	MaxOrchestrator int
+	MaxWorker       int // workers + side + review + background
+	PressureTotal   int
+	PressureOrch    int
+	PressureWorker  int
+	EnterAvailableB uint64 // refuse/admit pressure when MemAvailable below this
+	ExitAvailableB  uint64 // leave pressure when MemAvailable above this
 }
 
 // DefaultCaps targets ~32 GiB desktops: a few warm stacks plus Electron/Chrome.
@@ -101,6 +101,9 @@ type Budget struct {
 	// queue is fair-ish: round-robin by project on Drain.
 	queue []QueuedWake
 	rr    int
+	// admitsClosed stops new SoftAdmitWake reservations (update drain). Held
+	// hosts stay charged; new wakes queue instead of starting.
+	admitsClosed bool
 }
 
 // New builds a Budget. alive must not be nil.
@@ -335,6 +338,10 @@ func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) (re
 		return false, nil
 	}
 	wake := QueuedWake{HostID: hostID, ProjectID: projectID, Class: class}
+	if b.admitsClosed {
+		b.enqueueLocked(wake)
+		return false, ErrQueued
+	}
 	if !b.seeded {
 		b.enqueueLocked(wake)
 		return false, ErrQueued
@@ -348,6 +355,21 @@ func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) (re
 	b.held[hostID] = class
 	b.protectReservationLocked(hostID)
 	return true, nil
+}
+
+// SetAdmitsClosed blocks new SoftAdmitWake reservations while an image replace
+// is being prepared. Clearing it resumes normal admission.
+func (b *Budget) SetAdmitsClosed(closed bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.admitsClosed = closed
+}
+
+// AdmitsClosed reports whether update-drain has closed new wake admission.
+func (b *Budget) AdmitsClosed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.admitsClosed
 }
 
 // PressureActive reports whether MemAvailable hysteresis is in the pressure band.

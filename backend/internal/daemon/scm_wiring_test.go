@@ -20,7 +20,7 @@ func TestSCMWiring_MultiProviderSatisfiesScopedIdentityResolver(t *testing.T) {
 	if err != nil {
 		t.Skipf("github provider unavailable (no token): %v", err)
 	}
-	gl, err := newGitLabSCMProvider(testGitLabConfig(), slog.Default())
+	gl, err := newGitLabSCMProvider(testGitLabConfig(), t.TempDir(), slog.Default())
 	if err != nil {
 		t.Skipf("gitlab provider unavailable (no token): %v", err)
 	}
@@ -43,7 +43,7 @@ func TestSCMWiring_MultiProviderSatisfiesScopedIdentityResolver(t *testing.T) {
 // newMultiSCMProvider helper (used outside the observer) also returns a value
 // that satisfies ScopedIdentityResolver.
 func TestSCMWiring_NewMultiSCMProviderReturnsScopedResolver(t *testing.T) {
-	multi := newMultiSCMProvider(testGitLabConfig(), slog.Default())
+	multi := newMultiSCMProvider(testGitLabConfig(), t.TempDir(), slog.Default())
 	if multi == nil {
 		t.Skip("no SCM provider available (missing tokens)")
 	}
@@ -58,7 +58,7 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 	if err != nil {
 		t.Skipf("github provider unavailable: %v", err)
 	}
-	gl, err := newGitLabSCMProvider(testGitLabConfig(), slog.Default())
+	gl, err := newGitLabSCMProvider(testGitLabConfig(), t.TempDir(), slog.Default())
 	if err != nil {
 		t.Skipf("gitlab provider unavailable: %v", err)
 	}

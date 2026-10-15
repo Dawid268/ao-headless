@@ -30,6 +30,11 @@ services:
       - ao_data:/ao-data
     networks:
       - traefik-public
+    # Drop privilege escalation. cap_drop ALL is omitted: git/gh need a normal
+    # user capability set inside the image.
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 120s
     healthcheck:
       test:
         [
@@ -68,10 +73,11 @@ services:
         order: stop-first
         failure_action: pause
       restart_policy:
+        # on-failure only. Do not use any: a clean drain exit must not loop.
+        # max_attempts omitted so a crash overnight keeps recovering.
         condition: on-failure
-        delay: 15s
-        max_attempts: 3
-        window: 180s
+        delay: 20s
+        window: 120s
       labels:
         - traefik.enable=true
         - traefik.docker.network=traefik-public

@@ -3543,6 +3543,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/gitlab-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report whether a GitLab token is stored on this host */
+        get: operations["getGitLabTokenStatus"];
+        /** Store a GitLab personal access token on this host */
+        put: operations["putGitLabToken"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/install/{target}": {
         parameters: {
             query?: never;
@@ -3572,6 +3590,24 @@ export interface paths {
         get: operations["getSystemRequirements"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/update-drain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report whether new chat admits are paused for an image replace */
+        get: operations["getUpdateDrain"];
+        put?: never;
+        /** Pause new chat admits so this host can be replaced without stopping projects */
+        post: operations["beginUpdateDrain"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4278,6 +4314,9 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersGitLabTokenStatusResponse: {
+            configured: boolean;
+        };
         ControllersKeepAwakeStatus: {
             active: boolean;
             enabled: boolean;
@@ -4286,6 +4325,9 @@ export interface components {
         };
         ControllersKillSessionRequest: {
             deleteArtifacts?: boolean;
+        };
+        ControllersPutGitLabTokenRequest: {
+            token: string;
         };
         ControllersRemoteHostAccountTokenResponse: {
             hostId: string;
@@ -6496,6 +6538,10 @@ export interface components {
             content: string;
             expectedFileFingerprint: string;
             path: string;
+        };
+        UpdatedrainStatus: {
+            draining: boolean;
+            safeToReplace: boolean;
         };
         UsageHarnessResponse: {
             harness: string;
@@ -20085,6 +20131,86 @@ export interface operations {
             };
         };
     };
+    getGitLabTokenStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersGitLabTokenStatusResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putGitLabToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersPutGitLabTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersGitLabTokenStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getSystemInstallStatus: {
         parameters: {
             query?: never;
@@ -20201,6 +20327,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemRequirementsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getUpdateDrain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdatedrainStatus"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    beginUpdateDrain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdatedrainStatus"];
                 };
             };
             /** @description Internal Server Error */

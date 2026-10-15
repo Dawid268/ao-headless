@@ -11,6 +11,31 @@ import (
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
+// FileTokenSource reads a token file on every call so a desktop save takes
+// effect without restarting the daemon. Empty or missing files yield ErrNoToken.
+type FileTokenSource struct {
+	Path string
+}
+
+// Token reads and trims the token file.
+func (s FileTokenSource) Token(context.Context) (string, error) {
+	if strings.TrimSpace(s.Path) == "" {
+		return "", ErrNoToken
+	}
+	raw, err := os.ReadFile(s.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", ErrNoToken
+		}
+		return "", err
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", ErrNoToken
+	}
+	return token, nil
+}
+
 // TokenSource yields a GitLab private token on demand. Production wires this
 // to EnvTokenSource or GLabTokenSource; tests inject StaticTokenSource.
 type TokenSource interface {

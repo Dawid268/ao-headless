@@ -54,15 +54,19 @@ On the VM, get the current address and password (keep it private):
 
 If the HTTPS address is not ready, rerun the command after a few seconds.
 
-For private Git clones, pushes, or PRs, authenticate on the VM as the AO user:
+For private Git clones, pushes, or PRs, sign in **on that host** from the desktop:
+**Settings → Remote hosts → Sign in to GitHub** while the host is Live. That
+starts `gh auth login` on the host. Pairing does not copy GitHub credentials
+from your laptop. A GitLab personal access token can be stored on the host
+with `PUT /api/v1/system/gitlab-token`; it is not the laptop's token.
+
+SSH still works if you prefer a shell on the VM:
 
 ```bash
 gh auth login
 gh auth setup-git
 gh auth status
 ```
-
-Pairing does not copy GitHub credentials from your laptop.
 
 1. On one laptop, turn on **Developer mode** in **Settings → General** and sign
    in to AO Cloud. In **Settings → Remote hosts**, add the VM's name, exact

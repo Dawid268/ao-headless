@@ -37,8 +37,16 @@ mkdir -p \
 "$AO_BIN" daemon &
 daemon_pid=$!
 
+# Set while SIGTERM/drain is in progress so the liveness loop does not also
+# exit and race a deliberate image replace.
+draining=0
+
 cleanup() {
-	kill "$daemon_pid" 2>/dev/null || true
+	draining=1
+	# Pause new admits, then ask the daemon to shut down. Fall back to kill if
+	# the CLI cannot reach loopback.
+	"$AO_BIN" update-drain || true
+	"$AO_BIN" stop --timeout 90s || kill "$daemon_pid" 2>/dev/null || true
 	wait "$daemon_pid" 2>/dev/null || true
 }
 trap cleanup INT TERM
@@ -67,4 +75,50 @@ case "$status" in
 esac
 "$AO_BIN" remote-host status || true
 
+# Honest restart: Swarm only replaces a task when this process exits non-zero.
+# A hung daemon (PID alive, loopback /healthz dead) is killed and we exit 1.
+# The update-drain flag suppresses this during an intentional image replace.
+# Traefik and /readyz are not consulted.
+dead_flag="${AO_DATA_DIR}/healthz-dead"
+rm -f "$dead_flag"
+(
+	fails=0
+	sleep 60
+	while kill -0 "$daemon_pid" 2>/dev/null; do
+		if [ -f "${AO_DATA_DIR}/update-drain" ]; then
+			fails=0
+			sleep 20
+			continue
+		fi
+		if curl -fsS --max-time 5 "http://127.0.0.1:${PRIMARY_PORT}/healthz" >/dev/null 2>&1; then
+			fails=0
+			status="$("$AO_BIN" remote-host status 2>/dev/null || true)"
+			case "$status" in
+			*Remote\ host\ disabled*)
+				"$AO_BIN" remote-host enable || true
+				;;
+			esac
+		else
+			fails=$((fails + 1))
+			if [ "$fails" -ge 3 ]; then
+				echo "loopback healthz failed ${fails} times; exiting so Swarm can restart" >&2
+				touch "$dead_flag"
+				kill "$daemon_pid" 2>/dev/null || true
+				exit 0
+			fi
+		fi
+		sleep 20
+	done
+) &
+watch_pid=$!
+
 wait "$daemon_pid"
+daemon_status=$?
+draining=1
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+if [ -f "$dead_flag" ]; then
+	rm -f "$dead_flag"
+	exit 1
+fi
+exit "$daemon_status"

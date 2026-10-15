@@ -10836,6 +10836,61 @@ paths:
       summary: Open a trusted terminal running the GitHub CLI login flow
       tags:
       - system
+  /api/v1/system/gitlab-token:
+    get:
+      operationId: getGitLabTokenStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersGitLabTokenStatusResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report whether a GitLab token is stored on this host
+      tags:
+      - system
+    put:
+      operationId: putGitLabToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPutGitLabTokenRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersGitLabTokenStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Store a GitLab personal access token on this host
+      tags:
+      - system
   /api/v1/system/install/{target}:
     get:
       operationId: getSystemInstallStatus
@@ -10959,6 +11014,50 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
+  /api/v1/system/update-drain:
+    get:
+      operationId: getUpdateDrain
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatedrainStatus'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report whether new chat admits are paused for an image replace
+      tags:
+      - system
+    post:
+      operationId: beginUpdateDrain
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatedrainStatus'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pause new chat admits so this host can be replaced without stopping
+        projects
       tags:
       - system
   /api/v1/task-preparations/{token}:
@@ -12744,6 +12843,13 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersGitLabTokenStatusResponse:
+      properties:
+        configured:
+          type: boolean
+      required:
+      - configured
+      type: object
     ControllersKeepAwakeStatus:
       properties:
         active:
@@ -12764,6 +12870,13 @@ components:
       properties:
         deleteArtifacts:
           type: boolean
+      type: object
+    ControllersPutGitLabTokenRequest:
+      properties:
+        token:
+          type: string
+      required:
+      - token
       type: object
     ControllersRemoteHostAccountTokenResponse:
       properties:
@@ -18529,6 +18642,16 @@ components:
       - path
       - content
       - expectedFileFingerprint
+      type: object
+    UpdatedrainStatus:
+      properties:
+        draining:
+          type: boolean
+        safeToReplace:
+          type: boolean
+      required:
+      - draining
+      - safeToReplace
       type: object
     UsageHarnessResponse:
       properties:
