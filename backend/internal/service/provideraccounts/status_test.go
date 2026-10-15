@@ -55,8 +55,11 @@ func TestUsageIsReadEveryFiveMinutesAndAFailedReadingKeepsTheLastGoodOneForHalfA
 		t.Fatalf("usage=%+v reads=%v", usage, h.helper.usageFor)
 	}
 	h.advance(5*time.Minute - time.Second)
-	if _, reads := read(); reads != 1 {
-		t.Fatalf("a reading was asked for again within five minutes: %d reads", reads)
+	// Within five minutes the provider is not asked again, but what the helper counted is read each time.
+	counted := []domain.ProviderAccountRequests{{Succeeded: 9}}
+	h.helper.usage.Requests = counted
+	if usage, reads := read(); reads != 1 || usage == nil || usage.Plan != "Pro" || !reflect.DeepEqual(usage.Requests, counted) {
+		t.Fatalf("a reading was asked for again within five minutes, or the helper's counts are old: usage=%+v reads=%d", usage, reads)
 	}
 	h.advance(time.Second)
 	if _, reads := read(); reads != 2 {
@@ -346,7 +349,7 @@ func TestModelsComeFromTheDefaultOrTheScopedAccount(t *testing.T) {
 	}
 	again := signIn("codex", "alice@example.com")
 	again.CredentialRef, again.AuthID = "again.json", "again-auth"
-	if _, err = h.svc.record(h.ctx, "codex", again, alice); err != nil || fingerprint(ports.ModelCatalogAccountScope(alice)) == first {
+	if _, err = h.svc.record(h.ctx, "codex", again, alice, ""); err != nil || fingerprint(ports.ModelCatalogAccountScope(alice)) == first {
 		t.Fatalf("another sign-in kept the fingerprint (err=%v)", err)
 	}
 	if len(h.helper.modelsFor) != reads {

@@ -33,7 +33,7 @@ func TestAHelperRefusalWritesNothingAndIsNotRetriedLater(t *testing.T) {
 			"assign":   func() error { return h.svc.AssignAccount(h.ctx, "s2", domain.HarnessCodex, alice) },
 			"forget":   func() error { return h.svc.ForgetAccount(h.ctx, "s1") },
 			"sign in": func() error {
-				_, err := h.svc.record(h.ctx, "codex", signIn("codex", "carol@example.com"), "")
+				_, err := h.svc.record(h.ctx, "codex", signIn("codex", "carol@example.com"), "", "")
 				return err
 			},
 		} {
@@ -285,9 +285,9 @@ func TestRandomAccountJourneysKeepTheHelperAndTheStoreInStep(t *testing.T) {
 			var err error
 			switch rng.Intn(8) {
 			case 0:
-				_, err = h.svc.record(h.ctx, provider, signIn(provider, fmt.Sprintf("user%d@example.com", rng.Intn(4))), "")
+				_, err = h.svc.record(h.ctx, provider, signIn(provider, fmt.Sprintf("user%d@example.com", rng.Intn(4))), "", "")
 			case 1:
-				_, err = h.svc.record(h.ctx, provider, signIn(provider, fmt.Sprintf("again%d@example.com", step)), pick(accounts))
+				_, err = h.svc.record(h.ctx, provider, signIn(provider, fmt.Sprintf("again%d@example.com", step)), pick(accounts), "")
 			case 2:
 				id, _, _ := h.svc.ResolveAccount(h.ctx, agents[provider], "")
 				err = h.svc.AssignAccount(h.ctx, domain.SessionID(fmt.Sprintf("s%d", step)), agents[provider], id)
@@ -362,7 +362,7 @@ func TestSyncRemovesALeftoverAPIKeyOnlyWhenNothingCouldBeHoldingIt(t *testing.T)
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := setup(t)
-			if _, err := h.svc.record(h.ctx, "codex", key("mine"), ""); err != nil {
+			if _, err := h.svc.record(h.ctx, "codex", key("mine"), "", ""); err != nil {
 				t.Fatal(err)
 			}
 			if tc.signIn {

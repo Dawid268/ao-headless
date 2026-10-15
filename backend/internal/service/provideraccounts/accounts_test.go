@@ -43,16 +43,16 @@ func TestOneIdentityIsOneEntryAndSigningInAgainKeepsItsSessions(t *testing.T) {
 	h.assign("s1", domain.HarnessClaudeCode, alice)
 	other := signIn("claude", "ALICE@example.com")
 	other.CredentialRef, other.AuthID = "second.json", "second-auth"
-	if _, err := h.svc.record(h.ctx, "claude", other, ""); !errors.Is(err, ports.ErrProviderAccountConflict) {
+	if _, err := h.svc.record(h.ctx, "claude", other, "", ""); !errors.Is(err, ports.ErrProviderAccountConflict) {
 		t.Fatalf("a second entry for one identity: %v", err)
 	}
-	if id, err := h.svc.record(h.ctx, "claude", signIn("claude", "alice@example.com"), ""); err != nil || id != alice {
+	if id, err := h.svc.record(h.ctx, "claude", signIn("claude", "alice@example.com"), "", ""); err != nil || id != alice {
 		t.Fatalf("recording the same sign-in again: id=%q err=%v", id, err)
 	}
 	if err := h.act(alice, "sign-out"); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := h.svc.record(h.ctx, "claude", other, alice); err != nil || id != alice {
+	if id, err := h.svc.record(h.ctx, "claude", other, alice, ""); err != nil || id != alice {
 		t.Fatalf("signing in to the entry again: id=%q err=%v", id, err)
 	}
 	h.route("s1", alice)
@@ -71,7 +71,7 @@ func TestOneIdentityIsOneEntryAndSigningInAgainKeepsItsSessions(t *testing.T) {
 		"no identity":      {ports.VerifiedProviderLogin{Provider: "claude", CredentialRef: "x.json", AuthID: "x"}, "", ports.ErrProviderAccountIncompatible},
 	} {
 		before := h.store.get()
-		if _, err := h.svc.record(h.ctx, "claude", attempt.login, attempt.relogin); !errors.Is(err, attempt.want) {
+		if _, err := h.svc.record(h.ctx, "claude", attempt.login, attempt.relogin, ""); !errors.Is(err, attempt.want) {
 			t.Fatalf("%s: err=%v", name, err)
 		}
 		if !reflect.DeepEqual(before, h.store.get()) {
@@ -98,7 +98,7 @@ func TestASignInReplacesASavedOneOnlyWhenItIsDeadOrEnding(t *testing.T) {
 			fresh := signIn("codex", "alice@example.com")
 			fresh.CredentialRef, fresh.AuthID = "fresh.json", "fresh-auth"
 			_, err := h.svc.StartLogin(h.ctx, ports.ProviderLoginRequest{Provider: "codex", AccountID: alice})
-			id, recordErr := h.svc.record(h.ctx, "codex", fresh, alice)
+			id, recordErr := h.svc.record(h.ctx, "codex", fresh, alice, "")
 			if reason == "healthy" {
 				if !errors.Is(err, ports.ErrProviderAccountConflict) || !errors.Is(recordErr, ports.ErrProviderAccountConflict) || len(h.helper.started) != 0 {
 					t.Fatalf("a working sign-in was replaced: start=%v record=%v", err, recordErr)
@@ -476,7 +476,7 @@ func TestConcurrentSignInsOfOneIdentityLeaveOneEntry(t *testing.T) {
 	var wg sync.WaitGroup
 	ids := make([]string, 8)
 	for i := range ids {
-		wg.Go(func() { ids[i], _ = h.svc.record(h.ctx, "codex", signIn("codex", "alice@example.com"), "") })
+		wg.Go(func() { ids[i], _ = h.svc.record(h.ctx, "codex", signIn("codex", "alice@example.com"), "", "") })
 	}
 	wg.Wait()
 	state := h.store.get()

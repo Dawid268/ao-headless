@@ -2,6 +2,7 @@ package provideraccounts
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -10,7 +11,7 @@ import (
 
 func (h *harness) addKey(provider, label, index string) string {
 	h.t.Helper()
-	id, err := h.svc.record(h.ctx, provider, ports.VerifiedProviderLogin{Provider: provider, Email: label, Kind: "api_key", CredentialRef: "config-index:" + provider + ":" + index, AuthID: provider + "-key-" + index}, "")
+	id, err := h.svc.record(h.ctx, provider, ports.VerifiedProviderLogin{Provider: provider, Email: label, Kind: "api_key", CredentialRef: "config-index:" + provider + ":" + index, AuthID: provider + "-key-" + index}, "", "")
 	if err != nil {
 		h.t.Fatalf("add key %s: %v", label, err)
 	}
@@ -26,18 +27,27 @@ func TestACodexSessionMovesOnlyBetweenAccountsOfOneKind(t *testing.T) {
 	plus := h.signIn("codex", "plus@example.com")
 	key := h.addKey("codex", "Work key", "0")
 	limit := func(from, to string) error { return h.settings(from, ports.ProviderAccountAction{OnLimit: &to}) }
-	if err := limit(pro, key); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
+	if err := limit(pro, key); !errors.Is(err, ports.ErrProviderAccountKindMismatch) {
 		t.Fatalf("a plan's sessions set to move to a key on its limit: err=%v", err)
 	}
-	if err := limit(key, pro); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
+	if err := limit(key, pro); !errors.Is(err, ports.ErrProviderAccountKindMismatch) {
 		t.Fatalf("a key's sessions set to move to a plan on its limit: err=%v", err)
 	}
 	if err := limit(pro, plus); err != nil {
 		t.Fatalf("plan to plan: %v", err)
 	}
 	h.assign("s1", domain.HarnessCodex, pro)
-	if err := h.act(key, "assign-session", "s1"); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
+	// The refusal names the kind, not the provider, which matches.
+	if err := h.act(key, "assign-session", "s1"); !errors.Is(err, ports.ErrProviderAccountKindMismatch) || !strings.Contains(err.Error(), "API keys") {
 		t.Fatalf("a plan session moved onto a key: err=%v", err)
+	}
+	// Another provider's account is refused as such.
+	claude := h.signIn("claude", "claude@example.com")
+	if err := h.act(claude, "assign-session", "s1"); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
+		t.Fatalf("a Codex session moved onto a Claude account: err=%v", err)
+	}
+	if err := limit(pro, claude); !errors.Is(err, ports.ErrProviderAccountIncompatible) {
+		t.Fatalf("a plan's sessions set to move to a Claude account on its limit: err=%v", err)
 	}
 	h.route("s1", pro)
 	if err := h.act(plus, "assign-session", "s1"); err != nil {
@@ -71,7 +81,7 @@ func TestACodexSessionMovesOnlyBetweenAccountsOfOneKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.route("s3", key)
-	if _, err := h.svc.record(h.ctx, "codex", ports.VerifiedProviderLogin{Provider: "codex", Email: "Second key", Kind: "api_key", CredentialRef: "config-index:codex:2", AuthID: "codex-key-2"}, key); err != nil {
+	if _, err := h.svc.record(h.ctx, "codex", ports.VerifiedProviderLogin{Provider: "codex", Email: "Second key", Kind: "api_key", CredentialRef: "config-index:codex:2", AuthID: "codex-key-2"}, key, ""); err != nil {
 		t.Fatal(err)
 	}
 	h.route("s3", key)

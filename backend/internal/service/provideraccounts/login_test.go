@@ -3,6 +3,7 @@ package provideraccounts
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,38 @@ func TestLoginRecordsTheVerifiedAccountExactlyOnce(t *testing.T) {
 	}
 	if next := h.start("codex", ""); next.ID == login.ID {
 		t.Fatal("a finished attempt was handed out again")
+	}
+}
+
+// The label typed for a key names its account, as a rename would keep it; without one the account gets a generated name.
+func TestAKeysLabelNamesItsAccount(t *testing.T) {
+	h := setup(t)
+	add := func(label, n string) string {
+		t.Helper()
+		login, err := h.svc.StartLogin(h.ctx, ports.ProviderLoginRequest{Provider: "codex", Mode: "api_key", APIKey: "sk-" + n, BaseURL: "https://api.example", Label: label})
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.helper.complete(login.ID, ports.VerifiedProviderLogin{Provider: "codex", Email: "key " + n, Kind: "api_key", CredentialRef: "config-index:codex:" + n, AuthID: "codex-key-" + n})
+		done, err := h.status(login.ID)
+		if err != nil || done.Status != "complete" {
+			t.Fatalf("login=%+v err=%v", done, err)
+		}
+		state := h.store.get()
+		return state.Accounts[index(state, done.AccountID)].DisplayName
+	}
+	if name := add("  Work   key ", "0"); name != "Work key" {
+		t.Fatalf("named %q", name)
+	}
+	if name := add("Work key", "1"); name != "Work key 2" {
+		t.Fatalf("a second key of that label is named %q", name)
+	}
+	if name := add("", "2"); !strings.HasSuffix(name, " Codex") {
+		t.Fatalf("a key without a label is named %q", name)
+	}
+	started := len(h.helper.started)
+	if _, err := h.svc.StartLogin(h.ctx, ports.ProviderLoginRequest{Provider: "codex", Mode: "api_key", APIKey: "sk-3", BaseURL: "https://api.example", Label: strings.Repeat("k", 81)}); !errors.Is(err, ports.ErrProviderAccountNameInvalid) || len(h.helper.started) != started {
+		t.Fatalf("a label too long for a name: err=%v", err)
 	}
 }
 

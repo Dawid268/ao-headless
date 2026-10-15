@@ -49,6 +49,7 @@ type Service struct {
 type attempt struct {
 	mu       sync.Mutex
 	login    ports.ProviderLogin
+	name     string // asked for with the sign-in; a new account takes it
 	deadline time.Time
 }
 
@@ -286,6 +287,14 @@ func (s *Service) pick(ctx context.Context, provider, chosen string) (domain.Pro
 	return st.Accounts[index(st, id)], nil
 }
 
+// incompatible says why the sessions of account from cannot go to account to.
+func incompatible(st domain.ProviderAccountState, from, to string) error {
+	if i, j := index(st, from), index(st, to); from != to && i >= 0 && j >= 0 && st.Accounts[i].Provider == st.Accounts[j].Provider {
+		return ports.ErrProviderAccountKindMismatch
+	}
+	return ports.ErrProviderAccountIncompatible
+}
+
 // movable reports whether a session on account from can continue on account to.
 // Codex sends its earlier encrypted reasoning back on every turn, and a ChatGPT
 // plan cannot read what an API key wrote, or the other way round.
@@ -497,7 +506,7 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 		if i < 0 {
 			return "", ports.ErrProviderAccountUnknown
 		}
-		a, name := &st.Accounts[i], strings.Join(strings.Fields(in.DisplayName), " ")
+		a, name := &st.Accounts[i], accountName(in.DisplayName)
 		switch in.Action {
 		case "rename":
 			if n := utf8.RuneCountInString(name); n == 0 || n > 80 {
@@ -515,7 +524,7 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 			}
 			if in.OnLimit != nil {
 				if *in.OnLimit != "" && (*in.OnLimit == id || !movable(*st, id, *in.OnLimit)) {
-					return "", ports.ErrProviderAccountIncompatible
+					return "", incompatible(*st, id, *in.OnLimit)
 				}
 				a.OnLimit = *in.OnLimit
 			}
@@ -528,8 +537,11 @@ func (s *Service) Act(ctx context.Context, id string, in ports.ProviderAccountAc
 			if j >= 0 && st.Routes[j].Provider != a.Provider {
 				j = routed(*st, otherRoute(domain.SessionID(in.SessionID), a.Provider))
 			}
-			if j < 0 || !takes(*st, st.Routes[j], id) {
+			if j < 0 {
 				return "", ports.ErrProviderAccountIncompatible
+			}
+			if !takes(*st, st.Routes[j], id) { // the route is of this account's provider: only a Codex kind differs
+				return "", ports.ErrProviderAccountKindMismatch
 			}
 			st.Routes[j].AccountID, st.Routes[j].Kind = id, ""
 			return "", s.usable(ctx, *st, id, st.Routes[j].Provider)
@@ -605,7 +617,7 @@ func (s *Service) switchOnLimit(ctx context.Context) error {
 				return "", err
 			}
 			if !movable(*st, from.ID, from.OnLimit) { // a target saved before this rule
-				return "", ports.ErrProviderAccountIncompatible
+				return "", ports.ErrProviderAccountKindMismatch
 			}
 			for i, r := range st.Routes {
 				if r.AccountID == from.ID {
@@ -655,8 +667,8 @@ func (s *Service) helperAction(ctx context.Context, id, action string) (string, 
 	return outcome, err
 }
 
-// record saves a verified sign-in as a new account, or onto the one signing in again.
-func (s *Service) record(ctx context.Context, provider string, v ports.VerifiedProviderLogin, relogin string) (string, error) {
+// record saves a verified sign-in as a new account named name, or onto the one signing in again.
+func (s *Service) record(ctx context.Context, provider string, v ports.VerifiedProviderLogin, relogin, name string) (string, error) {
 	id := relogin
 	err := s.change(ctx, func(st *domain.ProviderAccountState) (drop string, _ error) {
 		i := slices.IndexFunc(st.Accounts, func(a domain.ProviderAccount) bool {
@@ -668,7 +680,7 @@ func (s *Service) record(ctx context.Context, provider string, v ports.VerifiedP
 		case i < 0 && relogin != "":
 			return "", ports.ErrProviderAccountUnknown
 		case i < 0:
-			id = s.add(st, v)
+			id = s.add(st, v, name)
 		case st.Accounts[i].Provider != provider || !strings.EqualFold(st.Accounts[i].Email, v.Email):
 			return "", ports.ErrProviderAccountIncompatible
 		case st.Accounts[i].CredentialRef == v.CredentialRef && st.Accounts[i].AuthID == v.AuthID:
@@ -688,10 +700,13 @@ func (s *Service) record(ctx context.Context, provider string, v ports.VerifiedP
 	return id, err
 }
 
-// add appends a new account under a generated name no other account has.
-func (s *Service) add(st *domain.ProviderAccountState, v ports.VerifiedProviderLogin) string {
+// accountName is a name as an account keeps it: its words, one space apart.
+func accountName(name string) string { return strings.Join(strings.Fields(name), " ") }
+
+// add appends a new account under name, or a generated one, numbered where another account has it.
+func (s *Service) add(st *domain.ProviderAccountState, v ports.VerifiedProviderLogin, name string) string {
 	a := domain.ProviderAccount{ID: s.newID(), Provider: v.Provider, Email: v.Email, Kind: v.Kind, CredentialRef: v.CredentialRef, AuthID: v.AuthID}
-	base := domain.GeneratedProviderAccountName(a.Provider, a.ID)
+	base := cmp.Or(name, domain.GeneratedProviderAccountName(a.Provider, a.ID))
 	a.DisplayName = base
 	for n := 2; slices.ContainsFunc(st.Accounts, func(o domain.ProviderAccount) bool { return o.DisplayName == a.DisplayName }); n++ {
 		a.DisplayName = fmt.Sprintf("%s %d", base, n)
@@ -732,7 +747,22 @@ func (s *Service) usages(ctx context.Context, accounts []domain.ProviderAccount)
 		s.memo.Lock()
 		fresh := s.now().Before(s.stamps["usage "+a.AuthID])
 		s.memo.Unlock()
-		if fresh || !a.SignedIn() {
+		if !a.SignedIn() {
+			continue
+		}
+		if fresh {
+			// The provider is asked at most every five minutes; what the helper counted itself is read each time.
+			wg.Go(func() {
+				ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+				if own, err := s.helper.AccountState(ctx, a); err == nil {
+					s.memo.Lock()
+					defer s.memo.Unlock()
+					last := s.usage[a.AuthID]
+					last.Activity, last.Health, last.Requests = own.Activity, own.Health, own.Requests
+					s.usage[a.AuthID] = last
+				}
+			})
 			continue
 		}
 		wg.Go(func() {
@@ -898,6 +928,8 @@ func (s *Service) StartLogin(ctx context.Context, in ports.ProviderLoginRequest)
 		return login, apierr.Invalid("API_KEY_FIELDS_REQUIRED", "API key and base URL are required", nil)
 	case !slices.Contains([]string{"browser", "device", "import", "api_key"}, in.Mode):
 		return login, apierr.Invalid("LOGIN_MODE_UNSUPPORTED", "Choose browser, device, API key, or JSON import", nil)
+	case utf8.RuneCountInString(accountName(in.Label)) > 80:
+		return login, ports.ErrProviderAccountNameInvalid
 	}
 	s.starting.Lock()
 	defer s.starting.Unlock()
@@ -926,7 +958,7 @@ func (s *Service) StartLogin(ctx context.Context, in ports.ProviderLoginRequest)
 	if in.Mode == "device" {
 		ttl = 15 * time.Minute // as long as the provider keeps the code alive
 	}
-	at := &attempt{login: login, deadline: s.now().Add(ttl)}
+	at := &attempt{login: login, name: accountName(in.Label), deadline: s.now().Add(ttl)}
 	s.memo.Lock()
 	defer s.memo.Unlock()
 	s.logins[id], s.logins["@"+in.Provider] = at, at
@@ -955,7 +987,7 @@ func (s *Service) LoginStatus(ctx context.Context, id string) (ports.ProviderLog
 		if v, err = s.helper.LoginResult(ctx, at.login.ID); err != nil {
 			break
 		}
-		accountID, failure := s.record(ctx, at.login.Provider, v, at.login.AccountID)
+		accountID, failure := s.record(ctx, at.login.Provider, v, at.login.AccountID, at.name)
 		if err = failure; err == nil {
 			at.login.Status, at.login.AccountID = status, accountID
 		} else if errors.Is(err, ports.ErrProviderAccountIncompatible) || errors.Is(err, ports.ErrProviderAccountConflict) || errors.Is(err, ports.ErrProviderAccountUnknown) {

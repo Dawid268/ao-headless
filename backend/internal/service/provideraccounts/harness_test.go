@@ -139,6 +139,16 @@ func (f *fakeHelper) AccountUsage(_ context.Context, a domain.ProviderAccount) (
 	return f.usage, f.usageErr
 }
 
+// AccountState gives what AccountUsage would, as the service takes only the helper's own counts from it.
+func (f *fakeHelper) AccountState(_ context.Context, a domain.ProviderAccount) (domain.ProviderAccountUsage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if usage, ok := f.usageBy[a.AuthID]; ok {
+		return usage, nil
+	}
+	return f.usage, nil
+}
+
 func (f *fakeHelper) AccountAction(_ context.Context, a domain.ProviderAccount, action, requestID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -249,7 +259,7 @@ func signIn(provider, email string) ports.VerifiedProviderLogin {
 // signIn records a verified sign-in as a new account and returns the account.
 func (h *harness) signIn(provider, email string) string {
 	h.t.Helper()
-	id, err := h.svc.record(h.ctx, provider, signIn(provider, email), "")
+	id, err := h.svc.record(h.ctx, provider, signIn(provider, email), "", "")
 	if err != nil {
 		h.t.Fatalf("sign in %s: %v", email, err)
 	}

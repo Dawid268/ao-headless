@@ -15,7 +15,7 @@ func TestTheDeviceMarkFollowsTheComputersLoginByEmail(t *testing.T) {
 	h.helper.devices["codex"] = "bob@example.com"
 	alice := h.signIn("codex", "alice@example.com")
 	bob := h.signIn("codex", "Bob@Example.com")
-	key, err := h.svc.record(h.ctx, "codex", ports.VerifiedProviderLogin{Provider: "codex", Email: "Work key", Kind: "api_key", CredentialRef: "config-index:codex:0", AuthID: "key-auth"}, "")
+	key, err := h.svc.record(h.ctx, "codex", ports.VerifiedProviderLogin{Provider: "codex", Email: "Work key", Kind: "api_key", CredentialRef: "config-index:codex:0", AuthID: "key-auth"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

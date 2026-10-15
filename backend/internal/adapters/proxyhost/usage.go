@@ -114,6 +114,12 @@ func after(value string, now time.Time) bool {
 	return err == nil && parsed.After(now)
 }
 
+// AccountState asks the helper alone: what it counted for the account, its pause and its sign-in times.
+func (c *Client) AccountState(ctx context.Context, a domain.ProviderAccount) (usage domain.ProviderAccountUsage, err error) {
+	err = c.call(ctx, http.MethodPost, "/ao/account-state", on(a), &usage)
+	return usage, err
+}
+
 // AccountUsage reads the helper's facts and, for a subscription, the provider's limits.
 func (c *Client) AccountUsage(ctx context.Context, a domain.ProviderAccount) (domain.ProviderAccountUsage, error) {
 	usage := domain.ProviderAccountUsage{Status: "unavailable"}

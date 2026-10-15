@@ -14,6 +14,7 @@ var (
 	ErrProviderAccountConflict          = apierr.Conflict("PROVIDER_ACCOUNT_CONFLICT", "account operation conflicts with current state", nil)
 	ErrProviderAccountBusy              = apierr.Conflict("PROVIDER_ACCOUNT_IN_USE", "this account is still in use; try again when its sessions have finished", nil)
 	ErrProviderAccountIncompatible      = apierr.Invalid("PROVIDER_ACCOUNT_INCOMPATIBLE", "account does not match the session provider", nil)
+	ErrProviderAccountKindMismatch      = apierr.Invalid("PROVIDER_ACCOUNT_INCOMPATIBLE", "a Codex session moves only between ChatGPT sign-ins, or only between API keys", nil)
 	ErrProviderAccountNameInvalid       = apierr.Invalid("PROVIDER_ACCOUNT_NAME_INVALID", "account name must be between 1 and 80 characters", nil)
 	ErrProviderAccountActionUnavailable = apierr.Conflict("PROVIDER_ACCOUNT_ACTION_UNAVAILABLE", "this account action is unavailable", nil)
 	ErrProviderPrimaryRequired          = apierr.Conflict("PROVIDER_PRIMARY_REQUIRED", "choose a replacement primary account first", nil)
@@ -99,6 +100,9 @@ type AccountHelper interface {
 	Credentials(context.Context) ([]ProviderCredential, error)
 	DeleteCredential(ctx context.Context, credentialRef string) error
 	AccountUsage(context.Context, domain.ProviderAccount) (domain.ProviderAccountUsage, error)
+	// AccountState is the part of an account's usage the helper knows itself,
+	// such as what it counted, without asking the provider.
+	AccountState(context.Context, domain.ProviderAccount) (domain.ProviderAccountUsage, error)
 	// AccountAction runs one of the AccountAction* actions. requestID makes a
 	// repeated reset spend nothing twice; the result is a domain.ProviderReset*
 	// outcome for a reset and empty otherwise.
