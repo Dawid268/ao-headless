@@ -20,6 +20,9 @@ COPY --from=build /out/ao /usr/local/bin/ao
 COPY deploy/headless/entrypoint.sh /usr/local/bin/ao-headless-entrypoint.sh
 RUN chmod +x /usr/local/bin/ao-headless-entrypoint.sh
 ENV AO_DATA_DIR=/ao-data
+# Harness CLIs + logins must not live on the ephemeral container rootfs.
+# entrypoint re-exports HOME/XDG_* under /ao-data/home on every start.
+ENV HOME=/ao-data/home
 ENV AO_CHAT_HOST_MAX_TOTAL=6
 ENV AO_CHAT_HOST_MAX_ORCH=2
 ENV AO_CHAT_HOST_MAX_WORKER=4

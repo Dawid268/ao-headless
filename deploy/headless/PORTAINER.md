@@ -7,6 +7,25 @@ stacks, private GHCR pull credentials already configured.
 **Do not** point Traefik or a public port at AO’s primary daemon (`127.0.0.1:3001`).
 Only the **authenticated remote listener (3011)** is routed.
 
+## Hard rule: durable volume
+
+Harness CLI installs (Codex, Cursor, …) and logins must survive image updates.
+The stack mounts named volume `ao_headless_data` at `/ao-data`. The entrypoint
+sets `HOME=/ao-data/home` so installer homes land on that volume.
+
+1. **Never** tick Portainer “Remove volumes” when deleting or updating the stack.
+2. Image rebuild / `:latest` re-pull only replaces the container — not this volume.
+3. If you previously used the Swarm-default name `ao-headless_ao_data` and still
+   have DB/logins there, migrate once before the new stack name takes effect:
+   ```bash
+   # scale service to 0 / stop stack first, then:
+   docker volume create ao_headless_data
+   docker run --rm \
+     -v ao-headless_ao_data:/from \
+     -v ao_headless_data:/to \
+     debian:bookworm-slim bash -c 'cp -a /from/. /to/'
+   ```
+
 ## Why not `http://57.129.41.248/`?
 
 On this edge, ports **80/443 are Traefik**. Routers are selected by

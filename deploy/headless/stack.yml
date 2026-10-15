@@ -4,8 +4,9 @@
 #   AO_DOMAIN=ao.subscribeit.pl
 #   TZ=Europe/Warsaw
 #
-# Image is rolling :latest from Actions (Dawid268/ao-headless). No AO_IMAGE env.
-# After each CI publish: Update stack with **re-pull image** (or enable GitOps).
+# Image is rolling :latest from Actions. Durable state (DB + harness installs /
+# logins) lives on the external volume ao_headless_data — NEVER tick "Remove
+# volumes" when deleting/updating this stack.
 #
 # Swarm/Portainer only supports plain ${VAR} substitution — no ${VAR:-default}.
 # Do NOT publish host ports 80/443. Network traefik-public must already exist.
@@ -17,6 +18,8 @@ services:
     environment:
       TZ: ${TZ}
       AO_DATA_DIR: /ao-data
+      # HOME and XDG_* are set in entrypoint onto /ao-data/home so Codex/Cursor
+      # CLI installs survive image rebuilds.
       AO_CHAT_HOST_MAX_TOTAL: "3"
       AO_CHAT_HOST_MAX_ORCH: "1"
       AO_CHAT_HOST_MAX_WORKER: "2"
@@ -86,7 +89,10 @@ services:
         - monitoring.io/health-path=/api/v1/identity
 
 volumes:
+  # Fixed absolute name (not stack-prefixed) so editor redeploys keep the same
+  # disk. Never tick Portainer "Remove volumes".
   ao_data:
+    name: ao_headless_data
 
 networks:
   traefik-public:
