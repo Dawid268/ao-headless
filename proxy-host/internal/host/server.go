@@ -94,8 +94,13 @@ func (b Boundary) Middleware(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	route, release, ok := b.Routes.Acquire(cmp.Or(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "), c.GetHeader("X-Api-Key")))
+	ticket := cmp.Or(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "), c.GetHeader("X-Api-Key"))
+	route, release, ok := b.Routes.Acquire(ticket)
 	if !ok {
+		if waiting, known := b.Routes.Waiting(ticket); known {
+			refuseWaiting(c, waiting)
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "Session account unavailable. Please sign in.", "type": "authentication_error"}})
 		return
 	}
@@ -115,6 +120,20 @@ func (b Boundary) Middleware(c *gin.Context) {
 		return
 	}
 	c.Next()
+}
+
+// waitingMessage is what the agent of a session whose account is signed out or removed shows its user.
+// It has no "<", ">" or "&": JSON escapes them, and Codex shows the body as it came.
+const waitingMessage = "This session has no signed-in account in AO. Sign in under Settings → Accounts in AO, then send your message again."
+
+// refuseWaiting answers such a session in its provider's error format, with a status its CLI shows at once:
+// Claude Code retries a 401 ten times over minutes but not a 403, and Codex retries a 401 or a 403 but not a 400.
+func refuseWaiting(c *gin.Context, provider string) {
+	if provider == "claude" {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"type": "error", "error": gin.H{"type": "permission_error", "message": waitingMessage}})
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": waitingMessage, "type": "invalid_request_error", "code": "account_signed_out"}})
 }
 
 // call adapts an /ao handler: it reads the JSON body of a write, and answers with the returned status and JSON body.

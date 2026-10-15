@@ -83,6 +83,14 @@ func (r *Routes) Acquire(ticket string) (Route, func(), bool) {
 	}, true
 }
 
+// Waiting names the provider of a known session whose account is signed out or removed.
+func (r *Routes) Waiting(ticket string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	route, ok := r.byTicket[TicketHash(ticket)]
+	return route.Provider, ok && ticket != "" && route.AuthID == ""
+}
+
 // Busy reports whether any request holds an account.
 func (r *Routes) Busy() bool {
 	r.mu.Lock()

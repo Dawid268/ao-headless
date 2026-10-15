@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -256,7 +257,7 @@ func TestSwitchingASessionsAccountKeepsItsTicket(t *testing.T) {
 	steps := []struct {
 		account string
 		status  int
-	}{{"claude-a", http.StatusOK}, {"claude-b", http.StatusOK}, {"", http.StatusUnauthorized}, {"claude-a", http.StatusOK}}
+	}{{"claude-a", http.StatusOK}, {"claude-b", http.StatusOK}, {"", http.StatusForbidden}, {"claude-a", http.StatusOK}}
 	for _, step := range steps {
 		if err := f.routes.Apply([]Route{route("claude-ticket-a", "claude", step.account)}, []string{"claude-a", "claude-b"}); err != nil {
 			t.Fatal(err)
@@ -267,6 +268,37 @@ func TestSwitchingASessionsAccountKeepsItsTicket(t *testing.T) {
 	}
 	if want := []string{"claude-a plain", "claude-b plain", "claude-a plain"}; !reflect.DeepEqual(anthropic.ran(), want) {
 		t.Fatalf("ran on %v, want %v", anthropic.ran(), want)
+	}
+}
+
+// A session whose account is signed out or removed hears so once, in its provider's own format and with
+// a status its CLI does not retry; a ticket the helper does not know is still unauthorized.
+func TestASessionWaitingForASignInIsToldWhyAtOnce(t *testing.T) {
+	f := twoProviders(t, &fakeProvider{}, &fakeProvider{})
+	if err := f.routes.Apply([]Route{route("claude-ticket-a", "claude", ""), route("codex-ticket-a", "codex", "")}, []string{"claude-a", "codex-a"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sent := range []struct {
+		path, ticket string
+		status       int
+		kind         string
+	}{
+		{"/v1/messages", "claude-ticket-a", http.StatusForbidden, "permission_error"},
+		{"/v1/responses", "codex-ticket-a", http.StatusBadRequest, "invalid_request_error"},
+		{"/v1/messages", "unknown-ticket", http.StatusUnauthorized, "authentication_error"},
+	} {
+		response := f.model(sent.path, sent.ticket, false)
+		var answer struct {
+			Type  string
+			Error struct{ Type, Message, Code string }
+		}
+		_ = json.Unmarshal(response.Body.Bytes(), &answer)
+		if response.Code != sent.status || answer.Error.Type != sent.kind {
+			t.Fatalf("%s: status=%d body=%s", sent.ticket, response.Code, response.Body.String())
+		}
+		if waiting := sent.status != http.StatusUnauthorized; waiting && (!strings.Contains(answer.Error.Message, "Settings → Accounts") || strings.Contains(response.Body.String(), `\u00`)) {
+			t.Fatalf("%s says %s", sent.ticket, response.Body.String())
+		}
 	}
 }
 
