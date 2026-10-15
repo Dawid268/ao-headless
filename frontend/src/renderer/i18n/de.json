@@ -173,6 +173,7 @@
 	"browser.find.previous": "Vorheriger Treffer",
 	"browser.annotate": "Seite annotieren",
 	"browser.annotateAgentTab": "Annotieren geht in Ihren Tabs, nicht in denen des Agenten",
+	"browser.agentPageOnHost": "Diese Seite läuft auf dem Remote-Host",
 	"browser.annotationActive": "Wird annotiert",
 	"browser.annotationCount_one": "{{count}} Annotation",
 	"browser.annotationCount_other": "{{count}} Annotationen",

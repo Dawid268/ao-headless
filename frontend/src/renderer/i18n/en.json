@@ -135,6 +135,7 @@
 	"browser.find.previous": "Previous match",
 	"browser.annotate": "Annotate page",
 	"browser.annotateAgentTab": "Annotate works in your tabs, not the agent's",
+	"browser.agentPageOnHost": "This page runs on the remote host",
 	"browser.annotationActive": "Annotating",
 	"browser.annotationCount_one": "{{count}} annotation",
 	"browser.annotationCount_other": "{{count}} annotations",

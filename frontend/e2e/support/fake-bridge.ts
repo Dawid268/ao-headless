@@ -343,6 +343,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					previewUrl: async (_hostId: string, _sessionId: string, sourceUrl: string) => sourceUrl,
 					resolvePreviewUrl: async (_hostId: string, _sessionId: string, viewedUrl: string) => viewedUrl,
 					agentBrowserUrl: async () => "",
+					externalUrl: async (_hostId: string, url: string) => url,
 				},
 				cloud: {
 					getSession: async () => null,
@@ -952,6 +953,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					previewUrl: async (_hostId: string, _sessionId: string, sourceUrl: string) => sourceUrl,
 					resolvePreviewUrl: async (_hostId: string, _sessionId: string, viewedUrl: string) => viewedUrl,
 					agentBrowserUrl: async () => "",
+					externalUrl: async (_hostId: string, url: string) => url,
 				},
 				cloud: {
 					getSession: async () => null,

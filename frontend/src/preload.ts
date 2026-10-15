@@ -724,6 +724,9 @@ const api = {
 		// The host's agent browser for the session's agent tab ("" when none).
 		agentBrowserUrl: (hostId: string, sessionId: string) =>
 			ipcRenderer.invoke("remotes:agentBrowserUrl", hostId, sessionId) as Promise<string>,
+		// A preview's address for a browser outside AO; any other URL unchanged.
+		externalUrl: (hostId: string, url: string) =>
+			ipcRenderer.invoke("remotes:externalUrl", hostId, url) as Promise<string>,
 	},
 	cloud: {
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,

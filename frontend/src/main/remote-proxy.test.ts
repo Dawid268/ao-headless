@@ -328,6 +328,36 @@ describe("startRemoteProxy", () => {
 		expect(seen).toHaveLength(count);
 	});
 
+	it("opens an app preview outside AO over plain http, but never the agent viewer", async () => {
+		const { port, seen } = await startUpstream(() => ({ status: 200, body: "ok" }));
+		proxy = await startRemoteProxy({ label: "workbox", url: `http://127.0.0.1:${port}`, password: "pw" });
+		const plainPort = Number(new URL(proxy.base).port);
+		const get = (url: string, to = Number(new URL(url).port)) => new Promise<number>((resolve, reject) => {
+			const target = new URL(url);
+			const req = httpRequest({ hostname: "127.0.0.1", port: to, path: target.pathname + target.search, headers: { Host: target.host } }, (res) => {
+				res.resume();
+				res.on("end", () => resolve(res.statusCode ?? 0));
+			});
+			req.on("error", reject);
+			req.end();
+		});
+		const preview = new URL(proxy.previewUrl("ao-1", "http://localhost:5173/"));
+		// Same host, path, query and hash, on the plain server: no certificate for the system browser to refuse.
+		const external = proxy.externalUrl(`${preview.origin}/dash?x=1#top`);
+		expect(external).toBe(`http://${preview.hostname}:${plainPort}/dash?x=1#top`);
+		expect(proxy.externalUrl(external)).toBe(external);
+		expect(await get(external)).toBe(200);
+		expect(seen.at(-1)).toMatchObject({ url: "/api/v1/sessions/ao-1/preview/app/dash?x=1", auth: "Bearer pw" });
+		expect(proxy.externalUrl("https://github.com/x")).toBe("https://github.com/x");
+		// The agent viewer is the Browser panel's alone, whatever port its Host names.
+		const agent = await proxy.agentBrowserUrl("ao-1");
+		expect(proxy.externalUrl(agent)).toBe(agent);
+		const count = seen.length;
+		expect(await get(agent, plainPort)).toBe(404);
+		expect(await get(`http://${new URL(agent).hostname}:${plainPort}/v/cdp`)).toBe(404);
+		expect(seen).toHaveLength(count);
+	});
+
 	it("gives no agent browser when the host has none", async () => {
 		const { port } = await startUpstream(() => ({ status: 404, body: '{"error":"not found"}' }));
 		proxy = await startRemoteProxy({ label: "workbox", url: `http://127.0.0.1:${port}`, password: "pw" });

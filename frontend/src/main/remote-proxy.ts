@@ -44,6 +44,8 @@ export type ActiveProxy = {
 	agentBrowserUrl: (sessionId: string) => Promise<string>;
 	/** Whether a URL is one of this host's agent-browser viewers (see agentBrowserUrl). */
 	isAgentBrowserUrl: (url: string) => boolean;
+	/** A preview's address for a browser outside AO; any other URL unchanged. */
+	externalUrl: (url: string) => string;
 	close: () => Promise<void>;
 };
 
@@ -183,7 +185,7 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 	// lands on whatever else that vhost serves at /api/v1.
 	const prefix = upstream.pathname.replace(/\/+$/, "");
 	const server: Server = createServer();
-	const previewHosts = new Map<string, PreviewTarget>();
+	const previewHosts = new Map<string, PreviewTarget>(); // by hostname: see previewPath
 	const artifactHosts = new Map<string, { host: string; sourceHref: string }>();
 	const previewSessions = new Map<string, { host: string; sourceUrl: string; sourceHref: string; url: string }>();
 	const tunnels = new Set<() => void>();
@@ -198,10 +200,14 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		return prefix + (slash === -1 ? "/" : rawUrl.slice(slash));
 	};
 
-	const previewPath = (rawHost: string | undefined, rawUrl: string | undefined, method: string | undefined): { path: string; kind: PreviewTarget["kind"] } | null => {
+	const previewPath = (rawHost: string | undefined, rawUrl: string | undefined, method: string | undefined, scheme: "http" | "https"): { path: string; kind: PreviewTarget["kind"] } | null => {
 		if (!rawHost || !rawUrl?.startsWith("/")) return null;
-		const target = previewHosts.get(rawHost.toLowerCase());
-		if (!target) return null;
+		// By hostname, whatever the port: the plain server answers a preview too,
+		// at the address a browser outside AO opens (externalUrl).
+		const target = previewHosts.get(rawHost.toLowerCase().replace(/:\d+$/, ""));
+		// Except the agent viewer, which drives the host's browser: it is the
+		// Browser panel's alone, over HTTPS.
+		if (!target || (scheme === "http" && target.kind === "agent")) return null;
 		if (target.kind !== "app" && target.kind !== "agent" && method !== "GET" && method !== "HEAD") return null;
 		// The target is a path: "//x" names no host, and must not throw as one.
 		const parsed = new URL(`http://localhost${rawUrl}`);
@@ -625,7 +631,7 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 	const handleRequest = async (req: ProxyRequest, res: ProxyResponse, scheme: "http" | "https"): Promise<void> => {
 		// HTTP/2 carries the host in :authority rather than a Host header.
 		const host = req.headers.host ?? (req as Http2ServerRequest).authority;
-		const preview = previewPath(host, req.url, req.method);
+		const preview = previewPath(host, req.url, req.method, scheme);
 		const path = preview?.path ?? stripToken(req.url);
 		if (path === null) {
 			res.writeHead(404, {
@@ -677,7 +683,7 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 	};
 
 	const handleUpgrade = (req: IncomingMessage, socket: Socket, head: Buffer, scheme: "http" | "https"): void => {
-		const preview = previewPath(req.headers.host, req.url, req.method);
+		const preview = previewPath(req.headers.host, req.url, req.method, scheme);
 		const path = preview?.kind === "app" || preview?.kind === "agent" ? preview.path : stripToken(req.url);
 		if (path === null) {
 			socket.destroy();
@@ -778,9 +784,10 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 				// preview. Keep one independent, read-only origin per session.
 				let artifact = artifactHosts.get(sessionId);
 				if (!artifact) {
-					artifact = { host: `ao-preview-${randomBytes(16).toString("hex")}.localhost:${port}`, sourceHref: parsed.href };
+					const host = `ao-preview-${randomBytes(16).toString("hex")}.localhost`;
+					artifact = { host: `${host}:${port}`, sourceHref: parsed.href };
 					artifactHosts.set(sessionId, artifact);
-					previewHosts.set(artifact.host, { sessionId, kind: "artifact", entry: "" });
+					previewHosts.set(host, { sessionId, kind: "artifact", entry: "" });
 				}
 				return `http://${artifact.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
 			}
@@ -801,9 +808,9 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			else if (previewHost.endsWith(".localhost")) throw new Error("preview does not belong to this session");
 			else return sourceUrl;
 			// Per kind too: a static preview (HTML an agent wrote) must not share the app's storage.
-			const host = `ao-preview-${originMac(`${kind}\n${sessionId}`).toString("hex", 0, 16)}.localhost:${securePort}`;
+			const host = `ao-preview-${originMac(`${kind}\n${sessionId}`).toString("hex", 0, 16)}.localhost`;
 			previewHosts.set(host, { sessionId, kind, entry: parsed.pathname });
-			const url = `https://${host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+			const url = `https://${host}:${securePort}${parsed.pathname}${parsed.search}${parsed.hash}`;
 			previewSessions.set(sessionId, { host, sourceUrl, sourceHref: parsed.href, url });
 			return url;
 		},
@@ -837,18 +844,28 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			await probe?.body?.cancel().catch(() => undefined);
 			if (!probe?.ok) return "";
 			// Its own origin per session: never the app's, so the two keep apart.
-			const host = `ao-preview-${originMac(`agent\n${sessionId}`).toString("hex", 0, 16)}.localhost:${securePort}`;
+			const host = `ao-preview-${originMac(`agent\n${sessionId}`).toString("hex", 0, 16)}.localhost`;
 			previewHosts.set(host, { sessionId, kind: "agent", entry: "" });
 			// embed: the Browser panel's own toolbar drives it (remote-tab.ts).
-			return `https://${host}/v/cdp?embed=1&sq=70&ss=1`;
+			return `https://${host}:${securePort}/v/cdp?embed=1&sq=70&ss=1`;
 		},
 		isAgentBrowserUrl: (url) => {
 			try {
 				const parsed = new URL(url);
-				return parsed.protocol === "https:" && parsed.pathname === "/v/cdp" && previewHosts.get(parsed.host.toLowerCase())?.kind === "agent";
+				return parsed.protocol === "https:" && parsed.port === String(securePort) && parsed.pathname === "/v/cdp" && previewHosts.get(parsed.hostname)?.kind === "agent";
 			} catch {
 				return false;
 			}
+		},
+		externalUrl: (url) => {
+			let parsed: URL;
+			try { parsed = new URL(url); } catch { return url; }
+			const target = previewHosts.get(parsed.hostname);
+			if (!target || target.kind === "agent") return url;
+			// The plain server: the system browser does not trust the preview certificate.
+			parsed.protocol = "http:";
+			parsed.port = String(port);
+			return parsed.href;
 		},
 		close: () =>
 			new Promise((resolve) => {

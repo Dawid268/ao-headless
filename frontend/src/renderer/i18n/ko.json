@@ -173,6 +173,7 @@
 	"browser.find.previous": "이전 일치 항목",
 	"browser.annotate": "페이지에 주석 달기",
 	"browser.annotateAgentTab": "주석은 에이전트 탭이 아닌 내 탭에서만 사용할 수 있습니다",
+	"browser.agentPageOnHost": "이 페이지는 원격 호스트에서 실행됩니다",
 	"browser.annotationActive": "주석 작성 중",
 	"browser.annotationCount_one": "주석 {{count}}개",
 	"browser.annotationCount_other": "주석 {{count}}개",

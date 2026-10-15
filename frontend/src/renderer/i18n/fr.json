@@ -173,6 +173,7 @@
 	"browser.find.previous": "Résultat précédent",
 	"browser.annotate": "Annoter la page",
 	"browser.annotateAgentTab": "L’annotation fonctionne dans vos onglets, pas dans ceux de l’agent",
+	"browser.agentPageOnHost": "Cette page s’exécute sur l’hôte distant",
 	"browser.annotationActive": "Annotation en cours",
 	"browser.annotationCount_one": "{{count}} annotation",
 	"browser.annotationCount_other": "{{count}} annotations",

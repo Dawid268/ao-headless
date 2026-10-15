@@ -221,4 +221,10 @@ export function registerRemotesIpc(
 		if (await accountID() !== account) throw new Error("Account changed during remote connection.");
 		return registry.resolvePreviewUrl(hostId, sessionId, viewedUrl);
 	});
+	ipcMain.handle("remotes:externalUrl", async (_event, hostId: string, url: string) => {
+		const account = await accountID();
+		refuseSelf(hostId, await localIdentity());
+		if (await accountID() !== account) throw new Error("Account changed during remote connection.");
+		return registry.externalUrl(hostId, url);
+	});
 }
