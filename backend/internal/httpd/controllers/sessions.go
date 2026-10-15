@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -555,55 +554,56 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 
 // previewGzipWriters reuses compressors: each holds about 800 KB of state, and
 // a preview's first load compresses hundreds of modules at once.
-// ponytail: compressors in use are uncapped; each is held until its client has
-// the whole body, ~200 MB for one connection's 250 streams on a slow link. If
-// hosts feel it, compress each module whole before sending it: a cap that sends
-// the rest as is would bite on exactly those links.
 var previewGzipWriters = sync.Pool{New: func() any {
 	gz, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
 	return gz
 }}
 
+// previewGzipMaxBytes bounds the bodies compressPreviewResponse compresses: it
+// holds each whole while compressing it, and its gzip until the client has it.
+// At 4 MiB that gzip is about 1 MB, one compressor's worth, and the bound still
+// takes in a Vite dev server's pre-bundled dependencies (react-dom and
+// lucide-react are about 1 MB). A larger body passes as sent.
+const previewGzipMaxBytes = 4 << 20
+
 // compressPreviewResponse gzips a dev server's uncompressed code and text
 // before it crosses the network to the desktop. Dev servers rarely compress,
 // and their unminified modules shrink several times. Only a body whose length
-// the dev server announced, 1 KiB or more, is compressed: a streamed body (SSR,
-// RSC payloads, event and token streams) announces none, and gzip would hold
-// its writes back until it had 64 KiB or the end. A range is left as sent:
-// its offsets count the uncompressed bytes.
+// the dev server announced, 1 KiB to 4 MiB, is compressed, and it is
+// compressed whole before any of it is sent: a compressor is busy only while
+// it runs, never while a slow link drains its output. A streamed body (SSR,
+// RSC payloads, event and token streams) announces no length and must reach
+// the client as written. A range is left as sent: its offsets count the
+// uncompressed bytes.
 func compressPreviewResponse(res *http.Response) {
 	contentType := strings.ToLower(res.Header.Get("Content-Type"))
 	compressible := strings.HasPrefix(contentType, "text/") || strings.Contains(contentType, "javascript") ||
 		strings.Contains(contentType, "json") || strings.Contains(contentType, "svg") || strings.Contains(contentType, "wasm")
 	// A 204 or 304 has ContentLength 0; a HEAD carries the GET's length.
-	if !compressible || strings.Contains(contentType, "event-stream") || res.ContentLength < 1024 || res.StatusCode == http.StatusPartialContent ||
-		res.Header.Get("Content-Encoding") != "" || res.Request == nil || res.Request.Method == http.MethodHead ||
-		res.Request.Header.Get("Range") != "" || !acceptsGzip(res.Request.Header.Get("Accept-Encoding")) {
+	if !compressible || strings.Contains(contentType, "event-stream") || res.ContentLength < 1024 || res.ContentLength > previewGzipMaxBytes ||
+		res.StatusCode == http.StatusPartialContent || res.Header.Get("Content-Encoding") != "" || res.Request == nil ||
+		res.Request.Method == http.MethodHead || res.Request.Header.Get("Range") != "" || !acceptsGzip(res.Request.Header.Get("Accept-Encoding")) {
 		return
 	}
-	body := res.Body
-	pr, pw := io.Pipe()
-	go func() {
-		gz, _ := previewGzipWriters.Get().(*gzip.Writer) // New makes nothing else
-		// gzip writes a few hundred bytes at a time, and ReverseProxy flushes
-		// every write of a body it has no length for: send 32 KiB pieces.
-		buffered := bufio.NewWriterSize(pw, 32<<10)
-		gz.Reset(buffered)
-		_, err := io.Copy(gz, body)
-		// Only a whole body gets gzip's footer: a cut one must fail as a cut
-		// stream, not decode as a shorter module.
-		if err == nil {
-			if err = gz.Close(); err == nil {
-				err = buffered.Flush()
-			}
-		}
-		previewGzipWriters.Put(gz)
-		_ = body.Close()
-		_ = pw.CloseWithError(err)
-	}()
-	res.Body = pr
-	res.ContentLength = -1
-	res.Header.Del("Content-Length")
+	body := make([]byte, res.ContentLength)
+	_, err := io.ReadFull(res.Body, body)
+	_ = res.Body.Close()
+	if err != nil {
+		// The dev server cut the body short, and nothing is sent yet: abort,
+		// so the browser cannot take a shorter module for the whole one.
+		panic(http.ErrAbortHandler)
+	}
+	var compressed bytes.Buffer
+	gz, _ := previewGzipWriters.Get().(*gzip.Writer) // New makes nothing else
+	gz.Reset(&compressed)
+	_, _ = gz.Write(body) // into memory: cannot fail
+	_ = gz.Close()
+	gz.Reset(nil) // the pool keeps the compressor, not the response it wrote
+	previewGzipWriters.Put(gz)
+	// With a length, ReverseProxy copies in 32 KiB writes and never flushes.
+	res.Body = io.NopCloser(&compressed)
+	res.ContentLength = int64(compressed.Len())
+	res.Header.Set("Content-Length", strconv.Itoa(compressed.Len()))
 	res.Header.Set("Content-Encoding", "gzip")
 	res.Header.Add("Vary", "Accept-Encoding")
 	// The bytes differ now, so a strong validator would be a lie.

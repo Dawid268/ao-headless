@@ -3112,11 +3112,17 @@ func TestSessionsAPI_ManagedPreviewReceivesProjectEnv(t *testing.T) {
 
 func TestSessionsAPI_ManagedPreviewCompressesUncompressedText(t *testing.T) {
 	module := strings.Repeat("export const value = 'remote preview module';\n", 100)
+	oversized := strings.Repeat("a", 4<<20+1) // one byte over the 4 MiB cap
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/streamed.js": // no announced length: chunked, possibly a stream
 			w.Header().Set("Content-Type", "text/javascript")
 			_, _ = io.WriteString(w, module)
+			return
+		case "/oversized.js":
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Content-Length", strconv.Itoa(len(oversized)))
+			_, _ = io.WriteString(w, oversized)
 			return
 		case "/ranged.js":
 			w.Header().Set("Content-Type", "text/javascript")
@@ -3176,6 +3182,11 @@ func TestSessionsAPI_ManagedPreviewCompressesUncompressedText(t *testing.T) {
 		if response.Header.Get("Content-Encoding") != "gzip" || response.Header.Get("ETag") != `W/"v1"` {
 			t.Fatalf("module headers = %v, want gzip with a weak ETag", response.Header)
 		}
+		// Its headers carry the gzip's own length: the module was compressed
+		// whole before the client read a byte, so no compressor waits on it.
+		if response.ContentLength != int64(len(body)) {
+			t.Fatalf("gzip module announced %d bytes and sent %d", response.ContentLength, len(body))
+		}
 		reader, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
@@ -3195,6 +3206,7 @@ func TestSessionsAPI_ManagedPreviewCompressesUncompressedText(t *testing.T) {
 		{"/ranged.js", "gzip", "bytes=0-2047", ""},
 		{"/streamed.js", "gzip", "", ""},
 		{"/tiny.js", "gzip", "", ""},
+		{"/oversized.js", "gzip", "", ""},
 		{"/events", "gzip", "", ""},
 		{"/encoded.js", "gzip", "", "br"},
 		{"/image.png", "gzip", "", ""},
@@ -3263,7 +3275,7 @@ func TestSessionsAPI_ManagedPreviewStreamsWithoutHoldingBack(t *testing.T) {
 func TestSessionsAPI_ManagedPreviewAbortsACutModule(t *testing.T) {
 	random := make([]byte, 256<<10)
 	_, _ = rand.Read(random)
-	module := hex.EncodeToString(random) // barely compressible, so compressed bytes leave before the cut
+	module := hex.EncodeToString(random) // 512 KiB announced, half of it sent
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript")
 		w.Header().Set("Content-Length", strconv.Itoa(len(module)))
