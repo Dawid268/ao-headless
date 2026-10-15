@@ -12,7 +12,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION", "AO_HARNESS_UPDATE_CHECKS", "AO_HARNESS_UPDATE_INTERVAL"} {
 		t.Setenv(k, "")
 	}
 
@@ -571,6 +571,43 @@ func TestLoadAgentBrowserToken(t *testing.T) {
 		t.Setenv("AO_AGENT_BROWSER_TOKEN", token)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AO_AGENT_BROWSER_TOKEN") {
 			t.Errorf("token %q: got %v, want an error naming AO_AGENT_BROWSER_TOKEN", token, err)
+		}
+	}
+}
+
+func TestLoadHarnessUpdateChecksToggle(t *testing.T) {
+	t.Setenv("AO_HARNESS_UPDATE_CHECKS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HarnessUpdateChecks {
+		t.Fatal("harness update checks are off by default")
+	}
+	t.Setenv("AO_HARNESS_UPDATE_CHECKS", "off")
+	if cfg, err = Load(); err != nil || cfg.HarnessUpdateChecks {
+		t.Fatalf("AO_HARNESS_UPDATE_CHECKS=off: checks=%t err=%v", cfg.HarnessUpdateChecks, err)
+	}
+	t.Setenv("AO_HARNESS_UPDATE_CHECKS", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid AO_HARNESS_UPDATE_CHECKS value was accepted")
+	}
+}
+
+func TestLoadHarnessUpdateInterval(t *testing.T) {
+	t.Setenv("AO_HARNESS_UPDATE_INTERVAL", "")
+	cfg, err := Load()
+	if err != nil || cfg.HarnessUpdateInterval != DefaultHarnessUpdateInterval {
+		t.Fatalf("default interval = %s, err=%v; want %s", cfg.HarnessUpdateInterval, err, DefaultHarnessUpdateInterval)
+	}
+	t.Setenv("AO_HARNESS_UPDATE_INTERVAL", "12h")
+	if cfg, err = Load(); err != nil || cfg.HarnessUpdateInterval != 12*time.Hour {
+		t.Fatalf("12h interval = %s, err=%v", cfg.HarnessUpdateInterval, err)
+	}
+	for _, raw := range []string{"30m", "0s", "-1h", "soon"} {
+		t.Setenv("AO_HARNESS_UPDATE_INTERVAL", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("AO_HARNESS_UPDATE_INTERVAL=%q was accepted", raw)
 		}
 	}
 }
