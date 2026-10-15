@@ -121,6 +121,8 @@ type offeringResponse struct {
 	BillingMode     string   `json:"billingMode"`
 	Kind            string   `json:"kind"`
 	Features        []string `json:"features"`
+	// Artifacts reports whether cloud sessions keep artifact files.
+	Artifacts bool `json:"artifacts"`
 }
 
 func (s *Server) offeringForOrg(ctx context.Context, principal domain.Principal, orgID string) (offeringResponse, error) {
@@ -135,7 +137,8 @@ func (s *Server) offeringForOrg(ctx context.Context, principal domain.Principal,
 		BillingMode:     mode,
 		Kind:            domain.OfferingKind(providers),
 		// Plan feature flags arrive with the paywall; none are gated yet.
-		Features: []string{},
+		Features:  []string{},
+		Artifacts: s.artifactsEnabled(),
 	}, nil
 }
 

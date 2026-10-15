@@ -26,6 +26,9 @@ var (
 	ErrTerminalSessionExited = errors.New("terminal session exited")
 	ErrTransportExpired      = errors.New("worker request expired")
 	ErrWorkspaceReadOnly     = errors.New("workspace is read-only")
+	// ErrArtifactLimit means a commit would exceed a session's artifact file
+	// count or total size.
+	ErrArtifactLimit = errors.New("session artifact limit exceeded")
 )
 
 type Store struct {
