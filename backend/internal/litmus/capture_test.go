@@ -158,7 +158,7 @@ func TestCheckEndCapturesOpaqueThemePairAndRestoresSystem(t *testing.T) {
 			is(t, "")(svc.CheckAdd(ctx, "s1", "accounts", "limits readable", ""))
 			is(t, "")(svc.CheckStart(ctx, "s1", "c1"))
 			is(t, "")(svc.Drive(ctx, "s1", "click", []string{"e1"}))
-			check, err := svc.CheckEnd(context.Background(), "s1", "c1", CheckPass, "readable", false)
+			check, err := svc.CheckEnd(context.Background(), "s1", "c1", CheckPass, "readable", false, 0)
 			is(t, "")(nil, err)
 			receipt := check.Receipts[len(check.Receipts)-1]
 			want := 2
@@ -430,7 +430,7 @@ func TestCheckEndSkipsThemePairForSkippedAndUnlaunchedLeg(t *testing.T) {
 				is(t, "")(nil, svc.store.SaveChecks(run.ID, checks))
 				result, wantReceipts = CheckPartial, 1
 			}
-			check, err := svc.CheckEnd(ctx, "s1", "c1", result, "screen no longer reachable", false)
+			check, err := svc.CheckEnd(ctx, "s1", "c1", result, "screen no longer reachable", false, 0)
 			is(t, "")(nil, err)
 			if len(check.Receipts) != wantReceipts || len(f.calls) != 0 {
 				t.Fatalf("skipped check captured evidence: %+v, %v", check, f.calls)

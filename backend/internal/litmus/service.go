@@ -227,11 +227,16 @@ func (s *Service) CheckStart(_ context.Context, sessionID, id string) (Check, er
 }
 
 // CheckEnd closes a running check with its outcome (pass, fail, partial, absent or skipped).
-func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result CheckState, note string, sameFault bool) (Check, error) {
+func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result CheckState, note string, sameFault bool, shot int) (Check, error) {
 	if !slices.Contains(outcomes, result) {
 		return Check{}, invalid("TESTING_CHECK_RESULT_INVALID", "result must be pass, fail, partial, absent or skipped")
 	}
-	finish := func(c *Check) error {
+	finish := func(c *Check, all []Check) error {
+		if shot != 0 {
+			if _, ok := headAfterShot(all, shot); !ok {
+				return invalid("TESTING_ARGS_INVALID", "--shot must name a head receipt with a saved after-shot in this run")
+			}
+		}
 		if sameFault && (c.onLeg() != "base" || (result != CheckFail && result != CheckPartial)) {
 			return invalid("TESTING_CHECK_SAME_FAULT", "--same-fault requires a base result of fail or partial")
 		}
@@ -249,6 +254,7 @@ func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result Che
 			return invalid("TESTING_CHECK_SAME_FAULT", "--same-fault requires a base result of fail or partial")
 		}
 		c.State, c.Note, c.SameFault = state, stored, sameFault
+		c.Shot = shot
 		return nil
 	}
 	// Validate before capture, then revalidate when persisting. Never hold the
@@ -268,7 +274,7 @@ func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result Che
 		return Check{}, apierr.NotFound("TESTING_CHECK_NOT_FOUND", "no check "+strconv.Quote(id))
 	}
 	c := checks[i]
-	if err := finish(&c); err != nil {
+	if err := finish(&c, checks); err != nil {
 		return Check{}, err
 	}
 	var shots []ThemeShot
@@ -290,13 +296,13 @@ func (s *Service) CheckEnd(ctx context.Context, sessionID, id string, result Che
 			return Check{}, apierr.NotFound("TESTING_CHECK_NOT_FOUND", "no check "+strconv.Quote(id))
 		}
 		c = current[j]
-		if err := finish(&c); err != nil {
+		if err := finish(&c, current); err != nil {
 			return Check{}, err
 		}
 		shots, themeNote = s.themePair(ctx, e, c.ID)
 	}
-	return s.updateCheck(sessionID, id, func(c *Check, _ []Check) error {
-		if err := finish(c); err != nil {
+	return s.updateCheck(sessionID, id, func(c *Check, all []Check) error {
+		if err := finish(c, all); err != nil {
 			return err
 		}
 		if len(shots) > 0 || themeNote != "" {

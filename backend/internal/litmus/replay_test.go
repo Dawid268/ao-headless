@@ -99,7 +99,7 @@ func TestReplayMatchesFreshRoleNameAndStopsAtMissing(t *testing.T) {
 	if err != nil || len(checks) != 2 || len(checks[1].Receipts) != 2 || checks[1].Receipts[1].Action != "observe" || checks[1].Receipts[1].AfterPath == "" || checks[1].Receipts[1].Reason == "" {
 		t.Fatalf("missing replay observation = %#v, err %v", checks, err)
 	}
-	if _, err := svc.CheckEnd(context.Background(), "s1", "c2", CheckAbsent, "not present on base", false); err != nil {
+	if _, err := svc.CheckEnd(context.Background(), "s1", "c2", CheckAbsent, "not present on base", false, 0); err != nil {
 		t.Fatalf("missing replay could not end base absent: %v", err)
 	}
 }

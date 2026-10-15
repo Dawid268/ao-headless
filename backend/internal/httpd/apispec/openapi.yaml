@@ -17134,6 +17134,8 @@ components:
           type: array
         sameFault:
           type: boolean
+        shot:
+          type: integer
         state:
           type: string
       required:
@@ -17450,6 +17452,10 @@ components:
           description: the calling session; start, post and prune refuse it when it
             is a Litmus tester's own session.
           type: string
+        shot:
+          description: 'check end only: head receipt number whose after-shot shows
+            the failure.'
+          type: integer
         skipBase:
           description: 'submit only: why the base was not run; lets a submit through
             while a prepared base is unlaunched.'

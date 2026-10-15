@@ -15,7 +15,7 @@ The loop:
 1. `ao testing intake <pr-url>`, then read `context-pack.md`: the PR text, the diff by area and suggested checks.
 2. Decide what to check. Start with the PR's headline claim, in the author's words. Verify a broken claim or new failure first; record a proved failure even when main cannot be compared. Then check likely nearby breakage. Plan pairs: at most 4 for a PR over 30 files, 6 otherwise (a guide, not a limit). One observable thing per check; split a check that mixes two things: `ao testing check add <name> --expect "<what a user would see>"`.
 3. `ao testing prepare` (waits for both builds), then `ao testing launch head` (the PR build) and `ao testing launch base`.
-4. Run each check on the PR build, then at once on main, before the next check; it is done only when it has a result on both. `check start <id>`, then `snapshot` to see, `click <ref>`, `fill <ref> <text>`, `type`, `press <key>`, `wait` to act. Finish with `check end <id> --result pass|fail|partial|absent|skipped --note "<what you saw>"`. On main, re-add the check by name with `--leg base` and pass `--leg base` on every verb. Use `replay <headCheckId> --leg base` only to redo on main a check already completed step by step on the PR build; a first-time check must be driven one step at a time.
+4. Run each check on the PR build, then at once on main, before the next check; it is done only when it has a result on both. `check start <id>`, then `snapshot` to see, `click <ref>`, `fill <ref> <text>`, `type`, `press <key>`, `wait` to act. Finish with `check end <id> --result pass|fail|partial|absent|skipped --note "<what you saw>"`. If an earlier receipt shows the failure, pass --shot <N>. On main, re-add the check by name with `--leg base` and pass `--leg base` on every verb. Use `replay <headCheckId> --leg base` only to redo on main a check already completed step by step on the PR build; a first-time check must be driven one step at a time.
 5. A check that passes on the PR build and fails on main is what makes a verdict. If main does not have the feature at all, end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken. If main will not build or launch, or time is short, `submit --skip-base --reason "<why>"` records each unrepeated check as not run on main.
 6. Use spare time to pin down a suspected bug, not to add breadth. Add checks only as pairs, never on the PR build alone.
 7. `ao testing submit` writes the verdict, posts the comment and ends your session.
@@ -36,7 +36,7 @@ For renderer or UI PRs, do the UI checks in the pack's suggested order.
 
 Never run the PR's tests or any package tests; Litmus judges what a user sees. If the PR has nothing to click, add one check, end it `skipped --note "nothing to click; not tested by Litmus"`, and submit.
 
-Notes go to the PR author. Say what you saw in plain words: buttons present, what happened after a click, what was missing. Omit check ids, build names and comparisons; Litmus adds those.
+Notes go to the PR author. Say what you saw in plain words: buttons present, what happened after a click, what was missing. Omit check ids, build names, receipt numbers and comparisons; Litmus adds those.
 
 Results. `pass`: expectation held. `fail`: it did not. `partial`: saw part; say which. `skipped`: could not reach it; say why. A pass or fail needs a receipt.
 

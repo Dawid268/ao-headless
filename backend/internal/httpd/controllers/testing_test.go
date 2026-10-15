@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -151,6 +152,44 @@ func TestTestingAPICheckEndSameFaultAndDuplicate(t *testing.T) {
 		if w.Code != row.code || !strings.Contains(w.Body.String(), row.want) {
 			t.Fatalf("%s = %d %s", row.path, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestTestingAPICheckEndShot(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		shot int
+		leg  string
+		code int
+		want string
+	}{
+		{"unknown", 99, "head", http.StatusBadRequest, "TESTING_ARGS_INVALID"},
+		{"base", 11, "base", http.StatusBadRequest, "TESTING_ARGS_INVALID"},
+		{"valid", 11, "head", http.StatusOK, `"shot":11`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := litmus.NewStore(t.TempDir())
+			run := litmus.Run{ID: "run_ao-1", SessionID: "ao-1", State: litmus.RunRunning, Deadline: time.Now().Add(time.Minute)}
+			if err := store.Save(run); err != nil {
+				t.Fatal(err)
+			}
+			shot := savedTestPNG(t)
+			checks := []litmus.Check{
+				{ID: "c2", Leg: tc.leg, State: litmus.CheckPass, Receipts: []litmus.Receipt{{Seq: 11, Leg: tc.leg, AfterPath: shot}}},
+				{ID: "c9", State: litmus.CheckRunning, Receipts: []litmus.Receipt{{Seq: 42, AfterPath: shot}}},
+			}
+			if err := store.SaveChecks(run.ID, checks); err != nil {
+				t.Fatal(err)
+			}
+			router := httpd.NewRouterWithControl(config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil,
+				httpd.APIDeps{Testing: litmus.New(store, nil)}, httpd.ControlDeps{})
+			w := httptest.NewRecorder()
+			body := fmt.Sprintf(`{"sessionId":"ao-1","result":"fail","shot":%d}`, tc.shot)
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/testing/checks/c9/end", strings.NewReader(body)))
+			if w.Code != tc.code || !strings.Contains(w.Body.String(), tc.want) {
+				t.Fatalf("shot=%d leg=%s: %d %s", tc.shot, tc.leg, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

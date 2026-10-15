@@ -244,12 +244,12 @@ func TestLitmusSkillFrontmatterWordCapAndInstall(t *testing.T) {
 	if fm.Name != LitmusSkillName || strings.TrimSpace(fm.Description) == "" || strings.TrimSpace(fm.Trigger) == "" {
 		t.Fatalf("litmus frontmatter incomplete: %+v", fm)
 	}
-	if n := len(strings.Fields(string(body))); n > 900 {
-		t.Fatalf("litmus SKILL.md is %d words, want at most 900", n)
+	if n := len(strings.Fields(string(body))); n > 920 {
+		t.Fatalf("litmus SKILL.md is %d words, want at most 920", n)
 	}
-	for _, verb := range []string{"intake", "prepare", "launch", "check add", "snapshot", "compare", "replay <headCheckId> --leg base", "submit", "--leg base", "only through `ao testing`", "never push or post to GitHub", "You have 25 minutes", "gate notes",
+	for _, verb := range []string{"intake", "prepare", "launch", "check add", "snapshot", "compare", "replay <headCheckId> --leg base", "--shot <N>", "submit", "--leg base", "only through `ao testing`", "never push or post to GitHub", "You have 25 minutes", "gate notes",
 		"You test one pull request. Litmus builds the PR and its base commit in private app windows. Check the PR's claim and likely nearby breakage.",
-		"Notes go to the PR author. Say what you saw in plain words: buttons present, what happened after a click, what was missing. Omit check ids, build names and comparisons; Litmus adds those.",
+		"Notes go to the PR author. Say what you saw in plain words: buttons present, what happened after a click, what was missing. Omit check ids, build names, receipt numbers and comparisons; Litmus adds those.",
 		"at most 4 for a PR over 30 files, 6 otherwise", "(a guide, not a limit)", "split a check that mixes two things", "it is done only when it has a result on both",
 		"Litmus saves unfinished work at the deadline", "Verify a broken claim or new failure first", "record a proved failure even when main cannot be compared",
 		"end the main side as `absent` with a screenshot of where it would be; `fail` means the feature is there and broken", "--result pass|fail|partial|absent|skipped",

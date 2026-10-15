@@ -21,7 +21,7 @@ type TestingService interface {
 	Status(ctx context.Context, sessionID string) (litmus.RunStatus, error)
 	CheckAdd(ctx context.Context, sessionID, name, expect, leg string) (litmus.Check, error)
 	CheckStart(ctx context.Context, sessionID, id string) (litmus.Check, error)
-	CheckEnd(ctx context.Context, sessionID, id string, result litmus.CheckState, note string, sameFault bool) (litmus.Check, error)
+	CheckEnd(ctx context.Context, sessionID, id string, result litmus.CheckState, note string, sameFault bool, shot int) (litmus.Check, error)
 	Compare(ctx context.Context, sessionID, checkID string) (map[string]any, error)
 	Replay(ctx context.Context, sessionID, checkID, leg string) (map[string]any, error)
 	Submit(ctx context.Context, sessionID, summary, skipBase string) (litmus.Verdict, error)
@@ -111,7 +111,7 @@ func (c *TestingController) Register(r chi.Router) {
 		return s.CheckStart(r.Context(), in.SessionID, chi.URLParam(r, "id"))
 	}))
 	r.Post("/testing/checks/{id}/end", testingPost(func(r *http.Request, in TestingRequest) (litmus.Check, error) {
-		return s.CheckEnd(r.Context(), in.SessionID, chi.URLParam(r, "id"), litmus.CheckState(in.Result), in.Note, in.SameFault)
+		return s.CheckEnd(r.Context(), in.SessionID, chi.URLParam(r, "id"), litmus.CheckState(in.Result), in.Note, in.SameFault, in.Shot)
 	}))
 	r.Post("/testing/checks/{id}/compare", testingPost(func(r *http.Request, in TestingRequest) (map[string]any, error) {
 		return s.Compare(r.Context(), in.SessionID, chi.URLParam(r, "id"))

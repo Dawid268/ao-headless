@@ -91,6 +91,41 @@ func lastAfterShot(c Check, leg string) (Receipt, bool) {
 	return Receipt{}, false
 }
 
+// headAfterShot finds a saved PR after-shot by its run-wide receipt number.
+func headAfterShot(checks []Check, seq int) (Receipt, bool) {
+	if seq > 0 {
+		for _, c := range checks {
+			for _, r := range c.Receipts {
+				if r.Seq == seq && r.onLeg() == "head" && fileExists(r.AfterPath) {
+					return r, true
+				}
+			}
+		}
+	}
+	return Receipt{}, false
+}
+
+// bugImageShot prefers the final receipt's check-end theme shot, without a crop.
+func bugImageShot(c Check, leg string) (r Receipt, theme, ok bool) {
+	for i := len(c.Receipts) - 1; i >= 0; i-- {
+		r = c.Receipts[i]
+		if r.onLeg() != leg {
+			continue
+		}
+		for _, preference := range []string{"light", "dark"} {
+			for _, shot := range r.ThemeShots {
+				if shot.Theme == preference && fileExists(shot.Path) {
+					r.AfterPath, r.Box = shot.Path, nil
+					return r, true, true
+				}
+			}
+		}
+		break
+	}
+	r, ok = lastAfterShot(c, leg)
+	return r, false, ok
+}
+
 func openEvidenceImage(path string) (image.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -172,18 +207,22 @@ func scaleEvidenceImage(src image.Image, w, h int) *image.RGBA {
 }
 
 // makeBugImage writes one 1200x400 comparison image, with main on the left
-// and the PR on the right. A receipt without a usable box keeps its full shot.
-func makeBugImage(b bugComment, out string) error {
-	pr, prOK := lastAfterShot(b.Check, "head")
+// and the PR on the right. Check-end theme shots keep the full frame unless an
+// explicit PR receipt selects a matching region on the base theme shot.
+func makeBugImage(b bugComment, checks []Check, out string) error {
+	pr, _, prOK := bugImageShot(b.Check, "head")
+	if b.Check.Shot > 0 {
+		pr, prOK = headAfterShot(checks, b.Check.Shot)
+	}
 	if !prOK {
 		return errors.New("bug has no PR after-shot")
 	}
-	base, baseOK := Receipt{}, false
+	base, baseTheme, baseOK := Receipt{}, false, false
 	if b.Base != nil {
-		base, baseOK = lastAfterShot(*b.Base, "base")
+		base, baseTheme, baseOK = bugImageShot(*b.Base, "base")
 	}
 	if !baseOK {
-		base, baseOK = lastAfterShot(b.Check, "base")
+		base, baseTheme, baseOK = bugImageShot(b.Check, "base")
 	}
 	if !baseOK {
 		return errors.New("bug has no base after-shot")
@@ -198,6 +237,15 @@ func makeBugImage(b bugComment, out string) error {
 	}
 	lb, lok := receiptCropBox(base)
 	rb, rok := receiptCropBox(pr)
+	if b.Check.Shot > 0 && baseTheme {
+		lb, lok = rb, rok
+		if lb.vw <= 0 {
+			lb.vw = float64(right.Bounds().Dx())
+		}
+		if lb.vh <= 0 {
+			lb.vh = float64(right.Bounds().Dy())
+		}
+	}
 	left = cropEvidenceImage(left, lb, lok)
 	right = cropEvidenceImage(right, rb, rok)
 	canvas := image.NewRGBA(image.Rect(0, 0, 1200, 400))
@@ -429,7 +477,7 @@ func (s *Service) stageEvidence(ctx context.Context, run Run, v Verdict, dir str
 		if fileExists(local) {
 			err = copyFile(local, filepath.Join(dir, file))
 		} else {
-			err = makeBugImage(b, filepath.Join(dir, file))
+			err = makeBugImage(b, v.Checks, filepath.Join(dir, file))
 		}
 		if err != nil {
 			note(err)

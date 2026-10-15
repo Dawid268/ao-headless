@@ -5992,6 +5992,7 @@ export interface components {
             note?: string;
             receipts?: components["schemas"]["TestingReceipt"][];
             sameFault?: boolean;
+            shot?: number;
             state: string;
         };
         TestingElementBox: {
@@ -6135,6 +6136,8 @@ export interface components {
             sameFault?: boolean;
             /** @description the calling session; start, post and prune refuse it when it is a Litmus tester's own session. */
             sessionId?: string;
+            /** @description check end only: head receipt number whose after-shot shows the failure. */
+            shot?: number;
             /** @description submit only: why the base was not run; lets a submit through while a prepared base is unlaunched. */
             skipBase?: string;
             summary?: string;

@@ -3354,6 +3354,7 @@ type TestingRequest struct {
 	Result        string   `json:"result,omitempty" enum:"pass,fail,partial,absent,skipped"`
 	Note          string   `json:"note,omitempty"`
 	SameFault     bool     `json:"sameFault,omitempty" description:"check end only, base leg: the failure or partial is the same fault as on the PR build."`
+	Shot          int      `json:"shot,omitempty" description:"check end only: head receipt number whose after-shot shows the failure."`
 	Summary       string   `json:"summary,omitempty"`
 	Blocked       bool     `json:"blocked,omitempty" description:"submit only: stop early with a reason; a recorded failure keeps the overall result fail."`
 	Reason        string   `json:"reason,omitempty" description:"submit with blocked: what failed; required and non-empty."`

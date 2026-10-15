@@ -98,7 +98,7 @@ func TestLiveHeadOfPR6394(t *testing.T) {
 	if len(composer) == 0 {
 		t.Errorf("no chat composer after opening the sample chat:\n%.3000s", snap)
 	}
-	is(t, "")(svc.CheckEnd(ctx, "live", "c1", CheckPass, "composer present: "+strings.Join(composer, "; "), false))
+	is(t, "")(svc.CheckEnd(ctx, "live", "c1", CheckPass, "composer present: "+strings.Join(composer, "; "), false, 0))
 	is(t, "")(svc.CheckStart(ctx, "live", "c2"))
 	all := strings.Split(snap, "\n")
 	for i, l := range all {
@@ -112,7 +112,7 @@ func TestLiveHeadOfPR6394(t *testing.T) {
 		}
 	}
 
-	is(t, "")(svc.CheckEnd(ctx, "live", "c2", CheckPass, "model control clicked, Escape pressed", false))
+	is(t, "")(svc.CheckEnd(ctx, "live", "c2", CheckPass, "model control clicked, Escape pressed", false, 0))
 	v, err := svc.Submit(ctx, "live", "live check", "")
 	is(t, "")(nil, err)
 	lap("submit")
@@ -280,7 +280,7 @@ func TestLiveHeadAndBaseVideos(t *testing.T) {
 		id := fmt.Sprintf("c%d", i+1)
 		is(t, "")(svc.CheckStart(ctx, "live", id))
 		act(leg)
-		is(t, "")(svc.CheckEnd(ctx, "live", id, map[string]CheckState{"head": CheckPass, "base": CheckFail}[leg], leg+" live", false))
+		is(t, "")(svc.CheckEnd(ctx, "live", id, map[string]CheckState{"head": CheckPass, "base": CheckFail}[leg], leg+" live", false, 0))
 	}
 	v, err := svc.Submit(ctx, "live", "live video check", "")
 	is(t, "")(nil, err)

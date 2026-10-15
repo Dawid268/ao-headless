@@ -112,17 +112,17 @@ func TestTestingSubmitRequiresReceipts(t *testing.T) {
 	for i, result := range []CheckState{CheckPass, CheckPartial} {
 		id := fmt.Sprintf("c%d", i+1)
 		is(t, "")(svc.CheckStart(ctx, "s1", id))
-		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
+		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false, 0))
 		addReceipt(i, "base") // a receipt on the other leg does not count
-		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
+		is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false, 0))
 		addReceipt(i, "")
-		is(t, "")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false))
+		is(t, "")(svc.CheckEnd(ctx, "s1", id, result, "clipped", false, 0))
 	}
 	is(t, "TESTING_CHECKS_INCOMPLETE")(svc.Submit(ctx, "s1", "", ""))
 	addReceipt(2, "head") // a receipt does not substitute for starting and ending a check
 	is(t, "TESTING_CHECKS_INCOMPLETE")(svc.Submit(ctx, "s1", "", ""))
 	is(t, "")(svc.CheckStart(ctx, "s1", "c3"))
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c3", CheckPass, "", false))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c3", CheckPass, "", false, 0))
 	var reported []string
 	svc.WithReporter(func(_ context.Context, id, note string) error { reported = append(reported, id+": "+note); return nil })
 	v, err := svc.Submit(ctx, "s1", "head only", "")

@@ -663,6 +663,38 @@ func TestPlainTextKeepsQuestionsAndEmailAddresses(t *testing.T) {
 	}
 }
 
+func TestNoteSentencesScrubsReceiptClauses(t *testing.T) {
+	run := Run{BaseRef: "main"}
+	for _, tc := range []struct{ note, want string }{
+		{
+			"On first opening the board, the collapsed Agent updates available notice covered New task, Orchestrator and Notifications. Clicking New task was refused because the notice covered it, captured in receipts/11-after.png during the model-filter check. After Dismiss all updates, New task opened normally. The final screenshots show the workaround; the failure screenshot is receipt 11.",
+			"On first opening the board, the collapsed Agent updates available notice covered New task, Orchestrator and Notifications. Clicking New task was refused because the notice covered it. After Dismiss all updates, New task opened normally. The final screenshots show the workaround.",
+		},
+		{"Receipt 11 shows the failure. The menu stayed closed.", "The menu stayed closed."},
+		{"The menu stayed closed, see RECEIPTS/ 11-after.png! It reopened?", "The menu stayed closed! It reopened?"},
+		{"The menu stayed closed; see receipt 11 and receipts/12-after.png", "The menu stayed closed."},
+		{"The menu, when clicked, stayed closed; see receipt 11. It reopened.", "The menu, when clicked, stayed closed. It reopened."},
+	} {
+		if got := noteSentences(run, Verdict{}, Check{Note: tc.note}); got != tc.want {
+			t.Errorf("noteSentences(%q) = %q, want %q", tc.note, got, tc.want)
+		}
+	}
+}
+
+func TestPlainSentenceTrimsTrailingSeparators(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"shows the workaround;", "shows the workaround."},
+		{"shows the workaround:", "shows the workaround."},
+		{"shows the workaround,", "shows the workaround."},
+		{"&commat;", "&amp;commat;."},
+		{"&#64;", "&amp;#64;."},
+	} {
+		if got := plainSentence(tc.in, 80); got != tc.want {
+			t.Errorf("plainSentence(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestCommentFirstLineNamesTheClosedIssues(t *testing.T) {
 	url := func(n int) string { return fmt.Sprintf("https://github.com/o/r/issues/%d", n) }
 	run := commentRun

@@ -202,8 +202,30 @@ func noteSentences(run Run, v Verdict, c Check) string {
 	if note == "" {
 		note = plainTester(c.Expect, run, v.Checks)
 	}
-	var parts []string
+	var scrubbed strings.Builder
 	start := 0
+	for _, loc := range append(sentenceStop.FindAllStringIndex(note, -1), []int{len(note), len(note)}) {
+		// A semicolon can start the receipt clause, so keep it within the sentence.
+		if loc[0] < len(note) && note[loc[0]] == ';' {
+			continue
+		}
+		sentence := note[start:loc[0]]
+		if match := receiptMention.FindStringIndex(sentence); match != nil {
+			cut := strings.LastIndexAny(sentence[:match[0]], ",;")
+			if cut < 0 {
+				cut = 0
+			}
+			sentence = strings.TrimSpace(sentence[:cut])
+		}
+		if strings.TrimSpace(sentence) != "" {
+			scrubbed.WriteString(sentence)
+			scrubbed.WriteString(note[loc[0]:loc[1]])
+		}
+		start = loc[1]
+	}
+	note = scrubbed.String()
+	var parts []string
+	start = 0
 	for _, loc := range sentenceStop.FindAllStringIndex(note, -1) {
 		if p := strings.TrimSpace(note[start:loc[1]]); p != "" {
 			parts = append(parts, p)
@@ -330,7 +352,10 @@ func plainSentence(note string, n int) string {
 	if out == "" || strings.HasSuffix(out, "...") || strings.ContainsAny(out[len(out)-1:], "!?") {
 		return out
 	}
-	return strings.TrimRight(out, ".") + "."
+	if trailingEntity.MatchString(out) {
+		return out + "."
+	}
+	return strings.TrimRight(out, ".;:,") + "."
 }
 
 // shorten cuts text to n characters at a word, with "..." when it cut.
@@ -458,6 +483,8 @@ func withoutComparison(note string, run Run) string {
 }
 
 var sentenceStop = regexp.MustCompile(`[.!?;](?:\s+|$)`)
+var receiptMention = regexp.MustCompile(`(?i)receipts?/?\s*\d+(-after\.png)?`)
+var trailingEntity = regexp.MustCompile(`&(?:amp;)*[A-Za-z0-9#]+;$`)
 
 // plainVerdict is v with the tester's own words (in each check's expectation and note, the skip reason and a blocked
 // reason) said in the reader's. The checks are copied; v is not changed.
@@ -1069,7 +1096,7 @@ func (s *Service) draftComments(run Run, v Verdict) ([]commentDoc, error) {
 			bugs[i].ImageFile = fmt.Sprintf("bug-%d.png", bugs[i].Number)
 			imagePath := filepath.Join(dir, bugs[i].ImageFile)
 			image := ""
-			if err := makeBugImage(bugs[i], imagePath); err != nil {
+			if err := makeBugImage(bugs[i], plain.Checks, imagePath); err != nil {
 				s.commentLogf(run, "comment image %s: %v", bugs[i].Check.Name, err)
 			} else {
 				image = bugs[i].ImageFile

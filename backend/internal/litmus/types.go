@@ -151,6 +151,7 @@ type Check struct {
 	Expect    string     `json:"expect"`
 	State     CheckState `json:"state"`
 	Note      string     `json:"note,omitempty"`
+	Shot      int        `json:"shot,omitempty"`
 	Leg       string     `json:"leg,omitempty"`  // base | head; empty means head
 	Diff      string     `json:"diff,omitempty"` // pixel-diff image of this check's base and head after-shots (`ao testing compare`)
 	Receipts  []Receipt  `json:"receipts,omitempty"`

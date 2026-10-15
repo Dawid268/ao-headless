@@ -46,13 +46,16 @@ func runTesting(t *testing.T, args ...string) (string, error) {
 	return out, err
 }
 
-func TestTestingCheckEndSameFaultSendsFlag(t *testing.T) {
+func TestTestingCheckEndSendsFlags(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "w1")
 	cfg := setConfigEnv(t)
 	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
 		t.Fatal(err)
 	}
-	for _, same := range []bool{false, true} {
+	for _, tc := range []struct {
+		same bool
+		shot int
+	}{{false, 0}, {true, 0}, {false, 11}, {true, 11}} {
 		var body map[string]any
 		calls := 0
 		deps := Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -69,12 +72,27 @@ func TestTestingCheckEndSameFaultSendsFlag(t *testing.T) {
 			return jsonResponse(http.StatusOK, `{"id":"c1","state":"fail"}`), nil
 		})}}
 		args := []string{"testing", "check", "end", "c1", "--result", "fail", "--note", "same row"}
-		if same {
+		if tc.same {
 			args = append(args, "--same-fault")
 		}
+		if tc.shot != 0 {
+			args = append(args, "--shot", fmt.Sprint(tc.shot))
+		}
 		_, _, err := executeCLI(t, deps, args...)
-		if err != nil || calls != 1 || body["sessionId"] != "w1" || body["result"] != "fail" || body["note"] != "same row" || (body["sameFault"] == true) != same {
-			t.Fatalf("same=%t, calls=%d, body=%v, err=%v", same, calls, body, err)
+		if err != nil || calls != 1 || body["sessionId"] != "w1" || body["result"] != "fail" || body["note"] != "same row" || (body["sameFault"] == true) != tc.same {
+			t.Fatalf("flags=%+v, calls=%d, body=%v, err=%v", tc, calls, body, err)
+		}
+		if (tc.shot == 0 && body["shot"] != nil) || (tc.shot != 0 && body["shot"] != float64(tc.shot)) {
+			t.Fatalf("shot=%d, body=%v", tc.shot, body)
+		}
+	}
+}
+
+func TestTestingCheckEndRejectsNonpositiveShot(t *testing.T) {
+	for _, shot := range []string{"0", "-1"} {
+		_, _, err := executeCLI(t, Deps{}, "testing", "check", "end", "c1", "--result", "fail", "--shot", shot)
+		if ExitCode(err) != 2 || !strings.Contains(err.Error(), "--shot must be a positive receipt number") {
+			t.Fatalf("shot=%s: %v", shot, err)
 		}
 	}
 }

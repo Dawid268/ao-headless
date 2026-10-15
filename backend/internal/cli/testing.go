@@ -139,6 +139,7 @@ func (t *testingCLI) checkCommand() *cobra.Command {
 	check := verb("check", "Plan and bracket the checks a verdict is built from", noArgs, nil)
 	var expect, result, note string
 	var sameFault bool
+	var shot int
 	add := verb("add <name>", "Add a check with the observable you expect", exactArgs(1), func(cmd *cobra.Command, a []string) error {
 		if strings.TrimSpace(expect) == "" {
 			return usageError{errors.New("usage: --expect is required")}
@@ -170,6 +171,12 @@ func (t *testingCLI) checkCommand() *cobra.Command {
 			return usageError{errors.New("usage: --result must be pass, fail, partial, absent or skipped")}
 		}
 		body := map[string]any{"result": result, "note": note}
+		if cmd.Flags().Changed("shot") {
+			if shot <= 0 {
+				return usageError{errors.New("usage: --shot must be a positive receipt number")}
+			}
+			body["shot"] = shot
+		}
 		if sameFault {
 			body["sameFault"] = true
 		}
@@ -189,6 +196,7 @@ func (t *testingCLI) checkCommand() *cobra.Command {
 	end.Flags().StringVar(&result, "result", "", "Outcome: pass, fail (the feature is there and broken), partial, absent (this build lacks the feature entirely; needs a screenshot of where it would be) or skipped (could not reach it; needs no receipt)")
 	end.Flags().StringVar(&note, "note", "", "Why, in one line")
 	end.Flags().BoolVar(&sameFault, "same-fault", false, "Base leg only: the failure or partial is the same fault as on the PR build")
+	end.Flags().IntVar(&shot, "shot", 0, "Head receipt number whose after-shot shows the failure")
 	check.AddCommand(add, list, start, end)
 	return check
 }

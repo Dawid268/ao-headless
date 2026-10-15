@@ -331,7 +331,7 @@ func TestDriveReceiptsSequenceAndAttach(t *testing.T) {
 	if res, _ = svc.Drive(ctx, "s1", "check", []string{"e4"}); res["receipt"].(actionRec).Seq != 4 {
 		t.Fatalf("seq after restart: %+v", res["receipt"])
 	}
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckPass, "", false))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckPass, "", false, 0))
 	if v, err := svc.Submit(ctx, "s1", "", ""); err != nil || v.Overall != CheckPartial { // the attached receipt satisfies submit; the base was never looked at
 		t.Fatalf("submit %+v err %v", v, err)
 	}
@@ -346,7 +346,7 @@ func TestDriveFailedShotCannotEndCheck(t *testing.T) {
 	if rec, ok := res["receipt"].(actionRec); err != nil || !ok || rec.After != "" || len(rec.Warnings) == 0 {
 		t.Fatalf("receipt %+v, %v", res, err)
 	}
-	_, err = svc.CheckEnd(ctx, "s1", "c1", CheckFail, "menu closed", false)
+	_, err = svc.CheckEnd(ctx, "s1", "c1", CheckFail, "menu closed", false, 0)
 	is(t, "TESTING_CHECK_EVIDENCE")(nil, err)
 	if !strings.Contains(err.Error(), "no picture was saved; act again or end it skipped") {
 		t.Fatalf("evidence refusal: %v", err)
@@ -355,7 +355,7 @@ func TestDriveFailedShotCannotEndCheck(t *testing.T) {
 	if err != nil || checks[0].State != CheckRunning || len(checks[0].Receipts) != 1 {
 		t.Fatalf("checks %+v, %v", checks, err)
 	}
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, "capture failed", false))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, "capture failed", false, 0))
 }
 
 func TestEngineEnvAndSocketGuard(t *testing.T) {

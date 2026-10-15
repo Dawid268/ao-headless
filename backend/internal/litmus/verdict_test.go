@@ -330,7 +330,7 @@ func TestNotesAreKeptWholeAndNeverRefused(t *testing.T) {
 	is(t, "")(svc.CheckAdd(ctx, "s1", "reach the menu", "head shows the c2 receipt", ""))
 	is(t, "")(svc.CheckStart(ctx, "s1", "c1"))
 	long := "the base has none, the snapshot lacks it. " + strings.Repeat("word ", 150) // over 600 characters, with the tester's words
-	got, err := svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, long, false)
+	got, err := svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, long, false, 0)
 	if err != nil || got.Note != strings.TrimSpace(long) {
 		t.Fatalf("note not kept whole: %q, %v", got.Note, err)
 	}
@@ -354,13 +354,13 @@ func TestSkippedCheckNeedsNoReceiptAndLeavesTheHeadline(t *testing.T) {
 	is(t, "")(svc.CheckAdd(ctx, "s1", "reach the menu", "opens", ""))
 	is(t, "")(svc.CheckAdd(ctx, "s1", "last model", "scrolls", ""))
 	is(t, "")(svc.CheckStart(ctx, "s1", "c1"))
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, "needs a paid plan", false))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c1", CheckSkipped, "needs a paid plan", false, 0))
 	is(t, "")(svc.CheckStart(ctx, "s1", "c2"))
-	is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", "c2", CheckPass, "", false)) // only a skip is exempt
+	is(t, "TESTING_CHECK_NO_RECEIPT")(svc.CheckEnd(ctx, "s1", "c2", CheckPass, "", false, 0)) // only a skip is exempt
 	checks, _ := svc.store.Checks("run_s1")
 	checks[1].Receipts = []Receipt{{Seq: 1, Action: "click", AfterPath: evidenceFile(t)}}
 	is(t, "")(nil, svc.store.SaveChecks("run_s1", checks))
-	is(t, "")(svc.CheckEnd(ctx, "s1", "c2", CheckPass, "", false))
+	is(t, "")(svc.CheckEnd(ctx, "s1", "c2", CheckPass, "", false, 0))
 	v, err := svc.Submit(ctx, "s1", "", "")
 	if err != nil || v.Overall != CheckPartial { // c2 passed, but nothing differs from the base
 		t.Fatalf("verdict %+v err %v", v, err)

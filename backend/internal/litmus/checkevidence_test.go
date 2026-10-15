@@ -5,6 +5,49 @@ import (
 	"testing"
 )
 
+func TestCheckEndShotValidationAndPersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		shot   int
+		leg    string
+		path   string
+		result CheckState
+		want   string
+	}{
+		{"unknown receipt", 99, "head", evidenceFile(t), CheckFail, "TESTING_ARGS_INVALID"},
+		{"base receipt", 11, "base", evidenceFile(t), CheckFail, "TESTING_ARGS_INVALID"},
+		{"missing after-shot", 11, "head", "missing.png", CheckFail, "TESTING_ARGS_INVALID"},
+		{"directory after-shot", 11, "head", t.TempDir(), CheckFail, "TESTING_ARGS_INVALID"},
+		{"negative receipt", -1, "head", evidenceFile(t), CheckFail, "TESTING_ARGS_INVALID"},
+		{"fail", 11, "head", evidenceFile(t), CheckFail, ""},
+		{"partial", 11, "head", evidenceFile(t), CheckPartial, ""},
+		{"pass", 11, "", evidenceFile(t), CheckPass, ""},
+		{"absent", 11, "head", evidenceFile(t), CheckAbsent, ""},
+		{"skipped", 11, "head", evidenceFile(t), CheckSkipped, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, now := newSvc(t)
+			is(t, "")(nil, svc.store.Save(Run{ID: "run_s1", SessionID: "s1", State: RunRunning, Deadline: now.Add(RunBudget)}))
+			checks := []Check{
+				{ID: "c2", State: CheckPass, Leg: tc.leg, Receipts: []Receipt{{Seq: 11, Leg: tc.leg, AfterPath: tc.path}}},
+				{ID: "c9", State: CheckRunning, Receipts: []Receipt{{Seq: 42, AfterPath: evidenceFile(t)}}},
+			}
+			is(t, "")(nil, svc.store.SaveChecks("run_s1", checks))
+			got, err := svc.CheckEnd(ctx, "s1", "c9", tc.result, "notice covers buttons", false, tc.shot)
+			is(t, tc.want)(got, err)
+			saved, err := svc.store.Checks("run_s1")
+			is(t, "")(nil, err)
+			if tc.want == "" {
+				if got.Shot != tc.shot || saved[1].Shot != tc.shot || saved[1].State != tc.result {
+					t.Fatalf("shot not saved: returned %+v, saved %+v", got, saved[1])
+				}
+			} else if saved[1].Shot != 0 || saved[1].State != CheckRunning {
+				t.Fatalf("invalid shot changed the check: %+v", saved[1])
+			}
+		})
+	}
+}
+
 func TestCheckEndSameFaultIsBaseOnly(t *testing.T) {
 	for _, leg := range []string{"", "head", "base"} {
 		for _, result := range []CheckState{CheckFail, CheckPartial} {
@@ -12,7 +55,7 @@ func TestCheckEndSameFaultIsBaseOnly(t *testing.T) {
 			is(t, "")(nil, svc.store.Save(Run{ID: "run_s1", SessionID: "s1", State: RunRunning, Deadline: now.Add(RunBudget)}))
 			c := Check{ID: "c1", Name: "menu", State: CheckRunning, Leg: leg, Receipts: []Receipt{{Leg: leg, Action: "click", AfterPath: evidenceFile(t)}}}
 			is(t, "")(nil, svc.store.SaveChecks("run_s1", []Check{c}))
-			got, err := svc.CheckEnd(ctx, "s1", c.ID, result, "same broken row", true)
+			got, err := svc.CheckEnd(ctx, "s1", c.ID, result, "same broken row", true, 0)
 			if leg != "base" {
 				is(t, "TESTING_CHECK_SAME_FAULT")(got, err)
 			} else if err != nil || !got.SameFault || got.State != result {
@@ -54,7 +97,7 @@ func TestCheckEndSameFaultRequiresFailedOrPartialBase(t *testing.T) {
 		is(t, "")(nil, svc.store.Save(Run{ID: "run_s1", SessionID: "s1", State: RunRunning, Deadline: now.Add(RunBudget)}))
 		c := Check{ID: "c1", Name: "account", Leg: "base", State: CheckRunning, Receipts: []Receipt{{Leg: "base", Action: "click", AfterPath: evidenceFile(t)}}}
 		is(t, "")(nil, svc.store.SaveChecks("run_s1", []Check{c}))
-		is(t, "TESTING_CHECK_SAME_FAULT")(svc.CheckEnd(ctx, "s1", "c1", result, "same", true))
+		is(t, "TESTING_CHECK_SAME_FAULT")(svc.CheckEnd(ctx, "s1", "c1", result, "same", true, 0))
 		saved, _ := svc.store.Checks("run_s1")
 		if saved[0].State != CheckRunning || saved[0].SameFault {
 			t.Fatalf("refused result persisted: %+v", saved[0])
