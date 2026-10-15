@@ -103,7 +103,7 @@ import {
 } from "../../lib/chat-drafts";
 import { attachmentURL, IMAGE_ATTACHMENT_PATH, isInlineImagePath, proseBesideImages } from "./messageAttachments";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
-import { subscribeChatComposerReferences } from "../../lib/chat-context-bus";
+import { subscribeChatComposerReferences, subscribeChatComposerRestore } from "../../lib/chat-context-bus";
 
 // These responses precede AppendUserMessage. Provider/transport errors can
 // follow durable acceptance and must keep the original delivery ID for recovery.
@@ -1059,6 +1059,21 @@ export const ChatComposer = memo(function ChatComposer({
 			setDismissedKey(null);
 		}
 	}, [draftScope, onQueuedDraftChange, optimisticSend]);
+	// A send that failed after it left the composer (an agent switch the daemon
+	// accepted, then could not finish) comes back here, after anything the user
+	// has typed since. It goes through the editor's change path, so Send and the
+	// saved draft see it.
+	useEffect(() => {
+		if (!draftSessionId) return;
+		return subscribeChatComposerRestore(draftSessionId, (text) => {
+			if (!editor.current) return false;
+			const typed = editor.current.getSnapshot();
+			editor.current.setText(typed.hasText ? `${typed.text}\n\n${text}` : text);
+			onEditorChange(editor.current.getSnapshot());
+			window.requestAnimationFrame(() => editor.current?.focus());
+			return true;
+		});
+	}, [draftSessionId, onEditorChange]);
 	useImperativeHandle(
 		focusRef,
 		() => ({

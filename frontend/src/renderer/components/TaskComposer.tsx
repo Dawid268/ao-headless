@@ -160,6 +160,8 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 	const [error, setError] = useState<string | undefined>();
 	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
 	const taskPreparationRef = useRef("");
+	// The same token as state, so the agent start below follows it.
+	const [preparationToken, setPreparationToken] = useState("");
 	const requestRef = useRef<{ payload: string; id: string } | undefined>(undefined);
 	const {
 		attachments,
@@ -282,6 +284,7 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 					...(input.mode ? { mode: input.mode } : {}),
 					...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
 					...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+					...(input.taskPreparation ? { taskPreparation: input.taskPreparation } : {}),
 				},
 			});
 			if (error) {
@@ -316,7 +319,9 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 	});
 	useEffect(() => {
 		const id = projectQuery.data?.id;
-		if (!id) return;
+		// A standalone chat reserves its session and scratch workspace too, so its
+		// agent can start before the send.
+		if (!id && !isStandalone) return;
 		let client;
 		try {
 			client = hostId ? clientForHost(hostId) : apiClient;
@@ -325,9 +330,10 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 		}
 		let disposed = false;
 		taskPreparationRef.current = "";
-		void client.POST("/api/v1/projects/{id}/tasks/prepare", {
-			params: { path: { id } },
-		}).then(
+		const prepared = id
+			? client.POST("/api/v1/projects/{id}/tasks/prepare", { params: { path: { id } } })
+			: client.POST("/api/v1/task-preparations", {});
+		void prepared.then(
 			({ data }) => {
 				const token = data?.taskPreparation ?? "";
 				if (!token) return;
@@ -336,6 +342,7 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 					return;
 				}
 				taskPreparationRef.current = token;
+				setPreparationToken(token);
 			},
 			() => undefined,
 		);
@@ -343,9 +350,10 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 			disposed = true;
 			const token = taskPreparationRef.current;
 			taskPreparationRef.current = "";
+			setPreparationToken("");
 			cancelTaskPreparation(token, hostId);
 		};
-	}, [hostId, projectQuery.data?.id]);
+	}, [hostId, projectQuery.data?.id, isStandalone]);
 	const agentsQuery = useAgentReadinessQuery(true, hostId);
 	const { settings, error: settingsError } = useSettings(hostId);
 	// The composer preselects the agent and model a spawn would actually use
@@ -610,6 +618,33 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 
 	useEffect(() => () => clearAttachments(), [clearAttachments]);
 
+	// Start the selected agent in the prepared worktree while the user types, so
+	// the send takes over a running agent. It waits for the choices to settle:
+	// each new choice replaces the agent the daemon started for the last one.
+	useEffect(() => {
+		// The daemon starts a standby as a Chat agent; a terminal launch would leave it idle.
+		if (!preparationToken || !selectedAgent || isCloudProject || requiresTuiFallback) return;
+		if (settings?.defaultSessionMode !== "chat") return;
+		const timer = setTimeout(() => {
+			let client;
+			try {
+				client = hostId ? clientForHost(hostId) : apiClient;
+			} catch {
+				return;
+			}
+			void client.POST("/api/v1/task-preparations/{token}/agent", {
+				params: { path: { token: preparationToken } },
+				body: {
+					agent: selectedAgent as components["schemas"]["PrewarmTaskAgentRequest"]["agent"],
+					...(requestedModel ? { model: requestedModel } : {}),
+					...(requestedEffort !== undefined ? { effort: requestedEffort } : {}),
+					...(approvalMode ? { approvalMode } : {}),
+				},
+			}).catch(() => undefined);
+		}, 400);
+		return () => clearTimeout(timer);
+	}, [preparationToken, selectedAgent, requestedModel, requestedEffort, approvalMode, hostId, isCloudProject, requiresTuiFallback, settings?.defaultSessionMode]);
+
 	// Rejects with the create error after recording it (and any fallback) here.
 	const launch = async (brief: string, { interfaceMode, approvalMode: requestedApproval, clientRequestId }: TaskLaunchOptions = {}): Promise<string> => {
 		if (!projectId || !canSubmit || isSubmitting) throw new Error(remoteLoadError ?? t("newTask.unableToStart"));
@@ -669,6 +704,8 @@ export function useTaskLaunch({ projectId, hostId }: { projectId?: string; hostI
 			}
 			const preparationAfterSubmit = taskPreparationRef.current;
 			taskPreparationRef.current = "";
+			// The send claimed it; a later settings change must not start an agent in it.
+			setPreparationToken("");
 			// DELETE is intentionally idempotent after a successful claim. It also
 			// reclaims a preparation that resolved after this submission captured its
 			// token, instead of leaving that unused worktree until TTL expiry.
