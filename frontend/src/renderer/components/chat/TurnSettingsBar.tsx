@@ -166,13 +166,15 @@ export function TurnSettingsBar({
 	const displayConfigOptions = useMemo(
 		() => (configOptions ?? []).map((option) => isModelOption(option) ? {
 			...option,
-			choices: option.choices.map((choice) => ({
+			// Claude Code can list one model twice, by alias and by the id the chat
+			// started with. The picker shows it once, as the current one if either is.
+			choices: dedupeChoicesByName(option.choices.map((choice) => ({
 				...choice,
-				name: claudeLabels?.(choice.value) ?? agentModelDisplayLabel(harness, choice.name),
+				name: claudeLabels?.(choice.value, choice.name) ?? agentModelDisplayLabel(harness, choice.name),
 				description: choice.description
 					? agentModelDisplayLabel(harness, choice.description)
 					: choice.description,
-			})),
+			})), option.currentValue),
 		} : option),
 		[claudeLabels, configOptions, harness],
 	);
@@ -530,13 +532,21 @@ export function TurnSettingsBar({
 	);
 }
 
+function dedupeChoicesByName<T extends { value: string; name: string }>(choices: T[], current: string | undefined): T[] {
+	return choices.filter((choice, index) => {
+		const twin = choices.findIndex((other) => other.name === choice.name);
+		const currentTwin = choices.find((other) => other.name === choice.name && other.value === current);
+		return currentTwin ? choice === currentTwin : twin === index;
+	});
+}
+
 /**
  * The provider's model option offers family aliases ("opus") and bare ids. The new-task
  * picker names them by version, so the chat does too.
  */
 function claudeChoiceLabels(catalog: { id: string; displayName: string }[]) {
 	const choiceModel = claudeChoiceModel(catalog.map((model) => ({ id: model.id, label: model.displayName })));
-	return choiceModel && ((value: string) => choiceModel(value)?.label);
+	return choiceModel && ((value: string, name?: string) => choiceModel(value, name)?.label);
 }
 
 function ModelEffortPicker({

@@ -328,7 +328,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 		(option) => option.type === "select" && (option.category === "model" || option.id === "model"),
 	);
 	const providerModelChoices = useMemo(
-		() => providerModelOption?.choices.map((choice) => ({ id: choice.value })),
+		() => providerModelOption?.choices.map((choice) => ({ id: choice.value, name: choice.name })),
 		[providerModelOption],
 	);
 	// Resolve current Claude aliases before filtering so their labels cannot move
@@ -344,7 +344,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	});
 	// Claude's choices are family aliases ("sonnet"); Settings names catalog ids.
 	const claudeChoiceID = useMemo(
-		() => resolveClaudeChoice && ((choice: { id: string }) => resolveClaudeChoice(choice.id)?.id ?? choice.id),
+		() => resolveClaudeChoice && ((choice: { id: string; name?: string }) => resolveClaudeChoice(choice.id, choice.name)?.id ?? choice.id),
 		[resolveClaudeChoice],
 	);
 	const { models: offeredProviderModels } = useOfferedModels(snapshot?.harness, providerModelChoices, { hostId, keep: [providerModelOption?.currentValue], modelID: claudeChoiceID });
