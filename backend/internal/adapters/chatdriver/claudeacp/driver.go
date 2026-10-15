@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -352,9 +353,18 @@ func claudeSessionMode(permission ports.PermissionMode) string {
 	}
 }
 
+// claudeModelFamily matches a Claude model id such as "claude-haiku-5-5" and names its family.
+var claudeModelFamily = regexp.MustCompile(`^claude-(opus|sonnet|haiku|fable)-\d`)
+
 func claudeSessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
-	options := make([]acpdriver.SessionOption, 0, 2)
-	if settings.Model != "" {
+	options := make([]acpdriver.SessionOption, 0, 3)
+	if family := claudeModelFamily.FindStringSubmatch(settings.Model); family != nil {
+		// Claude Code offers the newest model of a family by its alias ("haiku") and
+		// older ones by id. The alias is set first, and an id it also offers wins.
+		options = append(options,
+			acpdriver.SessionOption{ID: "model", Value: family[1], Optional: true},
+			acpdriver.SessionOption{ID: "model", Value: settings.Model, Optional: true})
+	} else if settings.Model != "" {
 		options = append(options, acpdriver.SessionOption{ID: "model", Value: settings.Model})
 	}
 	if settings.Effort != "" {

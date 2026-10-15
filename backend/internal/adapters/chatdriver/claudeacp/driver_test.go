@@ -228,6 +228,17 @@ func TestClaudeSessionOptionsUseACPConfigIDs(t *testing.T) {
 	}
 }
 
+func TestClaudeSessionOptionsTryTheFamilyAliasThenTheID(t *testing.T) {
+	got := claudeSessionOptions(ports.ChatTurnSettings{Model: "claude-haiku-5-5"})
+	want := []acpdriver.SessionOption{
+		{ID: "model", Value: "haiku", Optional: true},
+		{ID: "model", Value: "claude-haiku-5-5", Optional: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("options = %#v, want %#v", got, want)
+	}
+}
+
 func TestValidateClaudeACPExecutableRejectsWindowsCommandShims(t *testing.T) {
 	tests := []struct {
 		name    string
