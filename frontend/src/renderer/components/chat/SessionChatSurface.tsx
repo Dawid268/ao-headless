@@ -586,8 +586,8 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 					if (pendingSwitch) {
 						// Nothing was sent if the switch fails, so the draft must stay editable
 						// instead of being held as a delivery that might have gone through.
-						const { harness: targetHarness, model, effort, fastMode } = pendingSwitch;
-						await providerSwitch.mutateAsync({ targetHarness, model, effort, fastMode })
+						const { harness: targetHarness, model, effort, fastMode, autoCompactWindow } = pendingSwitch;
+						await providerSwitch.mutateAsync({ targetHarness, model, effort, fastMode, autoCompactWindow })
 							.catch((error) => { throw Object.assign(new Error(apiErrorMessage(error)), { code: AGENT_SWITCH_FAILED }); });
 						setChosenSwitch(undefined);
 						// Ultracode picked with the switch stays on for the messages after it.

@@ -674,6 +674,9 @@ func (s *Service) startLocked(ctx context.Context, cfg StartConfig) (*Controller
 				activeBranch.ProviderConversationID, cfg.ProviderConversationID)
 		}
 	}
+	if cfg.ProviderSwitch != nil && cfg.ProviderSwitch.AutoCompactWindow != "" {
+		conversation.Settings.AutoCompactWindow = cfg.ProviderSwitch.AutoCompactWindow
+	}
 	// Claude Code reads its compaction window when it starts. The map is
 	// copied because the caller's may be the one saved for later restarts.
 	if cfg.Harness == domain.HarnessClaudeCode {

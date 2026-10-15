@@ -44,8 +44,9 @@ func TestProviderSwitchPublishesApproximateBranch(t *testing.T) {
 		t.Fatalf("source session = %+v found=%v err=%v, want a Codex session", source, found, err)
 	}
 	if err := h.svc.SwitchProvider(ctx, testSession, domain.ProviderSwitchRequest{
-		TargetHarness:  domain.HarnessClaudeCode,
-		IdempotencyKey: "switch-once",
+		TargetHarness:     domain.HarnessClaudeCode,
+		IdempotencyKey:    "switch-once",
+		AutoCompactWindow: "1m",
 	}); err != nil {
 		t.Fatalf("SwitchProvider: %v", err)
 	}
@@ -57,6 +58,9 @@ func TestProviderSwitchPublishesApproximateBranch(t *testing.T) {
 	}
 	targetConfig := driver.startConfigs[len(driver.startConfigs)-1]
 	driver.mu.Unlock()
+	if got := targetConfig.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != "1000000" {
+		t.Fatalf("target compaction window = %q, want the switch's 1m", got)
+	}
 	if !strings.Contains(targetConfig.SystemPrompt, "keep this context") {
 		t.Fatalf("target system prompt did not contain AO handoff context: %q", targetConfig.SystemPrompt)
 	}

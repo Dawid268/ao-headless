@@ -75,6 +75,14 @@ describe("AgentModelPicker", () => {
 		expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
 	});
 
+	it("offers Claude Code's auto-compact window on a chat switch to it", async () => {
+		const user = userEvent.setup();
+		const { onPendingChange } = open({ harness: "claude-code", model: "opus" }, false, "codex");
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		await user.click(screen.getByRole("radio", { name: "1M" }));
+		expect(onPendingChange).toHaveBeenCalledWith(expect.objectContaining({ harness: "claude-code", autoCompactWindow: "1m" }));
+	});
+
 	it("holds another agent as pending when it is picked", async () => {
 		const user = userEvent.setup();
 		const { onPendingChange } = open();

@@ -273,7 +273,7 @@ export function AgentModelPicker({
 		? pending.modelLabel ?? source.models.find((model) => model.hint === "default")?.label ?? "Default"
 		: source.modelLabel;
 	// Claude Code only compacts early on its larger-window models.
-	const offersAutoCompact = terminal && pending?.harness === "claude-code" && !/haiku|opus-4-5/.test(pending.model ?? "");
+	const offersAutoCompact = pending?.harness === "claude-code" && !/haiku|opus-4-5/.test(pending.model ?? "");
 
 	return (
 		<OptionMenu open={open} onOpenChange={setOpen}>

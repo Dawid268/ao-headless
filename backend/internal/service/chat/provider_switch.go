@@ -136,6 +136,9 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 		ConversationID: conversation.ID, SourceBranchID: activeBranch.ID,
 		SourceSequence: conversation.LatestSequence, Bootstrap: handoffNote,
 	}
+	if request.TargetHarness == domain.HarnessClaudeCode {
+		targetCfg.ProviderSwitch.AutoCompactWindow = request.AutoCompactWindow
+	}
 	targetCfg.Model, targetCfg.Effort = request.Model, request.Effort
 	targetCfg.Permissions = ports.PermissionModeAuto
 	targetCfg.ControllerReady = func(started StartResult) (ControllerCommit, error) {

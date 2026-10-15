@@ -42,6 +42,8 @@ type ChatProviderSwitch struct {
 	SourceBranchID string
 	SourceSequence int64
 	Bootstrap      string
+	// AutoCompactWindow is the Claude Code compaction window the target starts with.
+	AutoCompactWindow string
 }
 
 // ProviderSwitchError crosses the Chat/TUI dispatch boundary without coupling
