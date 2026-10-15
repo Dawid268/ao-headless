@@ -384,7 +384,9 @@ export function TurnSettingsBar({
 								current={current}
 								agentSwitch={agentSwitch}
 								disabled={optionDisabled}
-								loading={configPending}
+								// Only an agent that sends back its own settings has any to load. AO keeps
+								// the rest itself, and their quick save would just flicker the rows.
+								loading={configPending && !nativeModelMenu}
 								title={reroute ? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}` : undefined}
 								mark={reroute ? <Shuffle className="size-3 shrink-0 text-warning" aria-hidden="true" /> : undefined}
 								extras={pickerExtras}
