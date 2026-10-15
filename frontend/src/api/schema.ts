@@ -3030,6 +3030,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/switch-agent/prewarm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start the agent picked for a chat's next switch so the send that carries the switch adopts it */
+        post: operations["prewarmSessionAgentSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/workspace/diffs": {
         parameters: {
             query?: never;
@@ -5126,6 +5143,18 @@ export interface components {
             /** @enum {string} */
             targetKind?: "app" | "api";
             url?: string;
+        };
+        PrewarmAgentSwitchRequest: {
+            /** @description Model the switch will request, if any. */
+            model?: string;
+            /** @description Reasoning effort the switch will request, if any. */
+            reasoningEffort?: string;
+            /** @description Agent picked for the chat's next switch. Picking the chat's current agent drops any earlier standby. */
+            targetHarness: string;
+        };
+        PrewarmAgentSwitchResponse: {
+            /** @description Agent whose process is being started. */
+            targetHarness: string;
         };
         PrewarmChatAgentResponse: {
             /** @description Agent adapter identifier whose Chat check was started. */
@@ -17853,6 +17882,51 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    prewarmSessionAgentSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrewarmAgentSwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrewarmAgentSwitchResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
