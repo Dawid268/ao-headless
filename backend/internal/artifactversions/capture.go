@@ -272,6 +272,10 @@ func (c *Capturer) recordNow(ctx context.Context, sess domain.SessionRecord, rel
 	if err != nil {
 		return err
 	}
+	if len(rows) > 0 && last.Size == info.Size() && last.ModTime.UnixNano() == info.ModTime().UnixNano() {
+		// Unchanged since its latest version: nothing to record, and no need to read it.
+		return nil
+	}
 	if settle > 0 && c.now().Sub(info.ModTime()) < settle {
 		return nil
 	}

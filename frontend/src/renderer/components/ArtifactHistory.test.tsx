@@ -25,7 +25,13 @@ const v = (version: number, source: "agent" | "user", minute: number, harness?: 
 
 function renderMenu(data: ArtifactVersionSummary[] | null, extra: { isError?: boolean } = {}) {
 	statusMock.mockResolvedValue({ connected: true, login: "octocat" });
-	versionsMock.mockReturnValue({ data: data ?? undefined, isPending: data === null && !extra.isError, isError: Boolean(extra.isError) });
+	versionsMock.mockReturnValue({
+		data: data ?? undefined,
+		isPending: data === null && !extra.isError,
+		isError: Boolean(extra.isError),
+		isSuccess: data !== null,
+		refetch: vi.fn().mockResolvedValue({}),
+	});
 	const onSelect = vi.fn();
 	render(
 		<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

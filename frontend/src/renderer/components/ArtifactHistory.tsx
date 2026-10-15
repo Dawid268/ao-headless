@@ -55,7 +55,7 @@ function VersionItem({
 	const harness = version.harness || fallbackHarness;
 	return (
 		<DropdownMenuItem aria-current={selected ? "true" : undefined} className={cn(selected && "bg-interactive-hover text-foreground")} onSelect={onSelect}>
-			<span className="min-w-0 truncate">{formatVersionTime(version.createdAt)}</span>
+			<span className="min-w-0 truncate tabular-nums">{formatVersionTime(version.createdAt)}</span>
 			{current ? <span className="shrink-0 text-caption text-passive">{t("artifacts.history.current")}</span> : null}
 			{/* Who wrote it: the agent's logo, or the user's avatar for a save made in the app. One fixed box keeps both the same size and centre. */}
 			<span className="ml-auto flex size-icon-lg shrink-0 items-center justify-center" title={version.source === "user" ? login || t("artifacts.history.you") : undefined}>
@@ -141,7 +141,11 @@ export function ArtifactHistoryMenu({
 				<TooltipContent side="bottom">{t("artifacts.history")}</TooltipContent>
 			</Tooltip>
 			<DropdownMenuContent align="end" className="max-h-[min(28rem,60vh)] w-72 overflow-y-auto" data-browser-native-overlay="true">
-				{versions.isError && list.length === 0 ? (
+				{versions.isPending ? (
+					<div className="flex justify-center py-2 text-muted-foreground">
+						<LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" />
+					</div>
+				) : versions.isError && list.length === 0 ? (
 					<div className="px-2 py-1.5 text-control text-muted-foreground">{t("artifacts.history.error")}</div>
 				) : versions.isSuccess && list.length === 0 ? (
 					<div className="px-2 py-1.5 text-control text-muted-foreground">{t("artifacts.history.empty")}</div>
@@ -184,6 +188,7 @@ export function ArtifactHistoryMenu({
  */
 export function ArtifactVersionPreview({
 	artifactOrigin,
+	canRestore,
 	hostId,
 	onBack,
 	onRestore,
@@ -194,6 +199,8 @@ export function ArtifactVersionPreview({
 	version,
 }: {
 	artifactOrigin?: string;
+	/** False until the live file's fingerprint is known, which a restore is checked against. */
+	canRestore: boolean;
 	hostId?: string;
 	onBack: () => void;
 	onRestore: () => void;
@@ -216,7 +223,7 @@ export function ArtifactVersionPreview({
 				<Button onClick={onBack} size="sm" type="button" variant="ghost">
 					{t("artifacts.history.backToCurrent")}
 				</Button>
-				<Button disabled={!query.data || restoring} onClick={onRestore} size="sm" type="button" variant="primary">
+				<Button disabled={!query.data || !canRestore || restoring} onClick={onRestore} size="sm" type="button" variant="primary">
 					{restoring ? <LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" /> : null}
 					{t(restoring ? "artifacts.history.restoring" : "artifacts.history.restore")}
 				</Button>

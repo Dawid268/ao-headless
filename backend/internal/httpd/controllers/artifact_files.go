@@ -184,7 +184,7 @@ func removeArtifactFile(dir, relPath string) error {
 }
 
 // artifactEditMu serialises artifact writes so two saves cannot both pass the
-// fingerprint check against the same content.
+// fingerprint check against the same content. writeArtifactSnapshotted holds it.
 var artifactEditMu sync.Mutex
 
 // updateArtifactFile replaces the content of one listed artifact file when
@@ -222,9 +222,7 @@ func (c *SessionsController) updateArtifactFile(w http.ResponseWriter, r *http.R
 		writeArtifactFileNotFound(w, r)
 		return
 	}
-	artifactEditMu.Lock()
-	defer artifactEditMu.Unlock()
-	if err := writeArtifactFile(sess.Metadata.ArtifactDir, clean, expected, []byte(in.Content)); err != nil {
+	if err := c.writeArtifactSnapshotted(r.Context(), sess.SessionRecord, clean, expected, []byte(in.Content)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeArtifactFileNotFound(w, r)
 			return

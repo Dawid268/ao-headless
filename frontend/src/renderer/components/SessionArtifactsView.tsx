@@ -267,7 +267,7 @@ function ArtifactViewerFrame({
 
 /**
  * The open artifact's content: the live file, or a saved version in its place
- * while the history panel is open. The live file stays mounted underneath, so
+ * while a saved version is being previewed. The live file stays mounted underneath, so
  * an edit in progress survives a look at an earlier version.
  */
 function ArtifactViewerBody({
@@ -330,7 +330,8 @@ function ArtifactViewerBody({
 						}}
 						path={artifact.path}
 						restoreError={restore.isError ? restore.error.message : undefined}
-						restoring={restore.isPending || !fingerprint}
+						canRestore={Boolean(fingerprint)}
+						restoring={restore.isPending}
 						sessionId={sessionId}
 						version={previewVersion}
 					/>

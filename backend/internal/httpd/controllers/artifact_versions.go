@@ -182,9 +182,7 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	artifactEditMu.Lock()
-	defer artifactEditMu.Unlock()
-	if err := writeArtifactFile(sess.Metadata.ArtifactDir, clean, expected, []byte(content)); err != nil {
+	if err := c.writeArtifactSnapshotted(r.Context(), sess.SessionRecord, clean, expected, []byte(content)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeArtifactFileNotFound(w, r)
 			return
@@ -200,14 +198,30 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 	})
 }
 
+// writeArtifactSnapshotted replaces a listed artifact file the way a save does.
+// Under the edit lock it first records any content the observer has not
+// versioned yet, so the write never destroys the only copy of an agent edit,
+// and it releases the lock before the caller records the save.
+func (c *SessionsController) writeArtifactSnapshotted(ctx context.Context, sess domain.SessionRecord, relPath, expected string, content []byte) error {
+	artifactEditMu.Lock()
+	defer artifactEditMu.Unlock()
+	if c.ArtifactVersions != nil {
+		if err := c.ArtifactVersions.Sync(ctx, sess, relPath); err != nil {
+			slog.Default().Debug("artifact versions: sync before save failed", "session", sess.ID, "path", relPath, "err", err)
+		}
+	}
+	return writeArtifactFile(sess.Metadata.ArtifactDir, relPath, expected, content)
+}
+
 // recordArtifactSave notes a save as a user version. The save already
-// happened, so a failure here only delays the version: the observer records
-// the content as an agent version on a later tick.
+// happened and its response must not depend on the client staying connected,
+// so it runs on a context that outlives the request. A failure only delays the
+// version: the observer records the content as an agent version on a later tick.
 func (c *SessionsController) recordArtifactSave(ctx context.Context, sess domain.SessionRecord, relPath string) {
 	if c.ArtifactVersions == nil {
 		return
 	}
-	if err := c.ArtifactVersions.RecordSave(ctx, sess, relPath); err != nil {
-		slog.Default().Debug("artifact versions: record save failed", "session", sess.ID, "path", relPath, "err", err)
+	if err := c.ArtifactVersions.RecordSave(context.WithoutCancel(ctx), sess, relPath); err != nil {
+		slog.Default().Warn("artifact versions: record save failed", "session", sess.ID, "path", relPath, "err", err)
 	}
 }
