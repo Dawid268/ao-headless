@@ -47,6 +47,7 @@ type AppSetting struct {
 	DefaultSessionMode domain.SessionMode
 	UpdatedAt          time.Time
 	CloudOffering      bool
+	HarnessDefaults    string
 }
 
 type Automation struct {
@@ -585,6 +586,17 @@ type Session struct {
 	BranchState                      string
 	RequestedOutput                  string
 	LaunchOptions                    string
+}
+
+type SessionArtifactVersion struct {
+	SessionID   domain.SessionID
+	Path        string
+	Version     int64
+	Sha256      string
+	Size        int64
+	ContentType string
+	Mtime       int64
+	CreatedAt   time.Time
 }
 
 type SessionCleanupFact struct {
