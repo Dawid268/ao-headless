@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -133,10 +134,17 @@ func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
 		params["effort"] = settings.Effort
 	}
 	options := []acpdriver.SessionOption{{ID: "model", Value: model}}
-	for _, id := range []string{"thinking", "effort", "fast"} {
+	for _, id := range []string{"thinking", "fast"} {
 		if value := params[id]; value != "" {
 			options = append(options, acpdriver.SessionOption{ID: id, Value: value, Optional: true})
 		}
+	}
+	// Each model names its effort setting its own way; only the one it offers applies.
+	if effort := params["effort"]; effort != "" {
+		options = append(options,
+			acpdriver.SessionOption{ID: "effort", Value: effort, Optional: true},
+			acpdriver.SessionOption{ID: "reasoning_effort", Value: effort, Optional: true},
+			acpdriver.SessionOption{ID: "reasoning", Value: strings.ReplaceAll(effort, "xhigh", "extra-high"), Optional: true})
 	}
 	return options
 }
@@ -153,7 +161,7 @@ func cursorModelParams(id string) (string, map[string]string) {
 		}
 		return base, params
 	}
-	tokens := strings.Split(id, "-")
+	tokens := strings.Split(strings.ReplaceAll(id, "-extra-high", "-xhigh"), "-")
 	end := len(tokens)
 	for ; end > 1; end-- {
 		last := tokens[end-1]
@@ -177,7 +185,20 @@ func cursorModelParams(id string) (string, map[string]string) {
 			params[flag] = "false"
 		}
 	}
-	return strings.TrimPrefix(strings.Join(tokens[:end], "-"), "cursor-"), params
+	return cursorChatModelName(strings.Join(tokens[:end], "-")), params
+}
+
+// cursorOlderClaude matches the command line's name for an older Claude model,
+// version first ("claude-4.6-opus"), which Cursor's chat names family first
+// ("claude-opus-4-6").
+var cursorOlderClaude = regexp.MustCompile(`^claude-(\d+(?:\.\d+)?)-(opus|sonnet|haiku)$`)
+
+// cursorChatModelName turns a command-line model name into the one Cursor's chat lists.
+func cursorChatModelName(name string) string {
+	if match := cursorOlderClaude.FindStringSubmatch(name); match != nil {
+		return "claude-" + match[2] + "-" + strings.ReplaceAll(match[1], ".", "-")
+	}
+	return strings.TrimPrefix(name, "cursor-")
 }
 
 var cursorEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
