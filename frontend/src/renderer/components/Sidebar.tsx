@@ -869,6 +869,17 @@ export function Sidebar({
   const [collapsedRemoteProjects, setCollapsedRemoteProjects] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [collapsedHostGroups, setCollapsedHostGroups] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const toggleHostGroup = useCallback((id: string) => {
+    setCollapsedHostGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const [
     dismissedInitialActiveProjectIds,
     setDismissedInitialActiveProjectIds,
@@ -1041,6 +1052,20 @@ export function Sidebar({
       ),
     [orderedWorkspaces],
   );
+  const localProjectWorkspaces = useMemo(
+    () =>
+      projectWorkspaces.filter(
+        (workspace) => workspace.kind !== CLOUD_PROJECT_KIND,
+      ),
+    [projectWorkspaces],
+  );
+  const cloudProjectWorkspaces = useMemo(
+    () =>
+      projectWorkspaces.filter(
+        (workspace) => workspace.kind === CLOUD_PROJECT_KIND,
+      ),
+    [projectWorkspaces],
+  );
   const standaloneWorkspace = useMemo(
     () =>
       workspaces.find(
@@ -1054,7 +1079,7 @@ export function Sidebar({
     showAll: showAllProjects,
     toggleShowAll: toggleShowAllProjects,
   } = useShowMoreCap(
-    projectWorkspaces,
+    localProjectWorkspaces,
     SIDEBAR_INITIAL_SECTION_LIMIT,
     selection.activeProjectId,
     isIconRail,
@@ -1458,44 +1483,87 @@ export function Sidebar({
                       wrapperClassName="flex flex-col flex-1"
                     >
                       <SidebarMenu className="relative gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
-                        <AnimatePresence initial={false}>
-                          {!workspaceError &&
-                            visibleWorkspaces.map((workspace) => (
-                              <ProjectItem
-                                key={workspace.id}
-                                workspace={workspace}
-                                expanded={
-                                  expandedIds.has(workspace.id) ||
-                                  (initialActiveSessionProjectId ===
-                                    workspace.id &&
-                                    !dismissedInitialActiveProjectIds.has(
-                                      workspace.id,
-                                    ))
-                                }
-                                suppressInitialExpandAnimation={expandedIds.has(
-                                  workspace.id,
-                                )}
-                                selection={selection}
-                                isDragged={draggingProjectId === workspace.id}
-                                projectDragInProgress={
-                                  draggingProjectId !== null
-                                }
-                                consumeDragClick={
-                                  projectDragClickGuard.consumeClick
-                                }
-                                onToggle={toggleProjectDisclosure}
-                                onRemoveProject={onRemoveProject}
-                                onProjectDragStart={handleProjectDragStart}
-                                onProjectDragEnd={handleProjectDragEnd}
-                                onProjectDragOver={handleProjectDragOver}
-                                onProjectDrop={handleProjectDrop}
-                              />
-                            ))}
-                        </AnimatePresence>
+                        <div className="sidebar-expanded-chrome">
+                          <SectionDisclosure
+                            label={t("settings.harness.thisComputer")}
+                            open={!collapsedHostGroups.has("local")}
+                            onToggle={() => toggleHostGroup("local")}
+                          />
+                        </div>
+                        {!collapsedHostGroups.has("local") ? (
+                          <AnimatePresence initial={false}>
+                            {!workspaceError &&
+                              visibleWorkspaces.map((workspace) => (
+                                <ProjectItem
+                                  key={workspace.id}
+                                  workspace={workspace}
+                                  expanded={
+                                    expandedIds.has(workspace.id) ||
+                                    (initialActiveSessionProjectId ===
+                                      workspace.id &&
+                                      !dismissedInitialActiveProjectIds.has(
+                                        workspace.id,
+                                      ))
+                                  }
+                                  suppressInitialExpandAnimation={expandedIds.has(
+                                    workspace.id,
+                                  )}
+                                  selection={selection}
+                                  isDragged={draggingProjectId === workspace.id}
+                                  projectDragInProgress={
+                                    draggingProjectId !== null
+                                  }
+                                  consumeDragClick={
+                                    projectDragClickGuard.consumeClick
+                                  }
+                                  onToggle={toggleProjectDisclosure}
+                                  onRemoveProject={onRemoveProject}
+                                  onProjectDragStart={handleProjectDragStart}
+                                  onProjectDragEnd={handleProjectDragEnd}
+                                  onProjectDragOver={handleProjectDragOver}
+                                  onProjectDrop={handleProjectDrop}
+                                />
+                              ))}
+                          </AnimatePresence>
+                        ) : null}
                         <RemoteHostsSection
                           hosts={remoteHosts}
                           workspaces={remoteWorkspaces}
                           failedHostIds={remoteFailedHostIds}
+                          isOpen={(host) =>
+                            !collapsedHostGroups.has(host.hostId)
+                          }
+                          renderHeader={(host) => (
+                            <div className="sidebar-expanded-chrome">
+                              <SectionDisclosure
+                                icon={
+                                  <>
+                                    <span className="sr-only">
+                                      {host.status === "connected"
+                                        ? t("remote.statusLive")
+                                        : host.status === "connecting"
+                                          ? t("remote.statusConnecting")
+                                          : t("remote.statusOffline")}
+                                    </span>
+                                    <span
+                                      aria-hidden="true"
+                                      className={cn(
+                                        "size-dot-sm shrink-0 rounded-full",
+                                        host.status === "connected"
+                                          ? "bg-status-ready"
+                                          : host.status === "connecting"
+                                            ? "animate-status-pulse bg-status-working"
+                                            : "bg-status-exited",
+                                      )}
+                                    />
+                                  </>
+                                }
+                                label={host.label}
+                                open={!collapsedHostGroups.has(host.hostId)}
+                                onToggle={() => toggleHostGroup(host.hostId)}
+                              />
+                            </div>
+                          )}
                           renderProject={(host, workspace) => {
                             const hostId = host.hostId;
                             const projectKey = sessionUiKey(
@@ -1532,7 +1600,6 @@ export function Sidebar({
                               <ProjectItem
                                 key={projectKey}
                                 workspace={workspace}
-                                hostLabel={host.label}
                                 expanded={
                                   !collapsedRemoteProjects.has(projectKey)
                                 }
@@ -1565,6 +1632,46 @@ export function Sidebar({
                           }}
                           onRetry={onRetryRemoteHosts}
                         />
+                        {cloudProjectWorkspaces.length > 0 ? (
+                          <>
+                            <div className="sidebar-expanded-chrome">
+                              <SectionDisclosure
+                                label={t("shell.cloudProjectBadge")}
+                                open={!collapsedHostGroups.has("cloud")}
+                                onToggle={() => toggleHostGroup("cloud")}
+                              />
+                            </div>
+                            {!collapsedHostGroups.has("cloud")
+                              ? cloudProjectWorkspaces.map((workspace) => (
+                                  <ProjectItem
+                                    key={workspace.id}
+                                    workspace={workspace}
+                                    expanded={
+                                      expandedIds.has(workspace.id) ||
+                                      (initialActiveSessionProjectId ===
+                                        workspace.id &&
+                                        !dismissedInitialActiveProjectIds.has(
+                                          workspace.id,
+                                        ))
+                                    }
+                                    suppressInitialExpandAnimation={expandedIds.has(
+                                      workspace.id,
+                                    )}
+                                    selection={selection}
+                                    isDragged={false}
+                                    projectDragInProgress={false}
+                                    consumeDragClick={() => false}
+                                    onToggle={toggleProjectDisclosure}
+                                    onRemoveProject={onRemoveProject}
+                                    onProjectDragStart={() => undefined}
+                                    onProjectDragEnd={() => undefined}
+                                    onProjectDragOver={() => undefined}
+                                    onProjectDrop={() => undefined}
+                                  />
+                                ))
+                              : null}
+                          </>
+                        ) : null}
                         {isIconRail && <CreateProjectListItem />}
                         <div
                           aria-hidden="true"

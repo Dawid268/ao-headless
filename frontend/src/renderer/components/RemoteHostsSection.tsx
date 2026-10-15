@@ -10,6 +10,8 @@ type Props = {
   hosts: RemoteHost[];
   workspaces: WorkspaceSummary[];
   failedHostIds?: string[];
+  renderHeader: (host: RemoteHost) => ReactNode;
+  isOpen: (host: RemoteHost) => boolean;
   renderProject: (host: RemoteHost, workspace: WorkspaceSummary) => ReactNode;
   onRetry: () => void;
 };
@@ -19,6 +21,8 @@ export function RemoteHostsSection({
   hosts,
   workspaces,
   failedHostIds = [],
+  renderHeader,
+  isOpen,
   renderProject,
   onRetry,
 }: Props) {
@@ -85,11 +89,14 @@ export function RemoteHostsSection({
         );
         return (
           <Fragment key={host.url}>
-            {projects.map((workspace) => (
-              <Fragment key={`${host.hostId}:${workspace.id}`}>
-                {renderProject(host, workspace)}
-              </Fragment>
-            ))}
+            {renderHeader(host)}
+            {isOpen(host)
+              ? projects.map((workspace) => (
+                  <Fragment key={`${host.hostId}:${workspace.id}`}>
+                    {renderProject(host, workspace)}
+                  </Fragment>
+                ))
+              : null}
             {failedHostIds.includes(host.hostId) && (
               <SidebarMenuItem>
                 <SidebarMenuButton

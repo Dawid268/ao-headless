@@ -1,4 +1,4 @@
-import { Activity, BadgeCheck, Bot, CircleHelp, CreditCard, Globe2, Keyboard, RefreshCw, Server, Settings2, Smartphone, type LucideIcon } from "lucide-react";
+import { Activity, BadgeCheck, Bot, CircleHelp, CreditCard, GitBranch, Globe2, Keyboard, RefreshCw, Server, Settings2, Smartphone, type LucideIcon } from "lucide-react";
 import { lazy, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import type { GlobalSettingsSection } from "../../stores/ui-store";
@@ -14,6 +14,7 @@ import { KeyboardShortcutsContent } from "./KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./MobileDevicesSection";
 import { ReportProblemContent } from "./ReportProblemContent";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
+import { SourceControlSettings } from "./SourceControlSettings";
 import { SettingsSection } from "./SettingsSection";
 
 /** The memory window's own blocks, loaded only when the page is opened: it
@@ -71,6 +72,12 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		icon: Bot,
 		label: (t) => t("settings.harness"),
 		render: (_t, titleHidden, { focusAgentId, hostId, harnessView, startLogin }) => <HarnessSettingsSection focusAgentId={focusAgentId} {...(hostId ? { hostId } : {})} {...(harnessView ? { initialView: harnessView } : {})} {...(startLogin ? { startLogin } : {})} titleHidden={titleHidden} />,
+	},
+	{
+		id: "sourceControl",
+		icon: GitBranch,
+		label: (t) => t("settings.sourceControl"),
+		render: (_t, titleHidden) => <SourceControlSettings titleHidden={titleHidden} />,
 	},
 	{
 		id: "agents",

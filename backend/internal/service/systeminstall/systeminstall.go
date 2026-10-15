@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -45,6 +46,8 @@ type Target string
 const (
 	TargetTmux        Target = "tmux"
 	TargetGH          Target = "gh"
+	TargetGLAB        Target = "glab"
+	TargetGit         Target = "git"
 	TargetClaude      Target = "claude"
 	TargetClaudeCode  Target = "claude-code"
 	TargetCodex       Target = "codex"
@@ -118,7 +121,7 @@ func installNotice(target Target) string {
 // systemTargetSet is the stable contract of the legacy /system/install route.
 // Agent-only targets use /agents/{agent}/install instead.
 var systemTargetSet = map[Target]bool{
-	TargetTmux: true, TargetGH: true, TargetClaude: true, TargetCloudflared: true,
+	TargetTmux: true, TargetGH: true, TargetGLAB: true, TargetGit: true, TargetClaude: true, TargetCloudflared: true,
 	TargetCodex: true, TargetOpencode: true, TargetOpencodeV2: true, TargetCopilot: true,
 }
 
@@ -296,7 +299,7 @@ var devinInstalledLine = regexp.MustCompile(`Installed devin v\S+ to [^\r\n]+/de
 
 // Job is the tracked state of one harness operation for a Target.
 type Job struct {
-	Target              Target `json:"target" enum:"tmux,gh,claude,claude-code,codex,cursor,opencode,opencode-v2,aider,copilot,grok,kimi,pi,amp,auggie,droid,crush,cline,goose,qwen,gemini,continue,devin,kiro,kilocode,vibe,muse,agy,autohand,kimchi,prime-agent,omp,fx,unreal-agent,codewhale,mimo-code,deepseek-harness,openhands,command-code,cloudflared" description:"Fixed install target this job ran (or is running) for."`
+	Target              Target `json:"target" enum:"tmux,gh,glab,git,claude,claude-code,codex,cursor,opencode,opencode-v2,aider,copilot,grok,kimi,pi,amp,auggie,droid,crush,cline,goose,qwen,gemini,continue,devin,kiro,kilocode,vibe,muse,agy,autohand,kimchi,prime-agent,omp,fx,unreal-agent,codewhale,mimo-code,deepseek-harness,openhands,command-code,cloudflared" description:"Fixed install target this job ran (or is running) for."`
 	Status              Status `json:"status" enum:"idle,running,installing,verifying,succeeded,failed,unsupported,interrupted" description:"Current lifecycle state of the job."`
 	Method              string `json:"method,omitempty" description:"Server-owned installation method selected for this harness job."`
 	Command             string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
@@ -372,6 +375,9 @@ type Service struct {
 	// runtime.GOOS; tests override it to exercise every OS branch from one
 	// machine, the same seam lookPath provides for PATH probing.
 	goos string
+	// runningAsRoot, when set, overrides the real euid so tests can plan a
+	// root-capable apt install without running the suite as root.
+	runningAsRoot func() bool
 	// installTimeout bounds each run — see defaultInstallTimeout. Tests
 	// override it with a short duration to exercise the timeout path without
 	// a real multi-minute wait.
@@ -604,11 +610,12 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	}
 
 	job := &Job{
-		Target:    target,
-		Status:    StatusRunning,
-		Command:   command,
-		Notice:    plan.Notice,
-		StartedAt: &now,
+		Target:              target,
+		Status:              StatusRunning,
+		Command:             command,
+		ExpectedDestination: plan.ExpectedDestination,
+		Notice:              plan.Notice,
+		StartedAt:           &now,
 	}
 	s.jobs[target] = job
 	if s.stopping {
@@ -1128,13 +1135,11 @@ func (s *Service) run(parent context.Context, argv []string, job *Job) {
 		s.mu.Unlock()
 		return
 	}
-	if !IsAgentTarget(job.Target) {
-		if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
-			job.Status = StatusFailed
-			job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
-			s.mu.Unlock()
-			return
-		}
+	if !IsAgentTarget(job.Target) && !s.toolInstalled(job) {
+		job.Status = StatusFailed
+		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+		s.mu.Unlock()
+		return
 	}
 	job.Status = StatusSucceeded
 	callback := s.onSucceeded
@@ -1364,6 +1369,9 @@ func (s *Service) resolvePlan(target Target) Plan {
 // displayCommand renders the plan for display. Prepare steps are joined with
 // "; " rather than "&&": a failed step is noted and Command still runs.
 func displayCommand(plan Plan) string {
+	if plan.Method == "official-archive" && plan.Package != "" {
+		return "install " + plan.Package
+	}
 	if plan.Script != nil {
 		return fmt.Sprintf("%s <downloaded from %s>", strings.Join(plan.Script.Interpreter, " "), plan.Script.URL)
 	}
@@ -1451,6 +1459,10 @@ func (s *Service) planFor(target Target) Plan {
 		return s.planTmux()
 	case TargetGH:
 		return s.planGH()
+	case TargetGLAB:
+		return s.planGLAB()
+	case TargetGit:
+		return s.planGit()
 	case TargetClaude:
 		return s.planNPM(TargetClaude, "@anthropic-ai/claude-code")
 	case TargetCodex:
@@ -1491,15 +1503,65 @@ func (s *Service) planGH() Plan {
 	case "darwin":
 		return s.planBrew(TargetGH, "gh")
 	case "linux":
-		return s.planLinuxPackage(TargetGH, func(mgr string) string {
-			if mgr == "pacman" {
-				return "github-cli"
-			}
-			return "gh"
-		})
+		return s.planOfficialArchive(TargetGH, ghLinuxArchive)
 	default:
 		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
 	}
+}
+
+func (s *Service) planGLAB() Plan {
+	switch s.goos {
+	case "windows":
+		return s.planWinget(TargetGLAB, "GLab.GLab")
+	case "darwin":
+		return s.planBrew(TargetGLAB, "glab")
+	case "linux":
+		return s.planOfficialArchive(TargetGLAB, glabLinuxArchive)
+	default:
+		return Plan{Target: TargetGLAB, Unsupported: true, Reason: "glab installation is not supported on this platform."}
+	}
+}
+
+func (s *Service) planGit() Plan {
+	switch s.goos {
+	case "windows":
+		return s.planWinget(TargetGit, "Git.Git")
+	case "darwin":
+		return s.planBrew(TargetGit, "git")
+	case "linux":
+		plan := s.planLinuxPackage(TargetGit, func(string) string { return "git" })
+		// The headless container is root, so apt can install git without a password.
+		// A desktop user still gets the manual command.
+		if s.isRoot() && len(plan.Command) > 0 {
+			plan.Unsupported = false
+			plan.NeedsRoot = false
+			plan.Reason = ""
+		}
+		return plan
+	default:
+		return Plan{Target: TargetGit, Unsupported: true, Reason: "git installation is not supported on this platform."}
+	}
+}
+
+func (s *Service) isRoot() bool {
+	if s.runningAsRoot != nil {
+		return s.runningAsRoot()
+	}
+	return os.Geteuid() == 0
+}
+
+// toolInstalled reports whether a finished system install left a usable binary.
+// Official archives land in /usr/local/bin or ~/.local/bin, which may not be on
+// PATH yet, so the planned destination counts too.
+func (s *Service) toolInstalled(job *Job) bool {
+	if path, err := s.executables.LookPath(string(job.Target)); err == nil && path != "" {
+		return true
+	}
+	if job.ExpectedDestination == "" {
+		return false
+	}
+	info, err := os.Stat(job.ExpectedDestination)
+	return err == nil && !info.IsDir()
 }
 
 // planCloudflared mirrors planGH: Cloudflare publishes cloudflared through

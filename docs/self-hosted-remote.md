@@ -55,10 +55,11 @@ On the VM, get the current address and password (keep it private):
 If the HTTPS address is not ready, rerun the command after a few seconds.
 
 For private Git clones, pushes, or PRs, sign in **on that host** from the desktop:
-**Settings → Remote hosts → Sign in to GitHub** while the host is Live. That
-starts `gh auth login` on the host. Pairing does not copy GitHub credentials
-from your laptop. A GitLab personal access token can be stored on the host
-with `PUT /api/v1/system/gitlab-token`; it is not the laptop's token.
+**Settings → Source control**, pick the host, and Install then Sign in. That
+installs `git`, `gh`, and `glab` on the host when they are missing, then starts
+`gh auth login` or `glab auth login` there. Pairing does not copy GitHub or
+GitLab credentials from your laptop. The headless image already includes the
+pinned CLIs; logins live under `/ao-data/home` and survive an image replace.
 
 SSH still works if you prefer a shell on the VM:
 

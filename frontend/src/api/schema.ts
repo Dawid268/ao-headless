@@ -3543,6 +3543,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/gitlab-auth/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a trusted terminal running the GitLab CLI login flow */
+        post: operations["openGitLabAuthTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/gitlab-token": {
         parameters: {
             query?: never;
@@ -3588,6 +3605,23 @@ export interface paths {
         };
         /** Check local machine readiness (git, tmux, agent harness, gh) */
         get: operations["getSystemRequirements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/source-control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report git, GitHub CLI, and GitLab CLI install and login state on this host */
+        get: operations["getSourceControl"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5040,7 +5074,7 @@ export interface components {
              * @description Fixed install target this job ran (or is running) for.
              * @enum {string}
              */
-            target: "tmux" | "gh" | "claude" | "claude-code" | "codex" | "cursor" | "opencode" | "opencode-v2" | "aider" | "copilot" | "grok" | "kimi" | "pi" | "amp" | "auggie" | "droid" | "crush" | "cline" | "goose" | "qwen" | "gemini" | "continue" | "devin" | "kiro" | "kilocode" | "vibe" | "muse" | "agy" | "autohand" | "kimchi" | "prime-agent" | "omp" | "fx" | "unreal-agent" | "codewhale" | "mimo-code" | "deepseek-harness" | "openhands" | "command-code" | "cloudflared";
+            target: "tmux" | "gh" | "glab" | "git" | "claude" | "claude-code" | "codex" | "cursor" | "opencode" | "opencode-v2" | "aider" | "copilot" | "grok" | "kimi" | "pi" | "amp" | "auggie" | "droid" | "crush" | "cline" | "goose" | "qwen" | "gemini" | "continue" | "devin" | "kiro" | "kilocode" | "vibe" | "muse" | "agy" | "autohand" | "kimchi" | "prime-agent" | "omp" | "fx" | "unreal-agent" | "codewhale" | "mimo-code" | "deepseek-harness" | "openhands" | "command-code" | "cloudflared";
             /** Format: date-time */
             updatedAt?: null | string;
         };
@@ -6261,6 +6295,25 @@ export interface components {
             startedAt?: null | string;
             state: string;
             text: string;
+        };
+        SourceControlStatus: {
+            /** @description Git, GitHub CLI, and GitLab CLI, in that order. */
+            tools: components["schemas"]["SourceControlTool"][];
+        };
+        SourceControlTool: {
+            /** @description Resolved path when installed, or why it is missing. */
+            detail?: string;
+            /**
+             * @description Stable tool identifier.
+             * @enum {string}
+             */
+            id: "git" | "gh" | "glab";
+            /** @description Whether the executable was found on PATH. */
+            installed: boolean;
+            /** @description Human-readable tool name. */
+            label: string;
+            /** @description Whether the CLI has a usable login. Absent for git and for a missing CLI. */
+            signedIn?: null | boolean;
         };
         SpawnOrchestratorRequest: {
             /** @enum {string} */
@@ -20131,6 +20184,53 @@ export interface operations {
             };
         };
     };
+    openGitLabAuthTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getGitLabTokenStatus: {
         parameters: {
             query?: never;
@@ -20216,8 +20316,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, opencode-v2, copilot, or cloudflared. */
-                target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "opencode-v2" | "copilot" | "cloudflared";
+                /** @description Install target identifier: tmux, gh, glab, git, claude, codex, opencode, opencode-v2, copilot, or cloudflared. */
+                target: "tmux" | "gh" | "glab" | "git" | "claude" | "codex" | "opencode" | "opencode-v2" | "copilot" | "cloudflared";
             };
             cookie?: never;
         };
@@ -20266,8 +20366,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, opencode-v2, copilot, or cloudflared. */
-                target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "opencode-v2" | "copilot" | "cloudflared";
+                /** @description Install target identifier: tmux, gh, glab, git, claude, codex, opencode, opencode-v2, copilot, or cloudflared. */
+                target: "tmux" | "gh" | "glab" | "git" | "claude" | "codex" | "opencode" | "opencode-v2" | "copilot" | "cloudflared";
             };
             cookie?: never;
         };
@@ -20327,6 +20427,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemRequirementsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSourceControl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceControlStatus"];
                 };
             };
             /** @description Internal Server Error */

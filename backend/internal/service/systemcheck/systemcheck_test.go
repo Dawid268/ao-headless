@@ -542,3 +542,42 @@ func TestCheckGitHubAuth_EmptyHostsIsSignedOut(t *testing.T) {
 		t.Fatalf("unexpected token fallback: %v", runner.argvLog)
 	}
 }
+
+func TestSourceControlReportsInstallAndLogin(t *testing.T) {
+	runner := &fakeCommandRunner{stdout: `{"hosts":{"github.com":[{"active":true,"state":"success"}]}}`}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{
+		"git": "/usr/bin/git",
+		"gh":  "/usr/bin/gh",
+	})), runner)
+	status, err := svc.SourceControl(context.Background())
+	if err != nil {
+		t.Fatalf("SourceControl() error = %v", err)
+	}
+	if len(status.Tools) != 3 || status.Tools[0].ID != "git" || !status.Tools[0].Installed || status.Tools[0].SignedIn != nil {
+		t.Fatalf("git tool = %+v", status.Tools[0])
+	}
+	if !status.Tools[1].Installed || status.Tools[1].SignedIn == nil || !*status.Tools[1].SignedIn {
+		t.Fatalf("gh tool = %+v", status.Tools[1])
+	}
+	if status.Tools[2].Installed || status.Tools[2].SignedIn != nil {
+		t.Fatalf("glab tool = %+v", status.Tools[2])
+	}
+}
+
+func TestOpenGitLabAuthTerminalUsesResolvedBinary(t *testing.T) {
+	opener := &fakeGitHubAuthTerminalOpener{}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{
+		"glab": "/usr/local/bin/glab",
+	})), &fakeCommandRunner{})
+	svc.SetGitHubAuthTerminalOpener(opener)
+	terminal, err := svc.OpenGitLabAuthTerminal(context.Background())
+	if err != nil {
+		t.Fatalf("OpenGitLabAuthTerminal() error = %v", err)
+	}
+	if terminal.HandleID != "shellterm-github" {
+		t.Fatalf("handle = %q", terminal.HandleID)
+	}
+	if len(opener.input.Argv) != 3 || opener.input.Argv[0] != "/usr/local/bin/glab" || opener.input.Argv[1] != "auth" || opener.input.Argv[2] != "login" {
+		t.Fatalf("argv = %v", opener.input.Argv)
+	}
+}

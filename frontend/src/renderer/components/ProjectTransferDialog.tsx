@@ -4,7 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { connectedHosts, labelForHost } from "../lib/host-clients";
+import { apiClient } from "../lib/api-client";
+import {
+  clientForHost,
+  connectedHosts,
+  labelForHost,
+} from "../lib/host-clients";
 import { LOCAL_HOST, type HostId } from "../lib/hosts";
 import { projectNavigateTarget } from "../lib/navigate-to-session";
 import {
@@ -147,7 +152,29 @@ export function ProjectTransferDialog({
         signal: controller.signal,
         onStatus: setStatus,
       });
+      const crossHost = destHostId !== source;
+      if (finished.phase === "done" && crossHost) {
+        const sourceClient = source ? clientForHost(source) : apiClient;
+        const removed = await sourceClient.DELETE("/api/v1/projects/{id}", {
+          params: { path: { id: projectId } },
+        });
+        if (removed.error) {
+          setStatus((current) =>
+            current
+              ? {
+                  ...current,
+                  error: t("projectTransfer.leaveSourceFailed"),
+                }
+              : current,
+          );
+        }
+      }
       void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+      if (source) {
+        void queryClient.invalidateQueries({
+          queryKey: remoteWorkspaceQueryKey(source),
+        });
+      }
       if (destHostId && finished.phase === "done") {
         void queryClient.invalidateQueries({
           queryKey: remoteWorkspaceQueryKey(destHostId),
@@ -356,6 +383,11 @@ export function ProjectTransferDialog({
                       <p className="text-xs text-muted-foreground">
                         {t("projectTransfer.sourceRemains")}
                       </p>
+                      {status?.error ? (
+                        <p className="text-xs text-destructive" role="alert">
+                          {status.error}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

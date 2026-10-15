@@ -198,6 +198,7 @@ func TestPlanFor(t *testing.T) {
 		wantReasonHas   string
 		wantNoticeHas   string
 		wantCommand     []string
+		wantCommandHas  string
 	}{
 		{
 			name: "tmux windows is unsupported", target: TargetTmux, goos: "windows",
@@ -270,11 +271,23 @@ func TestPlanFor(t *testing.T) {
 			wantCommand: []string{"brew", "install", "gh"},
 		},
 		{
-			name: "gh linux apt-get is unsupported with instructions for the gh package", target: TargetGH, goos: "linux", found: []string{"apt-get"},
-			wantUnsupported: true, wantReasonHas: "administrator password",
+			name: "gh linux without curl is unsupported", target: TargetGH, goos: "linux", found: []string{"apt-get"},
+			wantUnsupported: true, wantReasonHas: "curl was not found",
 		},
 		{
-			name: "gh linux pacman is unsupported with instructions for the github-cli package", target: TargetGH, goos: "linux", found: []string{"pacman"},
+			name: "gh linux uses the official archive", target: TargetGH, goos: "linux", found: []string{"curl", "tar"},
+			wantCommandHas: "gh_" + ghVersion + "_linux_",
+		},
+		{
+			name: "glab darwin uses brew", target: TargetGLAB, goos: "darwin", found: []string{"brew"},
+			wantCommand: []string{"brew", "install", "glab"},
+		},
+		{
+			name: "glab linux uses the official archive", target: TargetGLAB, goos: "linux", found: []string{"curl", "tar"},
+			wantCommandHas: "glab_" + glabVersion + "_linux_",
+		},
+		{
+			name: "git linux without root stays manual", target: TargetGit, goos: "linux", found: []string{"apt-get"},
 			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
@@ -332,12 +345,27 @@ func TestPlanFor(t *testing.T) {
 					t.Fatalf("Command = %v, want %v", plan.Command, tt.wantCommand)
 				}
 			}
+			if tt.wantCommandHas != "" && !strings.Contains(strings.Join(plan.Command, " "), tt.wantCommandHas) {
+				t.Fatalf("Command = %v, want substring %q", plan.Command, tt.wantCommandHas)
+			}
 		})
 	}
 }
 
+func TestGitLinuxRootInstallsWithApt(t *testing.T) {
+	s := newTestService("linux", "apt-get")
+	s.runningAsRoot = func() bool { return true }
+	plan := s.planFor(TargetGit)
+	if plan.Unsupported {
+		t.Fatalf("root git plan unsupported: %s", plan.Reason)
+	}
+	if strings.Join(plan.Command, " ") != "apt-get install -y git" {
+		t.Fatalf("Command = %v", plan.Command)
+	}
+}
+
 func TestValid(t *testing.T) {
-	for _, target := range []Target{TargetTmux, TargetGH, TargetClaude, TargetCodex, TargetOpencode, TargetOpencodeV2, TargetCopilot} {
+	for _, target := range []Target{TargetTmux, TargetGH, TargetGLAB, TargetGit, TargetClaude, TargetCodex, TargetOpencode, TargetOpencodeV2, TargetCopilot} {
 		if !Valid(target) {
 			t.Errorf("Valid(%q) = false, want true", target)
 		}

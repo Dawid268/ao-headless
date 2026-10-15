@@ -1946,12 +1946,15 @@ type SystemRequirementsResponse = systemcheck.Report
 // GitHubAuthRequirementResponse is the advisory GitHub credential probe.
 type GitHubAuthRequirementResponse = systemcheck.Requirement
 
+// SourceControlStatusResponse is git, gh, and glab presence plus login state.
+type SourceControlStatusResponse = systemcheck.SourceStatus
+
 // UpdateDrainStatusResponse is the host quiesce state for an image replace.
 type UpdateDrainStatusResponse = updatedrain.Status
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
-	Target string `path:"target" enum:"tmux,gh,claude,codex,opencode,opencode-v2,copilot,cloudflared" description:"Install target identifier: tmux, gh, claude, codex, opencode, opencode-v2, copilot, or cloudflared."`
+	Target string `path:"target" enum:"tmux,gh,glab,git,claude,codex,opencode,opencode-v2,copilot,cloudflared" description:"Install target identifier: tmux, gh, glab, git, claude, codex, opencode, opencode-v2, copilot, or cloudflared."`
 }
 
 // StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).

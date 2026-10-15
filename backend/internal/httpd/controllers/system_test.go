@@ -33,6 +33,21 @@ func (f *fakeSystemChecker) OpenGitHubAuthTerminal(context.Context) (shellterm.S
 	return f.terminal, f.terminalErr
 }
 
+func (f *fakeSystemChecker) OpenGitLabAuthTerminal(context.Context) (shellterm.ShellTerminal, error) {
+	f.terminalCalls++
+	return f.terminal, f.terminalErr
+}
+
+func (f *fakeSystemChecker) SourceControl(context.Context) (systemcheck.SourceStatus, error) {
+	f.calls++
+	signedIn := true
+	return systemcheck.SourceStatus{Tools: []systemcheck.SourceTool{
+		{ID: "git", Label: "Git", Installed: true, Detail: "/usr/bin/git"},
+		{ID: "gh", Label: "GitHub CLI", Installed: true, SignedIn: &signedIn, Detail: "/usr/bin/gh"},
+		{ID: "glab", Label: "GitLab CLI"},
+	}}, f.err
+}
+
 func (f *fakeSystemChecker) CheckGitHubAuth(context.Context) (systemcheck.Requirement, error) {
 	f.authCalls++
 	return f.auth, f.authErr
@@ -117,6 +132,44 @@ func TestGetSystemRequirements(t *testing.T) {
 	}
 	if checker.calls != 1 {
 		t.Fatalf("calls = %d, want 1", checker.calls)
+	}
+}
+
+func TestGetSourceControl(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	checker := &fakeSystemChecker{}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		SystemChecks: checker,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/system/source-control", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /system/source-control = %d, body=%s", status, body)
+	}
+	for _, want := range []string{`"id":"git"`, `"id":"gh"`, `"signedIn":true`, `"id":"glab"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestOpenGitLabAuthTerminal(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	checker := &fakeSystemChecker{terminal: shellterm.ShellTerminal{
+		HandleID: "shellterm-gitlab", WorkingDir: "/tmp/auth", Title: "Connect GitLab", CreatedAt: time.Unix(1, 0).UTC(),
+	}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		SystemChecks: checker,
+	}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/system/gitlab-auth/terminal", "")
+	if status != http.StatusCreated {
+		t.Fatalf("POST /system/gitlab-auth/terminal = %d, body=%s", status, body)
+	}
+	if !strings.Contains(string(body), `"title":"Connect GitLab"`) {
+		t.Fatalf("body missing title: %s", body)
 	}
 }
 

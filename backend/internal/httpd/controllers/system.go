@@ -19,6 +19,8 @@ type SystemChecker interface {
 	CheckStartup(ctx context.Context) (systemcheck.Report, error)
 	CheckGitHubAuth(ctx context.Context) (systemcheck.Requirement, error)
 	OpenGitHubAuthTerminal(ctx context.Context) (shellterm.ShellTerminal, error)
+	SourceControl(ctx context.Context) (systemcheck.SourceStatus, error)
+	OpenGitLabAuthTerminal(ctx context.Context) (shellterm.ShellTerminal, error)
 }
 
 // SystemController owns the /system routes.
@@ -33,6 +35,8 @@ func (c *SystemController) Register(r chi.Router) {
 	r.Get("/system/requirements", c.requirements)
 	r.Get("/system/github-auth", c.githubAuth)
 	r.Post("/system/github-auth/terminal", c.openGitHubAuthTerminal)
+	r.Get("/system/source-control", c.sourceControl)
+	r.Post("/system/gitlab-auth/terminal", c.openGitLabAuthTerminal)
 	r.Get("/system/update-drain", c.updateDrainStatus)
 	r.Post("/system/update-drain", c.beginUpdateDrain)
 	r.Get("/system/gitlab-token", c.gitlabTokenStatus)
@@ -71,6 +75,32 @@ func (c *SystemController) openGitHubAuthTerminal(w http.ResponseWriter, r *http
 		return
 	}
 	terminal, err := c.Checks.OpenGitHubAuthTerminal(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, ShellTerminalEnvelope{ShellTerminal: shellTerminalResponse(terminal)})
+}
+
+func (c *SystemController) sourceControl(w http.ResponseWriter, r *http.Request) {
+	if c.Checks == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/system/source-control")
+		return
+	}
+	status, err := c.Checks.SourceControl(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, status)
+}
+
+func (c *SystemController) openGitLabAuthTerminal(w http.ResponseWriter, r *http.Request) {
+	if c.Checks == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/system/gitlab-auth/terminal")
+		return
+	}
+	terminal, err := c.Checks.OpenGitLabAuthTerminal(r.Context())
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

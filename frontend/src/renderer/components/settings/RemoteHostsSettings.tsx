@@ -2,13 +2,7 @@ import { Pencil, Server, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
-import {
-  baseUrlForHost,
-  clientForHost,
-  disconnectHost,
-} from "../../lib/host-clients";
-import { createTerminalMux, muxUrlFromApiBase } from "../../lib/terminal-mux";
-import { TerminalPane } from "../TerminalPane";
+import { clientForHost, disconnectHost } from "../../lib/host-clients";
 import {
   requestRemoteHostsRefresh,
   useRemoteHosts,
@@ -22,7 +16,7 @@ import {
 } from "../../lib/account-remote-hosts";
 import { useSettings } from "../../hooks/useSettings";
 import { useLocalSignInDialogStore } from "../../stores/local-signin-dialog-store";
-import { useResolvedTheme, useUiStore } from "../../stores/ui-store";
+import { useUiStore } from "../../stores/ui-store";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -38,7 +32,6 @@ export function RemoteHostsSettings({
   titleHidden?: boolean;
 }) {
   const { t } = useTranslation();
-  const theme = useResolvedTheme();
   const enabled = useUiStore((state) => state.remoteHosts);
   const setEnabled = useUiStore((state) => state.setRemoteHosts);
   const { status, signIn } = useCloudSession();
@@ -65,14 +58,6 @@ export function RemoteHostsSettings({
   const formRef = useRef<HTMLFormElement>(null);
   const { hosts: liveHosts } = useRemoteHosts();
   const [drainNote, setDrainNote] = useState<Record<string, string>>({});
-  const [scmNote, setScmNote] = useState("");
-  const [gitlabToken, setGitlabToken] = useState("");
-  const [gitHubTerminal, setGitHubTerminal] = useState<{
-    hostId: string;
-    handleId: string;
-    title: string;
-    createdAt: string;
-  } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -300,155 +285,45 @@ export function RemoteHostsSettings({
                 </div>
               </SettingsRow>
               {host.hostId && liveStatus === "connected" ? (
-                <>
-                  <div className="flex flex-wrap items-center justify-end gap-2 px-3 pb-2">
-                    <Button
-                      disabled={busy}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      onClick={() =>
-                        void (async () => {
-                          setScmNote("");
-                          try {
-                            const { data, error } = await clientForHost(
-                              host.hostId,
-                            ).POST("/api/v1/system/github-auth/terminal");
-                            if (error || !data?.shellTerminal)
-                              throw new Error(t("remote.githubSignInFailed"));
-                            setGitHubTerminal({
-                              hostId: host.hostId,
-                              handleId: data.shellTerminal.handleId,
-                              title: data.shellTerminal.title,
-                              createdAt: data.shellTerminal.createdAt,
-                            });
-                            setScmNote(
-                              t("remote.githubSignInStarted", {
-                                host: host.label,
-                              }),
-                            );
-                          } catch (cause) {
-                            setScmNote(
-                              cause instanceof Error
-                                ? cause.message
-                                : t("remote.githubSignInFailed"),
-                            );
-                          }
-                        })()
-                      }
-                    >
-                      {t("remote.signInGitHub")}
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      onClick={() =>
-                        void (async () => {
+                <div className="flex flex-wrap items-center justify-end gap-2 px-3 pb-2">
+                  <Button
+                    disabled={busy}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      void (async () => {
+                        setDrainNote((current) => ({
+                          ...current,
+                          [host.hostId]: t("remote.preparingUpdate"),
+                        }));
+                        try {
+                          const { data, error } = await clientForHost(
+                            host.hostId,
+                          ).POST("/api/v1/system/update-drain");
+                          if (error)
+                            throw new Error(t("remote.prepareUpdateFailed"));
                           setDrainNote((current) => ({
                             ...current,
-                            [host.hostId]: t("remote.preparingUpdate"),
+                            [host.hostId]: data?.safeToReplace
+                              ? t("remote.safeToRepull")
+                              : t("remote.preparingUpdate"),
                           }));
-                          try {
-                            const { data, error } = await clientForHost(
-                              host.hostId,
-                            ).POST("/api/v1/system/update-drain");
-                            if (error)
-                              throw new Error(t("remote.prepareUpdateFailed"));
-                            setDrainNote((current) => ({
-                              ...current,
-                              [host.hostId]: data?.safeToReplace
-                                ? t("remote.safeToRepull")
-                                : t("remote.preparingUpdate"),
-                            }));
-                          } catch (cause) {
-                            setDrainNote((current) => ({
-                              ...current,
-                              [host.hostId]:
-                                cause instanceof Error
-                                  ? cause.message
-                                  : t("remote.prepareUpdateFailed"),
-                            }));
-                          }
-                        })()
-                      }
-                    >
-                      {t("remote.prepareUpdate")}
-                    </Button>
-                  </div>
-                  <form
-                    className="flex items-center justify-end gap-2 px-3 pb-2"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const token = gitlabToken.trim();
-                      if (!token) return;
-                      void (async () => {
-                        setScmNote("");
-                        try {
-                          const { error } = await clientForHost(
-                            host.hostId,
-                          ).PUT("/api/v1/system/gitlab-token", {
-                            body: { token },
-                          });
-                          if (error)
-                            throw new Error(t("remote.gitLabSaveFailed"));
-                          setGitlabToken("");
-                          setScmNote(
-                            t("remote.gitLabSaved", { host: host.label }),
-                          );
                         } catch (cause) {
-                          setScmNote(
-                            cause instanceof Error
-                              ? cause.message
-                              : t("remote.gitLabSaveFailed"),
-                          );
+                          setDrainNote((current) => ({
+                            ...current,
+                            [host.hostId]:
+                              cause instanceof Error
+                                ? cause.message
+                                : t("remote.prepareUpdateFailed"),
+                          }));
                         }
-                      })();
-                    }}
+                      })()
+                    }
                   >
-                    <Input
-                      aria-label={t("remote.gitLabToken")}
-                      autoComplete="off"
-                      className="max-w-xs"
-                      onChange={(event) => setGitlabToken(event.target.value)}
-                      placeholder={t("remote.gitLabToken")}
-                      type="password"
-                      value={gitlabToken}
-                    />
-                    <Button
-                      disabled={!gitlabToken.trim()}
-                      size="sm"
-                      type="submit"
-                      variant="outline"
-                    >
-                      {t("remote.saveGitLab")}
-                    </Button>
-                  </form>
-                  {gitHubTerminal?.hostId === host.hostId &&
-                  baseUrlForHost(host.hostId) ? (
-                    <div className="mx-3 mb-2 h-40 overflow-hidden rounded-md border border-border">
-                      <TerminalPane
-                        createMux={() =>
-                          createTerminalMux(
-                            muxUrlFromApiBase(
-                              baseUrlForHost(host.hostId) ?? "",
-                            ),
-                          )
-                        }
-                        daemonReady
-                        fontSize={12}
-                        terminalTarget={{
-                          kind: "shell",
-                          handleId: gitHubTerminal.handleId,
-                          generation: gitHubTerminal.createdAt,
-                          title: gitHubTerminal.title,
-                        }}
-                        theme={theme}
-                      />
-                    </div>
-                  ) : null}
-                </>
+                    {t("remote.prepareUpdate")}
+                  </Button>
+                </div>
               ) : null}
               {drainNote[host.hostId] ? (
                 <p className="px-3 pb-2 text-xs text-settings-muted">
@@ -463,11 +338,6 @@ export function RemoteHostsSettings({
             </div>
           );
         })}
-        {scmNote ? (
-          <p className="px-3 py-1 text-xs text-settings-muted" role="status">
-            {scmNote}
-          </p>
-        ) : null}
         {loadError ? (
           <div
             className="flex items-center gap-2 px-3 py-2 text-xs text-error"

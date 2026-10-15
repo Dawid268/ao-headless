@@ -290,6 +290,107 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 }
 
+// SourceTool is one CLI the Source control settings page can install and,
+// for GitHub and GitLab, sign in.
+type SourceTool struct {
+	ID        string `json:"id" enum:"git,gh,glab" description:"Stable tool identifier."`
+	Label     string `json:"label" description:"Human-readable tool name."`
+	Installed bool   `json:"installed" description:"Whether the executable was found on PATH."`
+	// SignedIn is omitted for git and for a CLI that is not installed.
+	SignedIn *bool  `json:"signedIn,omitempty" description:"Whether the CLI has a usable login. Absent for git and for a missing CLI."`
+	Detail   string `json:"detail,omitempty" description:"Resolved path when installed, or why it is missing."`
+}
+
+// SourceStatus is the body of GET /api/v1/system/source-control.
+type SourceStatus struct {
+	Tools []SourceTool `json:"tools" description:"Git, GitHub CLI, and GitLab CLI, in that order."`
+}
+
+// SourceControl probes git, gh, and glab on this host. It does not capture tokens.
+func (s *Service) SourceControl(ctx context.Context) (SourceStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return SourceStatus{}, err
+	}
+	git := s.installedTool("git", "Git")
+	gh := s.signedInTool(ctx, "gh", "GitHub CLI", s.githubSignedIn)
+	glab := s.signedInTool(ctx, "glab", "GitLab CLI", s.gitlabSignedIn)
+	return SourceStatus{Tools: []SourceTool{git, gh, glab}}, nil
+}
+
+// OpenGitLabAuthTerminal starts the fixed GitLab CLI login flow.
+func (s *Service) OpenGitLabAuthTerminal(ctx context.Context) (shellterm.ShellTerminal, error) {
+	if err := ctx.Err(); err != nil {
+		return shellterm.ShellTerminal{}, err
+	}
+	path, err := s.executables.LookPath("glab")
+	if err != nil || path == "" {
+		return shellterm.ShellTerminal{}, apierr.Invalid("GITLAB_CLI_UNAVAILABLE", "GitLab CLI was not found on PATH.", nil)
+	}
+	if s.terminals == nil {
+		return shellterm.ShellTerminal{}, apierr.Internal("GITLAB_AUTH_TERMINAL_UNAVAILABLE", "GitLab authentication terminal service is unavailable.")
+	}
+	return s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
+		Argv:  []string{path, "auth", "login"},
+		Title: "Connect GitLab",
+	})
+}
+
+func (s *Service) installedTool(name, label string) SourceTool {
+	path, err := s.executables.LookPath(name)
+	if err != nil || path == "" {
+		return SourceTool{ID: name, Label: label, Detail: name + " was not found on PATH."}
+	}
+	return SourceTool{ID: name, Label: label, Installed: true, Detail: path}
+}
+
+func (s *Service) signedInTool(ctx context.Context, name, label string, signedIn func(context.Context, string) bool) SourceTool {
+	tool := s.installedTool(name, label)
+	if !tool.Installed {
+		return tool
+	}
+	ok := signedIn(ctx, tool.Detail)
+	tool.SignedIn = &ok
+	return tool
+}
+
+func (s *Service) githubSignedIn(ctx context.Context, path string) bool {
+	if s.commands == nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var stdout bytes.Buffer
+	err := s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard)
+	var status struct {
+		Hosts map[string][]struct {
+			Active bool   `json:"active"`
+			State  string `json:"state"`
+		} `json:"hosts"`
+	}
+	if err == nil && json.Unmarshal(stdout.Bytes(), &status) == nil && len(status.Hosts) > 0 {
+		for _, accounts := range status.Hosts {
+			for _, account := range accounts {
+				if account.Active && account.State == "success" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return s.hasGitHubAuth(ctx, path)
+}
+
+func (s *Service) gitlabSignedIn(ctx context.Context, path string) bool {
+	if s.commands == nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	// Status without --show-token: a zero exit means a login exists, and the
+	// token itself never enters this process's output.
+	return s.commands.Run(probeCtx, []string{path, "auth", "status"}, io.Discard, io.Discard) == nil
+}
+
 func (s *Service) hasGitHubAuth(ctx context.Context, path string) bool {
 	// Give the local credential probe its own budget, even when status timed out.
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

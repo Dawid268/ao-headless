@@ -10836,6 +10836,37 @@ paths:
       summary: Open a trusted terminal running the GitHub CLI login flow
       tags:
       - system
+  /api/v1/system/gitlab-auth/terminal:
+    post:
+      operationId: openGitLabAuthTerminal
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Open a trusted terminal running the GitLab CLI login flow
+      tags:
+      - system
   /api/v1/system/gitlab-token:
     get:
       operationId: getGitLabTokenStatus
@@ -10895,17 +10926,19 @@ paths:
     get:
       operationId: getSystemInstallStatus
       parameters:
-      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          opencode-v2, copilot, or cloudflared.'
+      - description: 'Install target identifier: tmux, gh, glab, git, claude, codex,
+          opencode, opencode-v2, copilot, or cloudflared.'
         in: path
         name: target
         required: true
         schema:
-          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            opencode-v2, copilot, or cloudflared.'
+          description: 'Install target identifier: tmux, gh, glab, git, claude, codex,
+            opencode, opencode-v2, copilot, or cloudflared.'
           enum:
           - tmux
           - gh
+          - glab
+          - git
           - claude
           - codex
           - opencode
@@ -10944,17 +10977,19 @@ paths:
     post:
       operationId: startSystemInstall
       parameters:
-      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          opencode-v2, copilot, or cloudflared.'
+      - description: 'Install target identifier: tmux, gh, glab, git, claude, codex,
+          opencode, opencode-v2, copilot, or cloudflared.'
         in: path
         name: target
         required: true
         schema:
-          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            opencode-v2, copilot, or cloudflared.'
+          description: 'Install target identifier: tmux, gh, glab, git, claude, codex,
+            opencode, opencode-v2, copilot, or cloudflared.'
           enum:
           - tmux
           - gh
+          - glab
+          - git
           - claude
           - codex
           - opencode
@@ -11014,6 +11049,32 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
+  /api/v1/system/source-control:
+    get:
+      operationId: getSourceControl
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceControlStatus'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report git, GitHub CLI, and GitLab CLI install and login state on this
+        host
       tags:
       - system
   /api/v1/system/update-drain:
@@ -14800,6 +14861,8 @@ components:
           enum:
           - tmux
           - gh
+          - glab
+          - git
           - claude
           - claude-code
           - codex
@@ -17918,6 +17981,45 @@ components:
       - text
       - state
       - createdAt
+      type: object
+    SourceControlStatus:
+      properties:
+        tools:
+          description: Git, GitHub CLI, and GitLab CLI, in that order.
+          items:
+            $ref: '#/components/schemas/SourceControlTool'
+          type: array
+      required:
+      - tools
+      type: object
+    SourceControlTool:
+      properties:
+        detail:
+          description: Resolved path when installed, or why it is missing.
+          type: string
+        id:
+          description: Stable tool identifier.
+          enum:
+          - git
+          - gh
+          - glab
+          type: string
+        installed:
+          description: Whether the executable was found on PATH.
+          type: boolean
+        label:
+          description: Human-readable tool name.
+          type: string
+        signedIn:
+          description: Whether the CLI has a usable login. Absent for git and for
+            a missing CLI.
+          type:
+          - "null"
+          - boolean
+      required:
+      - id
+      - label
+      - installed
       type: object
     SpawnOrchestratorRequest:
       properties:

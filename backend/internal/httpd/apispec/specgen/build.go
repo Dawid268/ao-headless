@@ -428,6 +428,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	// endpoint it serves, same treatment as AgentInventory above.
 	"SystemcheckReport":             "SystemRequirementsResponse",
 	"SystemcheckRequirement":        "SystemRequirement",
+	"SystemcheckSourceStatus":       "SourceControlStatus",
+	"SystemcheckSourceTool":         "SourceControlTool",
 	"ControllersInstallTargetParam": "InstallTargetParam",
 	// service/systeminstall: Job backs both StartInstallResponse and
 	// InstallStatusResponse (they're the same Go type), so it reflects to one
@@ -554,28 +556,28 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
-	"ProjectProject":                    "Project",
-	"ProjectSummary":                    "ProjectSummary",
-	"ProjectDegraded":                   "DegradedProject",
-	"ProjectAddInput":                   "AddProjectInput",
-	"ProjectCloneInput":                 "CloneProjectInput",
-	"ProjectClonePreparationResult":     "ClonePreparationResult",
-	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
-	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
-	"ProjectSeedAndRegisterInput":       "SeedAndRegisterInput",
-	"ProjectSeedAndRegisterResult":      "SeedAndRegisterResult",
-	"ProjectRemoveResult":               "RemoveProjectResult",
-	"ProjectSetPermissionsInput":        "SetProjectPermissionsInput",
-	"ProjectSetConfigInput":             "SetProjectConfigInput",
-	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
-	"ProjectWorkspaceRepo":              "WorkspaceRepo",
-	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
-	"ControllersSeedProjectQuery":       "SeedProjectQuery",
-	"ControllersStartExportJobRequest":  "StartExportJobRequest",
-	"ControllersStartTransferJobAccepted": "StartTransferJobAccepted",
+	"ProjectProject":                       "Project",
+	"ProjectSummary":                       "ProjectSummary",
+	"ProjectDegraded":                      "DegradedProject",
+	"ProjectAddInput":                      "AddProjectInput",
+	"ProjectCloneInput":                    "CloneProjectInput",
+	"ProjectClonePreparationResult":        "ClonePreparationResult",
+	"ProjectInitializeRepositoryInput":     "InitializeRepositoryInput",
+	"ProjectInitializeRepositoryResult":    "InitializeRepositoryResult",
+	"ProjectSeedAndRegisterInput":          "SeedAndRegisterInput",
+	"ProjectSeedAndRegisterResult":         "SeedAndRegisterResult",
+	"ProjectRemoveResult":                  "RemoveProjectResult",
+	"ProjectSetPermissionsInput":           "SetProjectPermissionsInput",
+	"ProjectSetConfigInput":                "SetProjectConfigInput",
+	"ProjectUpdateSettingsInput":           "UpdateProjectSettingsInput",
+	"ProjectWorkspaceRepo":                 "WorkspaceRepo",
+	"SessionWorkspaceFileStatus":           "WorkspaceFileStatus",
+	"ControllersSeedProjectQuery":          "SeedProjectQuery",
+	"ControllersStartExportJobRequest":     "StartExportJobRequest",
+	"ControllersStartTransferJobAccepted":  "StartTransferJobAccepted",
 	"ControllersProjectTransferJobIDParam": "ProjectTransferJobIDParam",
-	"ControllersProjectImportJobQuery":  "ProjectImportJobQuery",
-	"ProjectxferProgress":               "ProjectTransferProgress",
+	"ControllersProjectImportJobQuery":     "ProjectImportJobQuery",
+	"ProjectxferProgress":                  "ProjectTransferProgress",
 	// httpd/controllers: GitHub PAT wire envelopes
 	"ControllersPutGitHubPATRequest": "PutGitHubPATRequest",
 	"GithubpatRepo":                  "GitHubRepo",
@@ -818,6 +820,25 @@ func systemOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/system/github-auth/terminal", id: "openGitHubAuthTerminal", tag: "system",
 			summary: "Open a trusted terminal running the GitHub CLI login flow",
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ShellTerminalEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/system/source-control", id: "getSourceControl", tag: "system",
+			summary: "Report git, GitHub CLI, and GitLab CLI install and login state on this host",
+			resps: []respUnit{
+				{http.StatusOK, controllers.SourceControlStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/system/gitlab-auth/terminal", id: "openGitLabAuthTerminal", tag: "system",
+			summary: "Open a trusted terminal running the GitLab CLI login flow",
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ShellTerminalEnvelope{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -2506,9 +2527,9 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects/{id}/export-jobs", id: "startProjectExportJob", tag: "projects",
-			summary:    "Start an async portable project export job",
-			pathParams: []any{controllers.ProjectIDParam{}},
-			reqBody:    controllers.StartExportJobRequest{},
+			summary:         "Start an async portable project export job",
+			pathParams:      []any{controllers.ProjectIDParam{}},
+			reqBody:         controllers.StartExportJobRequest{},
 			optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.StartTransferJobAccepted{}},
@@ -2520,7 +2541,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects/import-jobs", id: "startProjectImportJob", tag: "projects",
-			summary: "Start an async portable project import from an ao-project-export package",
+			summary:    "Start an async portable project import from an ao-project-export package",
 			pathParams: []any{controllers.ProjectImportJobQuery{}},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.StartTransferJobAccepted{}},
