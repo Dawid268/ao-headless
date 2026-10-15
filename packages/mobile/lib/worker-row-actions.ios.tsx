@@ -69,13 +69,13 @@ export function WorkerRowActions({
 						buttonBorderShape("circle"),
 						controlSize("large"),
 						labelStyle("iconOnly"),
-						tint(t.textSecondary),
+						tint(t.textPrimary),
 						frame({ width: CONTROL_SIZE, height: CONTROL_SIZE }),
 						accessibilityLabel(`Archive ${title}`),
 						accessibilityIdentifier("worker-archive"),
 					]}
 				>
-					<Image systemName={workerActionSymbol("delete")} size={iconSize.lg} color={t.textSecondary} />
+					<Image systemName={workerActionSymbol("delete")} size={iconSize.lg} color={t.textPrimary} />
 				</Button>
 			</HStack>
 		</Host>
