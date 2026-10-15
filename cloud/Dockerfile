@@ -116,9 +116,14 @@ RUN case "${TARGETARCH}" in \
     cursor-agent --version
 # The agent browser ao-worker starts on first use: headless Chromium, fonts that
 # render CJK, Arabic and Devanagari pages instead of boxes, and the agent-browser
-# CLI. agent-browser version and sha256 pins: keep in lockstep with
+# CLI. Only the local Docker provider runs sessions in this image, so
+# compose.yaml sets AGENT_BROWSER=1; hosted sessions run in the Coder and
+# Freestyle images, and leaving Chromium out keeps its CVEs out of the published
+# worker scan. agent-browser version and sha256 pins: keep in lockstep with
 # frontend/scripts/prepare-agent-browser.mjs.
-RUN apt-get update && \
+ARG AGENT_BROWSER=0
+RUN if [ "${AGENT_BROWSER}" != 1 ]; then exit 0; fi && \
+    apt-get update && \
     apt-get install --yes --no-install-recommends \
         chromium \
         fonts-liberation \
