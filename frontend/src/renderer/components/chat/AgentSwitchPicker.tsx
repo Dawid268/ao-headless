@@ -90,6 +90,8 @@ export interface PickerModel {
 	hint?: string;
 	/** The id to select for this row, where it differs from the row's own id. */
 	sendId?: string;
+	/** Other ids the agent lists this same model under, whose favourites are this row's. */
+	aliases?: string[];
 }
 
 /** One agent's models and settings, with what each control does when used. */
@@ -566,12 +568,11 @@ function ModelRows({ source, harness }: { source: PickerSource; harness: string 
 						>
 							<span className="min-w-0 truncate">{model.label}</span>
 							{model.hint ? <span className="ml-2 shrink-0 text-[10px] text-muted-foreground/70">{model.hint}</span> : null}
-							{model.id ? (
-								<FavoriteStar
-									starred={favorites.some((entry) => entry.harness === harness && entry.row === model.id)}
-									onToggle={() => toggleModelFavorite(favoriteFor(harness, model, active ? source : undefined))}
-								/>
-							) : null}
+							{model.id ? (() => {
+								const starredAs = favorites.find((entry) => entry.harness === harness && (entry.row === model.id || model.aliases?.includes(entry.row)));
+								// Unstarring removes the favourite as it was saved, under whichever id.
+								return <FavoriteStar starred={Boolean(starredAs)} onToggle={() => toggleModelFavorite(starredAs ?? favoriteFor(harness, model, active ? source : undefined))} />;
+							})() : null}
 						</OptionMenuItem>
 					</Fragment>
 				);

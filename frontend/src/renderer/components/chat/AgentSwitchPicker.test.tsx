@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toggleModelFavorite } from "../../lib/model-favorites";
 import { AgentModelPicker, type PendingAgentSwitch, type PickerSource } from "./AgentSwitchPicker";
 
 vi.mock("../../hooks/useAgentReadinessQuery", () => ({ useAgentReadinessQuery: () => ({ data: { agents: [] } }) }));
@@ -87,6 +88,21 @@ describe("AgentModelPicker", () => {
 	it("names no model while the agent starts again", () => {
 		open(undefined, false, "claude-code", {}, false, true);
 		expect(screen.getByRole("button", { name: /Agent, model and reasoning effort/ })).toHaveTextContent("Loading models…");
+	});
+
+	it("stars a row when its model was starred under another id", async () => {
+		const user = userEvent.setup();
+		const saved = { harness: "claude-code", row: "opus", model: "opus", label: "Opus" };
+		toggleModelFavorite(saved);
+		try {
+			open(undefined, false, "claude-code", { models: [{ id: "claude-opus-5-5", label: "Opus", aliases: ["opus"] }], modelId: "claude-opus-5-5" });
+			await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+			await user.click(screen.getByRole("menuitem", { name: /Model/ }));
+			// One star for the favourite row at the top, one on the model row it folded into.
+			expect(await screen.findAllByRole("button", { name: "Remove from favourites" })).toHaveLength(2);
+		} finally {
+			toggleModelFavorite(saved);
+		}
 	});
 
 	it("holds another agent as pending when it is picked", async () => {

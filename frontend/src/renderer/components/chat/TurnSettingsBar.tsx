@@ -320,7 +320,7 @@ export function TurnSettingsBar({
 		}
 		: {
 			models: (primaryModelOption?.choices ?? [])
-				.map((choice) => ({ id: choice.value, label: choice.name, group: choice.groupName || choice.group })),
+				.map((choice) => ({ id: choice.value, label: choice.name, group: choice.groupName || choice.group, aliases: (choice as ChatConfigOption["choices"][number] & { aliases?: string[] }).aliases })),
 			modelId: primaryModelOption?.currentValue,
 			modelLabel: primaryModelOption ? optionCurrentLabel(primaryModelOption) : agentLabel(harness ?? ""),
 			onPickModel: primaryModelOption && onChangeConfigOption ? (id) => applyOption(primaryModelOption.id, { value: id }) : undefined,
@@ -532,11 +532,14 @@ export function TurnSettingsBar({
 	);
 }
 
-function dedupeChoicesByName<T extends { value: string; name: string }>(choices: T[], current: string | undefined): T[] {
-	return choices.filter((choice, index) => {
-		const twin = choices.findIndex((other) => other.name === choice.name);
-		const currentTwin = choices.find((other) => other.name === choice.name && other.value === current);
-		return currentTwin ? choice === currentTwin : twin === index;
+function dedupeChoicesByName<T extends { value: string; name: string }>(choices: T[], current: string | undefined): (T & { aliases?: string[] })[] {
+	return choices.flatMap((choice) => {
+		const twins = choices.filter((other) => other.name === choice.name);
+		const kept = twins.find((other) => other.value === current) ?? twins[0];
+		if (choice !== kept) return [];
+		// The values folded into this one, so a favourite starred on any of them still shows.
+		const aliases = twins.filter((other) => other !== choice).map((other) => other.value);
+		return [aliases.length ? { ...choice, aliases } : choice];
 	});
 }
 
