@@ -276,3 +276,15 @@ func TestLitmusSkillFrontmatterWordCapAndInstall(t *testing.T) {
 		t.Fatal("installed litmus SKILL.md differs from the embedded copy")
 	}
 }
+
+func TestEmbeddedTestingGuidanceRequiresApproval(t *testing.T) {
+	body, err := files.ReadFile("using-ao/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"ao testing show <runId>", "ao testing post <runId>", "ao testing discard <runId>", "Never post without the user's yes."} {
+		if !strings.Contains(string(body), required) {
+			t.Errorf("testing guidance missing %q", required)
+		}
+	}
+}

@@ -10,6 +10,8 @@ trigger: "Using the ao CLI in an AO workspace: creating Cues, spawning workers, 
 
 When the user asks you to test, try out, check, or verify a pull request, in any wording, run `ao testing start --pr <url or owner/repo#N>` to start Litmus, then tell the user Litmus has started. Never check the PR out or run its test suites yourself, and never ask the user which way to test it.
 
+A run takes about 25 minutes. When the user asks for the result, run `ao testing runs`, then `ao testing show <runId>` and give the verdict and each drafted bug comment. A run in `awaiting-approval` posts nothing until the user says so: on a clear yes run `ao testing post <runId>`, which posts every comment with its picture and clip; on no run `ao testing discard <runId>`. Never post without the user's yes.
+
 | Command | What it does | When to use | Details |
 |---|---|---|---|
 | `spawn` | Spawn a project worker, orchestrator, or projectless standalone worker | Starting a new task or issue | [commands/spawn.md](commands/spawn.md) |

@@ -9,12 +9,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/litmus"
 )
 
@@ -71,7 +73,7 @@ func newTestingCommand(ctx *commandContext) *cobra.Command {
 	}))
 	cmd.AddCommand(t.recipeCommand(), t.waitCommand(), t.recordCommand())
 	cmd.AddCommand(t.pruneCommand())
-	cmd.AddCommand(t.runsCommand(), t.rerunCommand(), t.decideCommand("post", "Publish the evidence and post the comment of a run awaiting approval"),
+	cmd.AddCommand(t.runsCommand(), t.showCommand(), t.rerunCommand(), t.decideCommand("post", "Publish the evidence and post the comment of a run awaiting approval"),
 		t.decideCommand("discard", "Close a run awaiting approval without posting its comment"), t.settingsCommand())
 
 	for _, d := range []struct {
@@ -513,6 +515,67 @@ func (t *testingCLI) runsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "Project id (default: AO_PROJECT_ID, else every project)")
 	cmd.Flags().IntVar(&limit, "limit", litmus.DefaultRunsLimit, "Most runs to list")
 	return cmd
+}
+
+func (t *testingCLI) showCommand() *cobra.Command {
+	return verb("show <runId>", "Show a run's verdict and drafted comments", exactArgs(1), func(cmd *cobra.Command, a []string) error {
+		var out litmus.RunDetail
+		if err := t.c.getJSON(cmd.Context(), "testing/runs/"+url.PathEscape(a[0]), &out); err != nil {
+			return err
+		}
+		if t.asJSON {
+			return writeJSON(cmd.OutOrStdout(), out)
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		drafts, err := litmus.NewStore(cfg.DataDir).DraftComments(a[0])
+		if err != nil {
+			return err
+		}
+		parts := []string{fmt.Sprintf("run %s %s#%d %s verdict %s", out.ID, out.Repo, out.PR.Number, out.State, out.Verdict)}
+		if table := verdictChecksTable(out.VerdictMD); table != "" {
+			parts = append(parts, table)
+		}
+		dir := filepath.Join(cfg.DataDir, "litmus", "runs", a[0], "comments")
+		for _, draft := range drafts {
+			parts = append(parts, filepath.Join(dir, strconv.Itoa(draft.Number)+".md")+"\n"+draft.Body)
+			for _, match := range draftMediaLinks.FindAllStringSubmatch(draft.Body, -1) {
+				link, err := url.Parse(match[1])
+				if err == nil && !link.IsAbs() && link.Host == "" && link.Path != "" {
+					parts = append(parts, "media: "+filepath.Join(dir, filepath.FromSlash(link.Path)))
+				}
+			}
+		}
+		if len(drafts) == 0 && out.CommentMD != "" {
+			parts = append(parts, out.CommentMD)
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), strings.Join(parts, "\n\n"))
+		return err
+	})
+}
+
+var draftMediaLinks = regexp.MustCompile(`!?\[[^\]\n]*\]\(([^)\n]+)\)`)
+
+func verdictChecksTable(md string) string {
+	var rows []string
+	inChecks := false
+	for _, line := range strings.Split(md, "\n") {
+		if strings.TrimSpace(line) == "## Checks" {
+			inChecks = true
+			continue
+		}
+		if !inChecks {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "|") {
+			rows = append(rows, line)
+		} else if len(rows) > 0 || strings.HasPrefix(line, "## ") {
+			break
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
 // runRowLine is one run of the list: id, verdict, state, PR, duration and what became of the comment.

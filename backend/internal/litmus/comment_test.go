@@ -832,3 +832,57 @@ func TestEqualFailuresNeedSameFaultInComment(t *testing.T) {
 		}
 	}
 }
+
+func TestBugCommentConsoleErrors(t *testing.T) {
+	const section = "<details><summary>App console errors during this check</summary>"
+	for _, tc := range []struct {
+		name     string
+		state    CheckState
+		receipts []Receipt
+		want     []string
+		absent   []string
+	}{
+		{name: "distinct lines across receipts", state: CheckFail, receipts: []Receipt{
+			{ConsoleTail: "  Error: menu failed  \n\nError: menu failed"},
+			{Leg: "head", ConsoleTail: "Error: menu failed\nError: save failed"},
+		}, want: []string{"Error: menu failed", "Error: save failed"}},
+		{name: "no console tails", state: CheckFail, receipts: []Receipt{{}, {Leg: "head"}}},
+		{name: "base receipts excluded", state: CheckFail, receipts: []Receipt{
+			{Leg: "head", ConsoleTail: "Error: head failed"},
+			{Leg: "base", ConsoleTail: "Error: base failed"},
+		}, want: []string{"Error: head failed"}, absent: []string{"Error: base failed"}},
+		{name: "only base console tail", state: CheckFail, receipts: []Receipt{{Leg: "base", ConsoleTail: "Error: base failed"}}, absent: []string{"Error: base failed"}},
+		{name: "local paths reduced", state: CheckPartial, receipts: []Receipt{{ConsoleTail: "Error at /Users/x/.ao/data/run/app.js:12:3 and file:///private/tmp/source.js"}},
+			want: []string{"Error at app.js:12:3 and source.js"}, absent: []string{"/Users/", "/private/"}},
+		{name: "five lines at most", state: CheckFail, receipts: []Receipt{{ConsoleTail: "one\ntwo\nthree\nfour\nfive\nsix"}},
+			want: []string{"one", "two", "three", "four", "five"}, absent: []string{"six"}},
+		{name: "two hundred characters", state: CheckFail, receipts: []Receipt{{ConsoleTail: strings.Repeat("界", 201)}}, want: []string{strings.Repeat("界", 200)}, absent: []string{strings.Repeat("界", 201)}},
+		{name: "remote URL kept", state: CheckFail, receipts: []Receipt{{ConsoleTail: "Failed https://example.com/api/request"}}, want: []string{"Failed https://example.com/api/request"}},
+		{name: "windows local path", state: CheckFail, receipts: []Receipt{{ConsoleTail: `Error at C:\Users\x\app.js`}}, want: []string{"Error at app.js"}, absent: []string{`C:\Users`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			head := Check{ID: "head", Name: "menu opens", State: tc.state, Note: "The menu closed.", Receipts: tc.receipts}
+			checks := []Check{head, {Name: head.Name, Leg: "base", State: CheckPass, Receipts: []Receipt{{Leg: "base", ConsoleTail: "other base error"}}}}
+			bug := bugComment{Check: head, Number: 1, Total: 1}
+			body := bugCommentBody(commentRun, Verdict{Checks: checks}, bug, "bug.png", "clip.mp4", false)
+			if len(tc.want) == 0 {
+				if strings.Contains(body, section) {
+					t.Fatalf("unexpected console section: %s", body)
+				}
+			} else {
+				want := section + "\n\n```\n" + strings.Join(tc.want, "\n") + "\n```\n\n</details>"
+				if strings.Count(body, section) != 1 || !strings.Contains(body, want) {
+					t.Fatalf("console section mismatch: %s", body)
+				}
+				if strings.Index(body, section) < strings.Index(body, "The menu closed.") || strings.Index(body, section) > strings.Index(body, "![") {
+					t.Fatalf("console section must follow bug text and precede picture: %s", body)
+				}
+			}
+			for _, absent := range append(tc.absent, "other base error") {
+				if strings.Contains(body, absent) {
+					t.Errorf("unexpected %q in %s", absent, body)
+				}
+			}
+		})
+	}
+}

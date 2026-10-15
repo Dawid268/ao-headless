@@ -252,6 +252,9 @@ func bugCommentBody(run Run, v Verdict, b bugComment, image, clip string, marker
 	if v.StoppedEarly != "" {
 		parts = append(parts, "Stopped early: "+plainSentence(plainTester(v.StoppedEarly, run, v.Checks), 300))
 	}
+	if lines := checkConsoleErrors(b.Check); len(lines) > 0 {
+		parts = append(parts, "<details><summary>App console errors during this check</summary>\n\n```\n"+strings.Join(lines, "\n")+"\n```\n\n</details>")
+	}
 	if image != "" {
 		parts = append(parts, "![The base build on the left and the PR build on the right]("+image+")")
 	} else {
@@ -266,6 +269,39 @@ func bugCommentBody(run Run, v Verdict, b bugComment, image, clip string, marker
 		parts = append(parts, litmusCommentMarker())
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// consolePaths matches URLs as well as paths so remote URLs stay intact.
+var consolePaths = regexp.MustCompile("(?:[a-zA-Z][a-zA-Z0-9+.-]*://|[a-zA-Z]:[\\\\/]|/)[^\\s\"'`<>()]+")
+
+func checkConsoleErrors(c Check) []string {
+	var lines []string
+	seen := map[string]bool{}
+	for _, r := range c.Receipts {
+		if r.onLeg() != "head" {
+			continue
+		}
+		for _, line := range strings.Split(r.ConsoleTail, "\n") {
+			line = strings.TrimSpace(line)
+			line = consolePaths.ReplaceAllStringFunc(line, func(path string) string {
+				if strings.Contains(path, "://") && !strings.HasPrefix(path, "file://") {
+					return path
+				}
+				return filepath.Base(strings.ReplaceAll(path, `\`, "/"))
+			})
+			chars := []rune(line)
+			line = string(chars[:min(len(chars), 200)])
+			if line == "" || seen[line] {
+				continue
+			}
+			seen[line] = true
+			lines = append(lines, line)
+			if len(lines) == 5 {
+				return lines
+			}
+		}
+	}
+	return lines
 }
 
 // summaryCommentBody is the compact two-sentence form for a passing run. A
@@ -1145,8 +1181,18 @@ func (s *Service) draftComments(run Run, v Verdict) ([]commentDoc, error) {
 	return docs, nil
 }
 
-func (s *Service) readDraftComments(run Run) ([]commentDoc, error) {
-	dir := filepath.Join(s.store.root, run.ID, "comments")
+// DraftComment is a numbered comment file kept for review before posting.
+type DraftComment struct {
+	Number int
+	Body   string
+}
+
+// DraftComments reads the same numbered drafts used by the post path.
+func (s *Store) DraftComments(id string) ([]DraftComment, error) {
+	dir, err := s.path(id, "comments")
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -1154,7 +1200,7 @@ func (s *Service) readDraftComments(run Run) ([]commentDoc, error) {
 		}
 		return nil, err
 	}
-	var docs []commentDoc
+	var docs []DraftComment
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
 			continue
@@ -1167,9 +1213,21 @@ func (s *Service) readDraftComments(run Run) ([]commentDoc, error) {
 		if err != nil {
 			return nil, err
 		}
-		docs = append(docs, commentDoc{Number: n, Body: string(data), Marker: strings.Contains(string(data), litmusCommentMarker())})
+		docs = append(docs, DraftComment{Number: n, Body: string(data)})
 	}
-	slices.SortFunc(docs, func(a, b commentDoc) int { return cmp.Compare(a.Number, b.Number) })
+	slices.SortFunc(docs, func(a, b DraftComment) int { return cmp.Compare(a.Number, b.Number) })
+	return docs, nil
+}
+
+func (s *Service) readDraftComments(run Run) ([]commentDoc, error) {
+	drafts, err := s.store.DraftComments(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	docs := make([]commentDoc, 0, len(drafts))
+	for _, draft := range drafts {
+		docs = append(docs, commentDoc{Number: draft.Number, Body: draft.Body, Marker: strings.Contains(draft.Body, litmusCommentMarker())})
+	}
 	return docs, nil
 }
 

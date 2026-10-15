@@ -500,3 +500,111 @@ func TestLaunchLinePrintsOnlyItsBuildSeedGap(t *testing.T) {
 		}
 	}
 }
+
+// testingShowTransport serves run detail without binding a local socket.
+func testingShowTransport(t *testing.T, status int, body string) (*testingCapture, Deps) {
+	t.Helper()
+	cfg := setConfigEnv(t)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	got := &testingCapture{}
+	deps := Deps{ProcessAlive: func(int) bool { return true }, HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasPrefix(req.URL.Path, "/api/v1/testing/") {
+			return jsonResponse(http.StatusNoContent, ""), nil
+		}
+		*got = testingCapture{method: req.Method, path: req.URL.RequestURI()}
+		return jsonResponse(status, body), nil
+	})}}
+	return got, deps
+}
+
+func TestTestingShow(t *testing.T) {
+	const table = "| check | head |\n|---|---|\n| menu | fail |"
+	detail := litmus.RunDetail{
+		RunSummary: litmus.RunSummary{ID: "run_w1", Repo: "o/r", PR: litmus.RunPR{Number: 7}, State: litmus.RunAwaitingApproval, Verdict: "fail"},
+		VerdictMD:  "# Verdict: fail\n\nprivate summary\n\n## Checks\n\n" + table + "\n\n## Notes\n\nprivate notes",
+		CommentMD:  "legacy summary",
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, deps := testingShowTransport(t, http.StatusOK, string(raw))
+	t.Setenv("AO_SESSION_ID", "")
+	dir := filepath.Join(os.Getenv("AO_DATA_DIR"), "litmus", "runs", "run_w1", "comments")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"1.md":     "first bug\n\n![comparison](bug-7.png)\n\n[Watch the check](../clips/menu.mp4)",
+		"2.md":     "second bug",
+		"10.md":    "tenth bug",
+		"notes.md": "ignore this draft",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, _, err := executeCLI(t, deps, "testing", "show", "run_w1")
+	if err != nil || got.method != "GET" || got.path != "/api/v1/testing/runs/run_w1" {
+		t.Fatalf("request %s %s, err %v", got.method, got.path, err)
+	}
+	for _, want := range []string{"run run_w1 o/r#7 awaiting-approval verdict fail", table, "first bug", "second bug", "tenth bug", filepath.Join(dir, "1.md"), "media: " + filepath.Join(dir, "bug-7.png"), "media: " + filepath.Join(filepath.Dir(dir), "clips", "menu.mp4")} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q: %s", want, out)
+		}
+	}
+	for _, absent := range []string{"private summary", "private notes", "legacy summary", "ignore this draft"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("output includes %q: %s", absent, out)
+		}
+	}
+	if strings.Index(out, "first bug") > strings.Index(out, "second bug") || strings.Index(out, "second bug") > strings.Index(out, "tenth bug") {
+		t.Fatalf("drafts out of numeric order: %s", out)
+	}
+	// JSON returns only RunDetail, without reading or appending local drafts.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = executeCLI(t, deps, "testing", "show", "run_w1", "--json")
+	var jsonDetail litmus.RunDetail
+	if err != nil || json.Unmarshal([]byte(out), &jsonDetail) != nil || jsonDetail.VerdictMD != detail.VerdictMD || strings.Contains(out, "first bug") {
+		t.Fatalf("JSON = %s, err %v", out, err)
+	}
+	if _, _, err := executeCLI(t, deps, "testing", "show", "run_w1"); err == nil {
+		t.Fatal("expected draft read error")
+	}
+}
+
+func TestTestingShowFallbackAndErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, reply, want string
+		status, exit      int
+		args              []string
+	}{
+		{name: "legacy comment", reply: `{"id":"run_w1","commentMd":"legacy comment"}`, want: "legacy comment", status: http.StatusOK, args: []string{"show", "run_w1"}},
+		{name: "unfinished run", reply: `{"id":"run_w1","state":"running","verdict":"none"}`, want: "running verdict none", status: http.StatusOK, args: []string{"show", "run_w1"}},
+		{name: "daemon error", reply: `{"code":"TESTING_RUN_NOT_FOUND","message":"no testing run run_missing","requestId":"req-show"}`, want: "no testing run run_missing (TESTING_RUN_NOT_FOUND) [request req-show]", status: http.StatusNotFound, exit: 1, args: []string{"show", "run_missing"}},
+		{name: "missing id", reply: `{}`, status: http.StatusOK, exit: 2, args: []string{"show"}},
+		{name: "extra id", reply: `{}`, status: http.StatusOK, exit: 2, args: []string{"show", "run_w1", "extra"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, deps := testingShowTransport(t, tc.status, tc.reply)
+			t.Setenv("AO_SESSION_ID", "")
+			out, _, err := executeCLI(t, deps, append([]string{"testing"}, tc.args...)...)
+			if ExitCode(err) != tc.exit {
+				t.Fatalf("out %q, err %v", out, err)
+			}
+			if err != nil {
+				out = err.Error()
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("output %q lacks %q", out, tc.want)
+			}
+		})
+	}
+}
