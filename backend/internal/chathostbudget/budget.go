@@ -18,10 +18,10 @@ import (
 )
 
 // reservationGrace keeps SoftAdmit/Drain slots charged until the host has time
-// to publish a PID (or AfterFailedSpawn ForceReleases). Without this the 30s
-// ReleaseIfDead sweep can free an in-flight reservation and let another spawn
-// steal the last warm slot.
-const reservationGrace = 15 * time.Second
+// to publish a PID (or AfterFailedSpawn / ReleaseIfNoPID ForceReleases).
+// Must cover the daemon wake timeout (60s) and outlast the 30s ReleaseIfDead
+// sweep, otherwise an in-flight reservation can be stolen mid-wake.
+const reservationGrace = 90 * time.Second
 
 // Host class for sub-caps. Orchestrators never auto-hibernate in AO today, so
 // they use a separate budget from reclaimable workers.
@@ -211,19 +211,18 @@ func (b *Budget) MarkSeeded() {
 func (b *Budget) MarkSeededForTest() { b.MarkSeeded() }
 
 // NoteAdopt records an already-live host without consuming a new spawn slot.
-// If the host was not held (e.g. raced Seed), it is charged once. A live host
-// clears any SoftAdmit/Drain reservation grace.
+// Always refreshes class (Seed may have classified by path prefix only) and
+// clears SoftAdmit/Drain reservation grace once a live PID is observed.
 func (b *Budget) NoteAdopt(hostID string, class Class) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, ok := b.held[hostID]; !ok {
-		b.held[hostID] = class
-	}
+	b.held[hostID] = class
 	delete(b.reservedUntil, hostID)
 }
 
 // TryAcquireSpawn reserves a slot for a new host process. Returns ErrNoCapacity
-// when caps or memory pressure refuse. Idempotent if hostID is already held.
+// when caps or memory pressure refuse. Idempotent if hostID is already held;
+// refreshes reservation grace so a long BeforeSpawn→PID window stays protected.
 func (b *Budget) TryAcquireSpawn(hostID string, class Class) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -231,6 +230,8 @@ func (b *Budget) TryAcquireSpawn(hostID string, class Class) error {
 		return ErrNotSeeded
 	}
 	if _, ok := b.held[hostID]; ok {
+		b.held[hostID] = class
+		b.protectReservationLocked(hostID)
 		return nil
 	}
 	b.refreshPressureLocked()
@@ -283,9 +284,23 @@ func (b *Budget) protectReservationLocked(hostID string) {
 }
 
 // ReleaseIfNoPID drops a SoftAdmit reservation when resume failed before a
-// host process published. No-op while a live PID still owns the host.
+// host process published. Bypasses reservation grace (unlike ReleaseIfDead) so
+// a rejected resume frees capacity immediately. No-op while a live PID owns
+// the host.
 func (b *Budget) ReleaseIfNoPID(hostID string) bool {
-	return b.ReleaseIfDead(hostID)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.held[hostID]; !ok {
+		return false
+	}
+	if b.alive(hostID) {
+		delete(b.reservedUntil, hostID)
+		return false
+	}
+	delete(b.held, hostID)
+	delete(b.reservedUntil, hostID)
+	b.refreshPressureLocked()
+	return true
 }
 
 // Enqueue adds a deferred wake. Dedupes by hostID (last write wins class/project).
@@ -306,29 +321,33 @@ func (b *Budget) enqueueLocked(wake QueuedWake) {
 }
 
 // SoftAdmitWake reserves a spawn slot when capacity is available so callers can
-// clear HibernatedAt without racing another spawn into the last slot. Already
-// held hosts return nil. On capacity miss (or before Seed) it enqueues and
-// returns ErrQueued so callers soft-defer without clearing hibernation.
-func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) error {
+// clear HibernatedAt without racing another spawn into the last slot.
+// reserved is true only when this call newly charged the host — callers must
+// ReleaseIfNoPID on failure solely in that case. Already-held hosts return
+// reserved=false so a concurrent Drain/resume owner is not ForceReleased.
+// On capacity miss (or before Seed) it enqueues and returns ErrQueued so
+// callers soft-defer without clearing hibernation.
+func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) (reserved bool, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, ok := b.held[hostID]; ok {
-		return nil
+		b.protectReservationLocked(hostID)
+		return false, nil
 	}
 	wake := QueuedWake{HostID: hostID, ProjectID: projectID, Class: class}
 	if !b.seeded {
 		b.enqueueLocked(wake)
-		return ErrQueued
+		return false, ErrQueued
 	}
 	b.refreshPressureLocked()
 	if !b.canAdmitLocked(class) {
 		b.enqueueLocked(wake)
-		return ErrQueued
+		return false, ErrQueued
 	}
 	// Reserve now — BeforeSpawn's TryAcquireSpawn is idempotent for this host.
 	b.held[hostID] = class
 	b.protectReservationLocked(hostID)
-	return nil
+	return true, nil
 }
 
 // PressureActive reports whether MemAvailable hysteresis is in the pressure band.
@@ -520,7 +539,8 @@ func (b *Budget) canAdmitLocked(class Class) bool {
 	return worker < maxWorker
 }
 
-// CapsFromEnv overlays DefaultCaps with AO_CHAT_HOST_MAX_* env vars when set.
+// CapsFromEnv overlays DefaultCaps with AO_CHAT_HOST_MAX_* and pressure /
+// MemAvailable hysteresis env vars when set.
 func CapsFromEnv() Caps {
 	caps := DefaultCaps()
 	if v := envInt("AO_CHAT_HOST_MAX_TOTAL"); v > 0 {
@@ -532,7 +552,30 @@ func CapsFromEnv() Caps {
 	if v := envInt("AO_CHAT_HOST_MAX_WORKER"); v > 0 {
 		caps.MaxWorker = v
 	}
+	if v := envInt("AO_CHAT_HOST_PRESSURE_TOTAL"); v > 0 {
+		caps.PressureTotal = v
+	}
+	if v := envInt("AO_CHAT_HOST_PRESSURE_ORCH"); v > 0 {
+		caps.PressureOrch = v
+	}
+	if v := envInt("AO_CHAT_HOST_PRESSURE_WORKER"); v > 0 {
+		caps.PressureWorker = v
+	}
+	if v := envUint64("AO_CHAT_HOST_ENTER_AVAILABLE_MIB"); v > 0 {
+		caps.EnterAvailableB = v << 20
+	}
+	if v := envUint64("AO_CHAT_HOST_EXIT_AVAILABLE_MIB"); v > 0 {
+		caps.ExitAvailableB = v << 20
+	}
 	return caps
+}
+
+func envUint64(key string) uint64 {
+	n := envInt(key)
+	if n <= 0 {
+		return 0
+	}
+	return uint64(n)
 }
 
 func envInt(key string) int {

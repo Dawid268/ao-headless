@@ -214,7 +214,7 @@ func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
 	if err := b.TryAcquireSpawn("held", ClassWorker); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.SoftAdmitWake("waiting", ClassWorker, "p1"); !errors.Is(err, ErrQueued) {
+	if _, err := b.SoftAdmitWake("waiting", ClassWorker, "p1"); !errors.Is(err, ErrQueued) {
 		t.Fatalf("got %v, want ErrQueued", err)
 	}
 	if _, ok := b.Snapshot().Held["waiting"]; ok {
@@ -223,16 +223,16 @@ func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
 	if b.Snapshot().Queued != 1 {
 		t.Fatalf("queued = %d", b.Snapshot().Queued)
 	}
-	if err := b.SoftAdmitWake("held", ClassWorker, ""); err != nil {
-		t.Fatalf("already-held soft admit: %v", err)
+	if reserved, err := b.SoftAdmitWake("held", ClassWorker, ""); err != nil || reserved {
+		t.Fatalf("already-held soft admit: reserved=%v err=%v", reserved, err)
 	}
 }
 
 func TestReleaseIfDeadProtectsInFlightReservation(t *testing.T) {
 	b := New(DefaultCaps(), func(string) bool { return false }, nil)
 	b.MarkSeededForTest()
-	if err := b.SoftAdmitWake("inflight", ClassWorker, ""); err != nil {
-		t.Fatal(err)
+	if reserved, err := b.SoftAdmitWake("inflight", ClassWorker, ""); err != nil || !reserved {
+		t.Fatalf("reserved=%v err=%v", reserved, err)
 	}
 	if b.ReleaseIfDead("inflight") {
 		t.Fatal("must not release SoftAdmit reservation during grace")
@@ -246,20 +246,47 @@ func TestReleaseIfDeadProtectsInFlightReservation(t *testing.T) {
 	}
 }
 
+func TestReleaseIfNoPIDBypassesGrace(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	if reserved, err := b.SoftAdmitWake("failed-resume", ClassWorker, ""); err != nil || !reserved {
+		t.Fatalf("reserved=%v err=%v", reserved, err)
+	}
+	if b.ReleaseIfDead("failed-resume") {
+		t.Fatal("sweep must keep grace")
+	}
+	if !b.ReleaseIfNoPID("failed-resume") {
+		t.Fatal("SoftAdmit rollback must free immediately")
+	}
+	if _, ok := b.Snapshot().Held["failed-resume"]; ok {
+		t.Fatal("slot still held after ReleaseIfNoPID")
+	}
+}
+
+func TestNoteAdoptUpgradesClass(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return true }, nil)
+	b.MarkSeededForTest()
+	b.NoteAdopt("sess", ClassWorker)
+	b.NoteAdopt("sess", ClassOrchestrator)
+	if b.Snapshot().Held["sess"] != ClassOrchestrator {
+		t.Fatal("NoteAdopt must refresh class")
+	}
+}
+
 func TestSoftAdmitWakeReservesSlotBeforeClear(t *testing.T) {
 	b := New(Caps{
 		MaxTotal: 1, MaxOrchestrator: 1, MaxWorker: 1,
 		PressureTotal: 1, PressureOrch: 1, PressureWorker: 1,
 	}, func(string) bool { return false }, nil)
 	b.MarkSeededForTest()
-	if err := b.SoftAdmitWake("cold", ClassWorker, "p"); err != nil {
-		t.Fatal(err)
+	if reserved, err := b.SoftAdmitWake("cold", ClassWorker, "p"); err != nil || !reserved {
+		t.Fatalf("reserved=%v err=%v", reserved, err)
 	}
 	if _, ok := b.Snapshot().Held["cold"]; !ok {
 		t.Fatal("soft admit must reserve the slot")
 	}
 	// Concurrent admit for another host must see the reservation.
-	if err := b.SoftAdmitWake("other", ClassWorker, "p"); !errors.Is(err, ErrQueued) {
+	if _, err := b.SoftAdmitWake("other", ClassWorker, "p"); !errors.Is(err, ErrQueued) {
 		t.Fatalf("got %v, want ErrQueued", err)
 	}
 	// BeforeSpawn idempotency: already reserved.
@@ -270,7 +297,7 @@ func TestSoftAdmitWakeReservesSlotBeforeClear(t *testing.T) {
 
 func TestSoftAdmitWakeBeforeSeedQueues(t *testing.T) {
 	b := New(DefaultCaps(), func(string) bool { return false }, nil)
-	if err := b.SoftAdmitWake("early", ClassWorker, ""); !errors.Is(err, ErrQueued) {
+	if _, err := b.SoftAdmitWake("early", ClassWorker, ""); !errors.Is(err, ErrQueued) {
 		t.Fatalf("got %v, want ErrQueued", err)
 	}
 	if b.Snapshot().Queued != 1 {
@@ -288,8 +315,8 @@ func TestSeedClassifiesOrchestratorAndKeepsPhantomReservations(t *testing.T) {
 	alive := map[string]bool{"orch-1": true, "worker-1": true}
 	b := New(DefaultCaps(), func(id string) bool { return alive[id] }, nil)
 	b.MarkSeededForTest()
-	if err := b.SoftAdmitWake("phantom", ClassWorker, "p"); err != nil {
-		t.Fatal(err)
+	if reserved, err := b.SoftAdmitWake("phantom", ClassWorker, "p"); err != nil || !reserved {
+		t.Fatalf("reserved=%v err=%v", reserved, err)
 	}
 	if err := b.Seed(dir, func(hostID string) Class {
 		if hostID == "orch-1" {
@@ -343,5 +370,38 @@ func TestShouldReclaimAtCapWithQueue(t *testing.T) {
 	b.Enqueue(QueuedWake{HostID: "waiting", Class: ClassWorker})
 	if !b.ShouldReclaim() {
 		t.Fatal("at-cap with queue must reclaim")
+	}
+}
+
+func TestSoftAdmitAlreadyHeldDoesNotTransferOwnership(t *testing.T) {
+	b := New(DefaultCaps(), func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	reserved, err := b.SoftAdmitWake("drain-owned", ClassWorker, "")
+	if err != nil || !reserved {
+		t.Fatalf("owner reserved=%v err=%v", reserved, err)
+	}
+	// Concurrent resume must not claim release ownership of Drain's hold.
+	reserved, err = b.SoftAdmitWake("drain-owned", ClassWorker, "")
+	if err != nil || reserved {
+		t.Fatalf("peer reserved=%v err=%v", reserved, err)
+	}
+	if _, ok := b.Snapshot().Held["drain-owned"]; !ok {
+		t.Fatal("owner reservation lost")
+	}
+}
+
+func TestCapsFromEnvPressureAndHysteresis(t *testing.T) {
+	t.Setenv("AO_CHAT_HOST_MAX_TOTAL", "8")
+	t.Setenv("AO_CHAT_HOST_PRESSURE_TOTAL", "4")
+	t.Setenv("AO_CHAT_HOST_PRESSURE_ORCH", "1")
+	t.Setenv("AO_CHAT_HOST_PRESSURE_WORKER", "3")
+	t.Setenv("AO_CHAT_HOST_ENTER_AVAILABLE_MIB", "5000")
+	t.Setenv("AO_CHAT_HOST_EXIT_AVAILABLE_MIB", "8000")
+	caps := CapsFromEnv()
+	if caps.MaxTotal != 8 || caps.PressureTotal != 4 || caps.PressureOrch != 1 || caps.PressureWorker != 3 {
+		t.Fatalf("caps = %+v", caps)
+	}
+	if caps.EnterAvailableB != 5000<<20 || caps.ExitAvailableB != 8000<<20 {
+		t.Fatalf("hysteresis enter=%d exit=%d", caps.EnterAvailableB, caps.ExitAvailableB)
 	}
 }

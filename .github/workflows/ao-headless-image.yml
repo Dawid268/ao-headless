@@ -1,0 +1,80 @@
+# Build and publish the headless AO daemon image to GHCR.
+# Portainer Swarm stack pulls: ghcr.io/<owner>/ao-headless:<tag>
+name: AO headless image
+
+on:
+  push:
+    branches: [main, feat/capacity-admission-remote]
+    paths:
+      - "backend/**"
+      - "deploy/headless/**"
+      - ".github/workflows/ao-headless-image.yml"
+    tags:
+      - "ao-headless-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ao-headless-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ao-headless
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name (lowercase GHCR)
+        id: meta
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          short_sha="$(echo '${{ github.sha }}' | cut -c1-7)"
+          echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "extra_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_name }}" == main ]]; then
+            echo "extra_tag=main" >> "$GITHUB_OUTPUT"
+          else
+            # Branch builds stay pullable without overwriting :main
+            safe="$(echo '${{ github.ref_name }}' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
+            echo "extra_tag=${safe}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/headless/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.extra_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo "- \`${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}\`"
+            echo "- \`${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.extra_tag }}\`"
+            echo ""
+            echo "Portainer env: \`AO_IMAGE=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}\`"
+            echo "Pair URL: \`https://ao.subscribeit.pl\`"
+          } >> "$GITHUB_STEP_SUMMARY"

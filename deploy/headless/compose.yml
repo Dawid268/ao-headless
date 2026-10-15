@@ -1,11 +1,5 @@
-# Portainer / docker compose stack for a self-hosted AO headless host.
-#
-# After first start, exec into the container (or use a sidecar) and run:
-#   ao remote-host enable --tunnel-only
-#   ao remote-host status
-# Then pair the printed address + password from the laptop (Developer mode →
-# Settings → Remote hosts). Put Tailscale on the VPS/network path to the
-# authenticated listener — do not Tailscale-serve the primary loopback daemon.
+# Lab / plain Compose. For Portainer Swarm + Traefik use stack.yml + PORTAINER.md.
+# Entrypoint auto-enables the authenticated remote listener (3011).
 services:
   ao:
     build:
@@ -21,8 +15,9 @@ services:
     volumes:
       - ao-data:/ao-data
     # Map only if you terminate TLS/auth in front; prefer Tailscale to the host.
+    # Port 3011 is the authenticated remote listener (ao remote-host enable).
     # ports:
-    #   - "8787:8787"
+    #   - "3011:3011"
     network_mode: bridge
 
 volumes:

@@ -18,7 +18,7 @@ type sessionKindReader interface {
 }
 
 type chatHostWakeAdmittable interface {
-	SetChatHostWakeAdmit(func(context.Context, domain.SessionID) error)
+	SetChatHostWakeAdmit(func(context.Context, domain.SessionID) (reserved bool, err error))
 	SetChatHostWakeRelease(func(domain.SessionID))
 }
 
@@ -98,11 +98,11 @@ func wireChatHostWakeAdmit(budget *chathostbudget.Budget, mgr chatHostWakeAdmitt
 	if budget == nil || mgr == nil {
 		return
 	}
-	mgr.SetChatHostWakeAdmit(func(ctx context.Context, id domain.SessionID) error {
+	mgr.SetChatHostWakeAdmit(func(ctx context.Context, id domain.SessionID) (bool, error) {
 		_ = ctx
 		hostID := string(id)
 		if _, alive := persistenthost.HostPID(dataDir, hostID); alive {
-			return nil
+			return false, nil
 		}
 		class := chathostbudget.ClassWorker
 		projectID := ""
@@ -115,11 +115,11 @@ func wireChatHostWakeAdmit(budget *chathostbudget.Budget, mgr chatHostWakeAdmitt
 		} else {
 			class = chathostbudget.ClassifyHostID(hostID)
 		}
-		err := budget.SoftAdmitWake(hostID, class, projectID)
+		reserved, err := budget.SoftAdmitWake(hostID, class, projectID)
 		if errors.Is(err, chathostbudget.ErrQueued) {
-			return sessionmanager.ErrChatHostQueued
+			return false, sessionmanager.ErrChatHostQueued
 		}
-		return err
+		return reserved, err
 	})
 	mgr.SetChatHostWakeRelease(func(id domain.SessionID) {
 		budget.ReleaseIfNoPID(string(id))

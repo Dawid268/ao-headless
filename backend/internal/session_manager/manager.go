@@ -485,7 +485,9 @@ type Manager struct {
 	// chatHostWakeAdmit soft-gates cold wakes against the warm-host budget
 	// before beginAgentResume / clear HibernatedAt. Nil disables the gate.
 	// Returns ErrChatHostQueued when the wake was enqueued for later Drain.
-	chatHostWakeAdmit func(context.Context, domain.SessionID) error
+	// reserved is true only when this call newly charged a SoftAdmit slot —
+	// only then may chatHostWakeRelease run on resume failure.
+	chatHostWakeAdmit func(context.Context, domain.SessionID) (reserved bool, err error)
 	// chatHostWakeRelease frees a SoftAdmit reservation when resume fails
 	// before a host PID exists (nil disables).
 	chatHostWakeRelease func(domain.SessionID)
@@ -664,7 +666,7 @@ func (m *Manager) SetPersistentHostReconcileDone(done <-chan struct{}) {
 
 // SetChatHostWakeAdmit installs the warm-host soft-queue gate used by
 // ResumeAgentWithMode before beginAgentResume.
-func (m *Manager) SetChatHostWakeAdmit(admit func(context.Context, domain.SessionID) error) {
+func (m *Manager) SetChatHostWakeAdmit(admit func(context.Context, domain.SessionID) (reserved bool, err error)) {
 	m.chatHostWakeAdmit = admit
 }
 
@@ -3112,20 +3114,21 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	// Soft-queue cold wakes before beginAgentResume so capacity deferral is not
 	// mistaken for AGENT_RESUME_IN_PROGRESS and HibernatedAt stays set.
-	softAdmitted := false
+	softReserved := false
 	if m.chatHostWakeAdmit != nil && (rec.HibernatedAt != nil ||
 		(domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
 			(m.chat == nil || !m.chat.HasLiveChatController(id)))) {
-		if admitErr := m.chatHostWakeAdmit(ctx, id); errors.Is(admitErr, ErrChatHostQueued) {
+		reserved, admitErr := m.chatHostWakeAdmit(ctx, id)
+		if errors.Is(admitErr, ErrChatHostQueued) {
 			return RestoreResult{Session: rec, Mode: RestoreModeNative, Queued: true}, nil
 		} else if admitErr != nil {
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, admitErr)
 		}
-		softAdmitted = true
-		// SoftAdmit may reserve a phantom slot (no PID yet). Roll it back on any
-		// failed resume so capacity is not starved until the next host sweep.
+		softReserved = reserved
+		// SoftAdmit may reserve a phantom slot (no PID yet). Roll it back only
+		// when *this* call newly reserved — never steal a Drain/peer hold.
 		defer func() {
-			if softAdmitted && err != nil && m.chatHostWakeRelease != nil {
+			if softReserved && err != nil && m.chatHostWakeRelease != nil {
 				m.chatHostWakeRelease(id)
 			}
 		}()

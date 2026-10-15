@@ -137,6 +137,7 @@
 		"electron-installer-redhat": "^3.4.0"
 	},
 	"allowScripts": {
-		"electron@33.4.11": true
+		"electron@33.4.11": true,
+		"better-sqlite3@12.11.1": true
 	}
 }

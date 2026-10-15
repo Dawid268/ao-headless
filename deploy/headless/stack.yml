@@ -1,0 +1,110 @@
+# Swarm stack for Portainer + Traefik edge (OVH / subscribeit-style hosts).
+#
+# Profile: 3 CPU / 6 GiB RAM / ~20 GiB disk for AO data.
+#
+# Deploy in Portainer → Stacks → Add stack (Swarm), paste this file, set env
+# below, then Deploy. Do NOT publish host ports 80/443 — Traefik owns them.
+#
+# Required Portainer env (defaults below match Dawid268 + ao.subscribeit.pl):
+#   AO_DOMAIN   — DNS A/AAAA → VPS (default ao.subscribeit.pl)
+#   AO_IMAGE    — ghcr.io/dawid268/ao-headless:<tag> from Actions → GHCR
+#                 Prefer :sha-XXXXXXX for pinned deploys; :main for latest main.
+#
+# Optional:
+#   AO_CHAT_HOST_MAX_TOTAL / _ORCH / _WORKER  (defaults fit 6 GiB)
+#   TZ
+#
+# After deploy: Portainer → service logs → copy Password into local AO
+# (Developer mode → Settings → Remote hosts). Pair URL:
+#   https://${AO_DOMAIN}
+version: "3.8"
+
+services:
+  ao:
+    image: ${AO_IMAGE:-ghcr.io/dawid268/ao-headless:main}
+    environment:
+      TZ: ${TZ:-Europe/Warsaw}
+      AO_DATA_DIR: /ao-data
+      # Conservative warm-host caps for a 6 GiB service budget (Codex stacks are heavy).
+      AO_CHAT_HOST_MAX_TOTAL: ${AO_CHAT_HOST_MAX_TOTAL:-3}
+      AO_CHAT_HOST_MAX_ORCH: ${AO_CHAT_HOST_MAX_ORCH:-1}
+      AO_CHAT_HOST_MAX_WORKER: ${AO_CHAT_HOST_MAX_WORKER:-2}
+      AO_CHAT_HOST_PRESSURE_TOTAL: ${AO_CHAT_HOST_PRESSURE_TOTAL:-2}
+      AO_CHAT_HOST_PRESSURE_ORCH: ${AO_CHAT_HOST_PRESSURE_ORCH:-1}
+      AO_CHAT_HOST_PRESSURE_WORKER: ${AO_CHAT_HOST_PRESSURE_WORKER:-1}
+    volumes:
+      # ~20 GiB intended for projects + chat-hosts. Plain local volumes do not
+      # hard-cap size — ensure the host path/disk has ≥20 GiB free, or bind-mount
+      # a dedicated partition (see PORTAINER.md).
+      - ao_data:/ao-data
+    networks:
+      - traefik-public
+    # No ports: published — Traefik reaches authenticated remote on 3011 via overlay.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS --max-time 5 http://127.0.0.1:3001/healthz || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "3"
+        compress: "true"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "3.00"
+          memory: 6G
+        reservations:
+          cpus: "0.50"
+          memory: 1G
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        order: stop-first
+        failure_action: pause
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 3
+        window: 180s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        # HTTPS public router → authenticated AO remote (NOT the primary daemon).
+        - traefik.http.routers.ao-headless.rule=Host(`${AO_DOMAIN:-ao.subscribeit.pl}`)
+        - traefik.http.routers.ao-headless.entrypoints=websecure
+        - traefik.http.routers.ao-headless.tls=true
+        - traefik.http.routers.ao-headless.tls.certresolver=letsencrypt
+        - traefik.http.routers.ao-headless.service=ao-headless
+        # HTTP → HTTPS (leave ACME challenge on web).
+        - traefik.http.routers.ao-headless-http.rule=Host(`${AO_DOMAIN:-ao.subscribeit.pl}`) && !PathPrefix(`/.well-known/acme-challenge`)
+        - traefik.http.routers.ao-headless-http.entrypoints=web
+        - traefik.http.routers.ao-headless-http.middlewares=ao-headless-https
+        - traefik.http.middlewares.ao-headless-https.redirectscheme.scheme=https
+        - traefik.http.middlewares.ao-headless-https.redirectscheme.permanent=true
+        - traefik.http.services.ao-headless.loadbalancer.server.port=3011
+        # Blackbox / discovery: identity is unauthenticated 200; /healthz is 401 without bearer (still "ok").
+        - monitoring.io/health-path=/api/v1/identity
+
+volumes:
+  ao_data:
+
+networks:
+  traefik-public:
+    external: true
