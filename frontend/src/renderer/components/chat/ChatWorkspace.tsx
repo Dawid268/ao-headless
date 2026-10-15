@@ -363,6 +363,8 @@ export interface ChatWorkspaceProps {
 	agentResuming?: boolean;
 	startingSteps?: readonly SessionProvisionStep[];
 	settingsReady?: boolean;
+	/** The agent's own settings have not arrived; the bar shows the saved ones, disabled. */
+	settingsLoading?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
 	agentInputDisabled?: boolean;
 	/** Fence new agent work without blocking decisions required by the current turn. */
@@ -630,6 +632,7 @@ function ChatWorkspaceContent({
 	agentResuming = false,
 	startingSteps,
 	settingsReady = true,
+	settingsLoading = false,
 	agentInputDisabled = false,
 	newWorkDisabled = false,
 	reviewerTerminal,
@@ -1339,7 +1342,7 @@ function ChatWorkspaceContent({
 					beforePicker={agentSwitch ? <ContextMeter usage={stableUsage} compactsAt={compactsAt} /> : undefined}
 					// Only while the agent is starting: a sleeping chat whose wake failed would
 					// otherwise read "Loading models" for good. It shows its saved model instead.
-					modelsLoading={snapshot.controller.state === "connecting"}
+					modelsLoading={settingsLoading && snapshot.controller.state !== "hibernated"}
 					afterPermissions={composerAction}
 					models={models ?? []}
 					settings={stableSettings}
@@ -1364,7 +1367,7 @@ function ChatWorkspaceContent({
 								snapshot.controller.state === "connecting" ||
 								snapshot.controller.state === "stopped"
 							)) ||
-							snapshot.controller.state === "hibernated" ||
+							settingsLoading ||
 							session?.provisionState === "provisioning" ||
 							controllerTransitioning || configOptionPending || newWorkDisabled
 						}
@@ -1372,6 +1375,7 @@ function ChatWorkspaceContent({
 			) : null,
 		[
 			settingsReady,
+			settingsLoading,
 			configOptionError,
 			configOptionPending,
 			configOptions,

@@ -284,10 +284,10 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	// can also outlive the source, so wait for the handoff's final snapshot refresh.
 	// A background resume keeps the last-known catalogs visible so the model
 	// picker doesn't blank out while the agent spins up.
-	// A sleeping or waking agent cannot report its settings yet. The bar shows the
-	// last known and saved ones, disabled, rather than nothing until it is up.
+	// A sleeping, waking or reconnecting agent cannot report its settings yet. The
+	// bar shows the last known and saved ones, disabled, rather than nothing.
 	const waking = snapshot?.harness === session.provider &&
-		(snapshot.controller?.state === "hibernated" || snapshot.controller?.state === "connecting");
+		(snapshot.controller?.state === "hibernated" || snapshot.controller?.state === "connecting" || snapshot.controller?.state === "recovering");
 	const controllerCatalogsEnabled = (targetChatControllerReady || agentResuming) && !controllerTransitioning && !newWorkDisabled;
 	const configOptions = useConversationConfigOptions(
 		session.id,
@@ -634,7 +634,10 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
 				shellError={shellError}
-				settingsReady={!optimisticChat && (targetChatControllerReady || agentResuming || waking) && (!can(renderSnapshot, "config_options") || configOptions.loaded || waking)}
+				settingsReady={!optimisticChat && (targetChatControllerReady || agentResuming || waking)}
+				// Until the agent's own settings arrive the bar shows the saved ones,
+				// disabled, rather than nothing: asleep, waking, or its list still loading.
+				settingsLoading={waking || (can(renderSnapshot, "config_options") && !configOptions.loaded && !configOptions.error)}
 				models={models}
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
 				onRememberPermissions={can(renderSnapshot, "config_options") && !configOptions.loaded
