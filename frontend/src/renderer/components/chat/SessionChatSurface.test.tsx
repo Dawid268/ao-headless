@@ -887,16 +887,16 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
+			expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "true");
 		});
-		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "true");
-		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
+		// A switch in progress shows in the transcript, not as a card; one that
+		// awaits recovery keeps its card for the reason and the next step.
 		if (outcome === "in_progress") {
-			const progress = screen.getByRole("list", { name: "Switching…" });
-			expect(progress.querySelector('[aria-current="step"]')).toHaveTextContent("Starting target agent");
+			expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		} else {
-			expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
+			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
 		}
+		expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
 	});
 
 	it("uses a ready Chat controller as the completed takeover proof", async () => {
@@ -929,12 +929,9 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-				"data-outcome",
-				"success",
-			);
+			expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 		});
-		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
 	});
 
@@ -1000,12 +997,9 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-				"data-outcome",
-				"in_progress",
-			);
+			expect(catalogObserverState.enabled.at(-1)).toBe(false);
 		});
-		expect(catalogObserverState.enabled.at(-1)).toBe(false);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 
 		conversationState.snapshot = {
 			capabilities: ["config_options"],
@@ -1022,12 +1016,9 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-				"data-outcome",
-				"success",
-			);
+			expect(catalogObserverState.enabled.at(-1)).toBe(true);
 		});
-		expect(catalogObserverState.enabled.at(-1)).toBe(true);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 	});
 
 	it("ignores completed switch history when a stopped Chat controller reloads", () => {
@@ -1080,11 +1071,9 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-				"data-outcome",
-				"in_progress",
-			);
+			expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "true");
 		});
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 
 		agentSwitchState.data = [failedSwitch];
 		act(() => {
@@ -1123,10 +1112,7 @@ describe("SessionChatSurface link routing", () => {
 				<SessionChatSurface session={{ ...session, activeAgentSwitch: retrySwitch }} />
 			</Wrapper>,
 		);
-		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-			"data-outcome",
-			"in_progress",
-		);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 
 		const completedRetry = {
 			...retrySwitch,
@@ -1150,10 +1136,7 @@ describe("SessionChatSurface link routing", () => {
 			</Wrapper>,
 		);
 
-		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-			"data-outcome",
-			"success",
-		);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 
 		conversationState.snapshot = { capabilities: [], controller: { state: "stopped" } };
 		view.rerender(
@@ -1163,10 +1146,7 @@ describe("SessionChatSurface link routing", () => {
 				/>
 			</Wrapper>,
 		);
-		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
-			"data-outcome",
-			"success",
-		);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 
 		act(() => vi.advanceTimersByTime(3_000));
