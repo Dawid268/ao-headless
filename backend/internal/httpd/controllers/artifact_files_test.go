@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -368,5 +369,54 @@ func TestUpdateArtifactFileRefusesAnythingButAListedRegularFileWithText(t *testi
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, "ok.md")); string(got) != "ok" {
 		t.Errorf("ok.md = %q", got)
+	}
+}
+
+func TestUpdateArtifactFileKeepsPermissionsAndLeavesNoTemporaryFile(t *testing.T) {
+	srv, dir := deleteArtifactFileServer(t, map[string]string{"plans/notes.md": "# notes"}, "plans/notes.md")
+	file := filepath.Join(dir, "plans", "notes.md")
+	if err := os.Chmod(file, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, out := putArtifactFile(t, srv, map[string]string{"path": "plans/notes.md", "content": "# edited", "expectedFileFingerprint": artifactSHA("# notes")}); status != http.StatusOK {
+		t.Fatalf("status = %d (%v)", status, out)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v, want 0640", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "plans"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "notes.md" {
+		t.Errorf("plans/ holds %v, want only notes.md", entries)
+	}
+}
+
+func TestUpdateArtifactFileLeavesTheOriginalIntactWhenTheWriteFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory does not block file creation on Windows")
+	}
+	srv, dir := deleteArtifactFileServer(t, map[string]string{"plans/notes.md": "# notes"}, "plans/notes.md")
+	plans := filepath.Join(dir, "plans")
+	if err := os.Chmod(plans, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(plans, 0o755) })
+	if probe, err := os.Create(filepath.Join(plans, "probe")); err == nil {
+		_ = probe.Close()
+		t.Skip("running with privileges that ignore directory permissions")
+	}
+
+	if status, _ := putArtifactFile(t, srv, map[string]string{"path": "plans/notes.md", "content": "# edited", "expectedFileFingerprint": artifactSHA("# notes")}); status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", status)
+	}
+	if got, _ := os.ReadFile(filepath.Join(plans, "notes.md")); string(got) != "# notes" {
+		t.Fatalf("notes.md = %q, want the original", got)
 	}
 }

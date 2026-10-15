@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -245,8 +246,10 @@ func artifactFingerprint(content []byte) string {
 }
 
 // writeArtifactFile replaces a regular file beneath dir with content when its
-// current content hashes to expected. os.Root refuses ".." and symlinks that
-// leave dir; a symlink itself is never written.
+// current content hashes to expected. The content goes to a temporary file
+// beside it that is then renamed over it, so a failed save leaves the
+// original intact. os.Root refuses ".." and symlinks that leave dir; a
+// symlink itself is never written.
 func writeArtifactFile(dir, relPath, expected string, content []byte) error {
 	if dir == "" {
 		return fs.ErrNotExist
@@ -264,12 +267,7 @@ func writeArtifactFile(dir, relPath, expected string, content []byte) error {
 	if !info.Mode().IsRegular() {
 		return fs.ErrNotExist
 	}
-	file, err := root.OpenFile(name, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	current, err := io.ReadAll(io.LimitReader(file, attachmentstore.MaxFileBytes+1))
+	current, err := readArtifactFile(root, name)
 	if err != nil {
 		return fmt.Errorf("read artifact file: %w", err)
 	}
@@ -279,11 +277,49 @@ func writeArtifactFile(dir, relPath, expected string, content []byte) error {
 	if bytes.Equal(current, content) {
 		return nil
 	}
-	if err := file.Truncate(0); err != nil {
+	temp, err := writeArtifactTemp(root, name, info.Mode().Perm(), content)
+	if err != nil {
 		return fmt.Errorf("write artifact file: %w", err)
 	}
-	if _, err := file.WriteAt(content, 0); err != nil {
+	if err := root.Rename(temp, name); err != nil {
+		_ = root.Remove(temp)
 		return fmt.Errorf("write artifact file: %w", err)
 	}
 	return nil
+}
+
+func readArtifactFile(root *os.Root, name string) ([]byte, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	return io.ReadAll(io.LimitReader(file, attachmentstore.MaxFileBytes+1))
+}
+
+// writeArtifactTemp writes content to a new hidden file beside name, with
+// name's permissions, and returns its root-relative path. The file is
+// removed again if the write fails.
+func writeArtifactTemp(root *os.Root, name string, perm fs.FileMode, content []byte) (string, error) {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return "", err
+	}
+	temp := filepath.Join(filepath.Dir(name), "."+filepath.Base(name)+".ao-save-"+hex.EncodeToString(suffix))
+	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return "", err
+	}
+	_, err = file.Write(content)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = root.Remove(temp)
+		return "", err
+	}
+	return temp, nil
 }
