@@ -1577,6 +1577,24 @@ describe("useBrowserView", () => {
 			expect(browser.navigate).not.toHaveBeenCalled();
 		});
 
+		it("asks main to show a cloud session's agent browser, backing off until it is up", async () => {
+			vi.useFakeTimers();
+			try {
+				const browser = setupBridge();
+				const remoteLookup = vi.spyOn(aoBridge.remotes, "agentBrowserUrl");
+				const lookup = vi.spyOn(aoBridge.cloudCp, "agentBrowserUrl").mockResolvedValueOnce("").mockResolvedValue(agentUrl);
+				renderHook(() => useBrowserView({ sessionId: "ses-1", cloudAgentBrowser: { baseUrl: "https://cp.example", orgId: "org-1", sessionId: "ses-1" }, active: true, poppedOut: false }));
+				await act(() => vi.advanceTimersByTimeAsync(0));
+				expect(lookup).toHaveBeenCalledWith("https://cp.example", "org-1", "ses-1");
+				await act(() => vi.advanceTimersByTimeAsync(2_000));
+				expect(lookup).toHaveBeenCalledTimes(2);
+				expect(browser.openTab).toHaveBeenCalledWith({ viewId: "42:ses-1", url: agentUrl });
+				expect(remoteLookup).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it("opens a preview beside the agent tab, never over it", async () => {
 			const browser = setupBridge();
 			vi.spyOn(aoBridge.remotes, "agentBrowserUrl").mockResolvedValue("");

@@ -429,6 +429,7 @@ if (typeof window !== "undefined") {
 			openStream: async () => ({ streamId: "stream_test" }),
 			closeStream: () => undefined,
 			onStreamEvent: () => () => undefined,
+			agentBrowserUrl: async () => "",
 		},
 	};
 } // end if (typeof window !== "undefined")

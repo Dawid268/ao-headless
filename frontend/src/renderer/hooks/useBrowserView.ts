@@ -65,6 +65,8 @@ type UseBrowserViewOptions = {
 	sessionId: string;
 	/** Source daemon for preview URLs; omitted for the local daemon. */
 	origin?: { hostId: string; sessionId: string; proxyBase: string };
+	/** A cloud session, whose agent browser the control plane serves. */
+	cloudAgentBrowser?: { baseUrl: string; orgId: string; sessionId: string };
 	active: boolean;
 	poppedOut: boolean;
 	/**
@@ -279,6 +281,7 @@ function hiddenByFullscreen(node: HTMLElement): boolean {
 export function useBrowserView({
 	sessionId,
 	origin,
+	cloudAgentBrowser,
 	active,
 	poppedOut,
 	terminated,
@@ -1034,18 +1037,24 @@ export function useBrowserView({
 		[hasNativeBrowser, navigate, openTab, selectTab],
 	);
 
-	// A remote session's agent browser (the host's Chromium its agent drives,
-	// streamed) is part of the session's surface: main shows it as one tab per
-	// agent page. It is derived from the host whenever the view is built or
-	// the host reconnects, not remembered: a reopened window brings it back.
-	// A host with no agent browser to show yet (starting, redeploying, or not
-	// set up) is asked again, backing off, while the view stays.
+	// A remote or cloud session's agent browser (the host's or sandbox's
+	// Chromium its agent drives, streamed) is part of the session's surface:
+	// main shows it as one tab per agent page. It is derived from the host
+	// whenever the view is built or the host reconnects, not remembered: a
+	// reopened window brings it back. A host with no agent browser to show yet
+	// (starting, redeploying, or not set up) is asked again, backing off,
+	// while the view stays.
 	useEffect(() => {
-		if (!hasNativeBrowser || !origin || !viewId || viewIdRef.current !== viewId || terminated) return;
+		const agentBrowserUrl = origin
+			? () => aoBridge.remotes.agentBrowserUrl(origin.hostId, origin.sessionId)
+			: cloudAgentBrowser
+				? () => aoBridge.cloudCp.agentBrowserUrl(cloudAgentBrowser.baseUrl, cloudAgentBrowser.orgId, cloudAgentBrowser.sessionId)
+				: undefined;
+		if (!hasNativeBrowser || !agentBrowserUrl || !viewId || viewIdRef.current !== viewId || terminated) return;
 		let cancelled = false;
 		let retry = 0;
 		const ask = (attempt: number) => {
-			void aoBridge.remotes.agentBrowserUrl(origin.hostId, origin.sessionId).then(async (url) => {
+			void agentBrowserUrl().then(async (url) => {
 				if (cancelled || viewIdRef.current !== viewId) return;
 				// ponytail: six more tries over about two minutes, then the next
 				// session switch or reconnect asks afresh; main could instead say
@@ -1063,7 +1072,7 @@ export function useBrowserView({
 			cancelled = true;
 			window.clearTimeout(retry);
 		};
-	}, [hasNativeBrowser, origin?.hostId, origin?.sessionId, origin?.proxyBase, terminated, viewId]);
+	}, [hasNativeBrowser, origin?.hostId, origin?.sessionId, origin?.proxyBase, cloudAgentBrowser?.baseUrl, cloudAgentBrowser?.orgId, cloudAgentBrowser?.sessionId, terminated, viewId]);
 
 	const clear = useCallback(() => {
 		if (!hasNativeBrowser) {
