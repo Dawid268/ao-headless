@@ -1337,6 +1337,7 @@ function ChatWorkspaceContent({
 				<TurnSettingsBar
 					agentSwitch={agentSwitch}
 					beforePicker={agentSwitch ? <ContextMeter usage={stableUsage} compactsAt={compactsAt} /> : undefined}
+					modelsLoading={snapshot.controller.state === "hibernated" || snapshot.controller.state === "connecting"}
 					afterPermissions={composerAction}
 					models={models ?? []}
 					settings={stableSettings}

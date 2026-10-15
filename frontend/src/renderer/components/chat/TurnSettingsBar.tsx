@@ -103,6 +103,7 @@ export function TurnSettingsBar({
 	autoSelectEffortOnOpen = false,
 	agentSwitch,
 	beforePicker,
+	modelsLoading,
 	afterPermissions,
 	children,
 }: {
@@ -146,6 +147,8 @@ export function TurnSettingsBar({
 	agentSwitch?: AgentSwitchProps;
 	/** Drawn just before that picker, such as the context meter. */
 	beforePicker?: ReactNode;
+	/** The agent is starting again; the picker names no model until it reports its own. */
+	modelsLoading?: boolean;
 	/** A control after the permission picker, such as the switch to the terminal view. */
 	afterPermissions?: ReactNode;
 	/** Inline controls on the right model row, before the mode/approval picker — queue vs steer. */
@@ -387,6 +390,7 @@ export function TurnSettingsBar({
 								// Only an agent that sends back its own settings has any to load. AO keeps
 								// the rest itself, and their quick save would just flicker the rows.
 								loading={configPending && !nativeModelMenu}
+								loadingModels={modelsLoading}
 								title={reroute ? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}` : undefined}
 								mark={reroute ? <Shuffle className="size-3 shrink-0 text-warning" aria-hidden="true" /> : undefined}
 								extras={pickerExtras}

@@ -18,7 +18,7 @@ vi.mock("../../hooks/useAgentModelsQuery", () => ({
 	}),
 }));
 
-function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-code", extra: Partial<PickerSource> = {}, loading = false) {
+function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-code", extra: Partial<PickerSource> = {}, loading = false, loadingModels = false) {
 	const onPendingChange = vi.fn();
 	const current: PickerSource = {
 		models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }],
@@ -37,6 +37,7 @@ function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-
 				current={current}
 				terminal={terminal}
 				loading={loading}
+				loadingModels={loadingModels}
 				agentSwitch={{ projectId: "p", pending, onPendingChange }}
 			/>
 		</QueryClientProvider>,
@@ -81,6 +82,11 @@ describe("AgentModelPicker", () => {
 		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
 		await user.click(screen.getByRole("radio", { name: "1M" }));
 		expect(onPendingChange).toHaveBeenCalledWith(expect.objectContaining({ harness: "claude-code", autoCompactWindow: "1m" }));
+	});
+
+	it("names no model while the agent starts again", () => {
+		open(undefined, false, "claude-code", {}, false, true);
+		expect(screen.getByRole("button", { name: /Agent, model and reasoning effort/ })).toHaveTextContent("Loading models…");
 	});
 
 	it("holds another agent as pending when it is picked", async () => {

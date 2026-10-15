@@ -165,6 +165,7 @@ export function AgentModelPicker({
 	agentSwitch,
 	disabled,
 	loading,
+	loadingModels,
 	title,
 	mark,
 	extras,
@@ -183,6 +184,8 @@ export function AgentModelPicker({
 	disabled?: boolean;
 	/** The running agent is answering a settings change; its other settings are not known yet. */
 	loading?: boolean;
+	/** The agent is starting again, so its current models are not known yet. */
+	loadingModels?: boolean;
 	title?: string;
 	/** A flag on the trigger, such as a substituted model. */
 	mark?: ReactNode;
@@ -287,6 +290,12 @@ export function AgentModelPicker({
 				data-shortcut-target={terminal ? undefined : "model-picker"}
 			>
 				<ProviderMark provider={terminal ? currentHarness : shownHarness} className="size-3.5" />
+				{loadingModels && !pending && !terminal ? (
+					<span className="flex items-center gap-1.5 text-muted-foreground">
+						<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+						Loading models…
+					</span>
+				) : <>
 				<span className={cn("min-w-0 max-w-[28ch] truncate", shownUltra && !terminal ? "ultra-text" : undefined)}>
 					{terminal ? agentLabel(currentHarness) : shownModel}
 				</span>
@@ -298,6 +307,7 @@ export function AgentModelPicker({
 						{mark}
 					</>
 				)}
+				</>}
 			</OptionMenuTrigger>
 			<OptionMenuContent align={terminal ? "start" : "end"} side={terminal ? "right" : "top"} className="chat-settings-menu w-64 text-[12px]!"
 				onCloseAutoFocus={(event) => {
