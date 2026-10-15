@@ -7,6 +7,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Keep this release aligned with the adapter's inspected hook and TUI contract.
+const openInterpreterInstallRelease = "rust-v0.0.56"
+
 var agentDocumentationURLs = map[Target]string{
 	TargetClaudeCode:      "https://code.claude.com/docs/en/installation",
 	TargetCodex:           "https://github.com/openai/codex",
@@ -255,7 +258,11 @@ func (s requestPlanner) agentMethodPlans(target Target, operation AgentOperation
 			plans = append(plans, s.planShellInstaller(target, "https://install.openhands.dev/install.sh", "sh"))
 		}
 	case TargetOpenInterpreter:
-		plans = []Plan{s.officialByOS(target, "https://www.openinterpreter.com/install", "sh", "https://www.openinterpreter.com/install.ps1", agentDocumentationURLs[target])}
+		plan := s.officialByOS(target, "https://www.openinterpreter.com/install", "sh", "https://www.openinterpreter.com/install.ps1", agentDocumentationURLs[target])
+		if plan.Script != nil {
+			plan.Script.Env = []string{"OPEN_INTERPRETER_RELEASE=" + openInterpreterInstallRelease}
+		}
+		plans = []Plan{plan}
 	case TargetCommandCode:
 		plans = []Plan{s.planNPM(target, "command-code")}
 	default:
