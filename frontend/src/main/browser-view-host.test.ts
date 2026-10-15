@@ -251,6 +251,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const view = {
 		webContents,
 		setBounds: vi.fn(),
+		getBounds: vi.fn(() => ({ x: -10000, y: -10000, width: 1280, height: 720 })),
 		setBorderRadius: vi.fn(),
 		setVisible: vi.fn(),
 		setIgnoreMouseEvents: vi.fn(),
@@ -438,10 +439,9 @@ describe("browser live stream", () => {
 	const panelRect = { x: 300, y: 40, width: 480, height: 520 };
 	const hiddenRect = { x: 0, y: 0, width: 0, height: 0 };
 
-	// Regression, reported live: with a phone watching, the native browser view
-	// stayed painted over the board and over other sessions. A parked native
-	// view keeps its last on-screen frame, so parking it "visible" un-hides it.
-	it("keeps a streamed browser hidden on the desktop after its panel is left", async () => {
+	// A streamed view must paint offscreen without covering the board or other
+	// sessions. Move it after showing so Chromium applies the offscreen bounds.
+	it("parks a streamed browser outside the desktop after its panel is left", async () => {
 		const { emit, host, invoke, setCurrentURL, view } = setupHost();
 		const { viewId } = await invoke("browser:ensure", "sess-1");
 		setCurrentURL("https://example.com/");
@@ -454,8 +454,19 @@ describe("browser live stream", () => {
 		// Restarting the stream re-applies the parked bounds, as a session switch does.
 		await host.startLiveStream("sess-1", 8, liveSink());
 
-		expect(view.setVisible).toHaveBeenCalled();
-		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: -10000, y: -10000, width: 1280, height: 720 });
+		expect(view.setVisible.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setBounds.mock.invocationCallOrder.at(-1)!);
+	});
+
+	it("hides a streamed view if the native view does not accept offscreen bounds", async () => {
+		const { host, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		view.getBounds.mockReturnValue({ x: 20, y: 30, width: 700, height: 500 });
+		const sink = liveSink();
+		await host.startLiveStream("sess-1", 7, sink);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+		expect(sink.error).toHaveBeenCalledWith("BROWSER_CAPTURE_UNAVAILABLE", expect.stringContaining("parked outside"));
+		await host.stopLiveStream("sess-1", 7);
 	});
 
 	it("captures an app-hidden window without capturing an idle visible desktop", async () => {
@@ -562,6 +573,60 @@ describe("browser live stream", () => {
 
 		expect(webContents.loadURL).toHaveBeenCalledWith("http://localhost:4317/index.html");
 		expect(sink.state).toHaveBeenLastCalledWith(expect.objectContaining({ url: "http://localhost:4317/index.html" }));
+	});
+
+	it("keeps repeated desktop New Tab actions blank while mobile preview offers continue", async () => {
+		const { host, invoke, webContents, setCurrentURL } = setupHost();
+		const { viewId } = await invoke("browser:ensure", "sess-1");
+		await host.startLiveStream("sess-1", 7, liveSink());
+		await host.openLivePreview("sess-1", "http://localhost:4317/index.html");
+		for (let i = 0; i < 3; i++) {
+			await invoke("browser:openTab", { viewId });
+			setCurrentURL("about:blank");
+			webContents.loadURL.mockClear();
+			await host.openLivePreview("sess-1", "http://localhost:4317/index.html");
+			expect(webContents.loadURL).not.toHaveBeenCalled();
+		}
+		await host.stopLiveStream("sess-1", 7);
+		await host.startLiveStream("sess-1", 8, liveSink());
+		webContents.loadURL.mockClear();
+		await host.openLivePreview("sess-1", "http://localhost:4317/index.html");
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("does not seed a blank tab the user opened before the first preview offer", async () => {
+		const { host, invoke, webContents, setCurrentURL } = setupHost();
+		const { viewId } = await invoke("browser:ensure", "sess-1");
+		await invoke("browser:openTab", { viewId });
+		setCurrentURL("about:blank");
+		await host.startLiveStream("sess-1", 7, liveSink());
+		webContents.loadURL.mockClear();
+		await host.openLivePreview("sess-1", "http://localhost:4317/index.html");
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("keeps an explicitly cleared browser empty across mobile reconnects", async () => {
+		const { host, invoke, webContents } = setupHost();
+		const { viewId } = await invoke("browser:ensure", "sess-1");
+		await invoke("browser:clear", viewId);
+		await host.startLiveStream("sess-1", 7, liveSink());
+		webContents.loadURL.mockClear();
+		await host.openLivePreview("sess-1", "http://localhost:4317/index.html");
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("publishes the initial empty state before hidden capture preparation finishes", async () => {
+		const { host, debuggerSendCommand } = setupHost();
+		let finish: ((value: unknown) => void) | undefined;
+		debuggerSendCommand.mockImplementation(async (method) => method === "Page.startScreencast"
+			? new Promise((resolve) => { finish = resolve; }) : {});
+		const sink = liveSink();
+		const starting = host.startLiveStream("sess-1", 7, sink);
+		await vi.waitFor(() => expect(sink.state).toHaveBeenCalledWith(expect.objectContaining({ url: "", width: 1280, height: 720 })));
+		await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+		finish?.({});
+		await starting;
+		await host.stopLiveStream("sess-1", 7);
 	});
 
 	it("never replaces a page that is already open with the session preview", async () => {

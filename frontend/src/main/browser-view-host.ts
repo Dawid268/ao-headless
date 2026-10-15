@@ -552,6 +552,9 @@ type BrowserSessionEntry = {
   tabs: Map<string, BrowserEntry>;
   activeTabId: string;
   nextTabNumber: number;
+  // Automatic mobile preview selection only owns the initial unused tab.
+  // Keep this across reconnects so user-created blank tabs stay blank.
+  livePreviewPending: boolean;
   bounds: BrowserRect;
   rendererBounds: BrowserRect;
   // Size the desktop panel last showed this session at. A remotely viewed
@@ -966,6 +969,7 @@ export function createBrowserViewHost(
     syncNativeOnActivate = false,
     preferredTabId?: string,
   ): BrowserEntry => {
+    if (session.tabs.size > 0) session.livePreviewPending = false;
     const tabId = preferredTabId ?? `t${session.nextTabNumber++}`;
     if (session.tabs.has(tabId)) {
       throw browserError(
@@ -1128,6 +1132,7 @@ export function createBrowserViewHost(
       () => isCurrentEntry() && session.activeTabId === entry.tabId,
       () => {
         if (!isCurrentEntry()) return;
+        if (!isBlankBrowserEntry(entry)) session.livePreviewPending = false;
         if (session.devtools && isBlankBrowserEntry(entry))
           destroyDevTools(session);
         applySessionBounds(session, entry);
@@ -1221,6 +1226,7 @@ export function createBrowserViewHost(
         tabs: new Map(),
         activeTabId: "",
         nextTabNumber: 1,
+        livePreviewPending: true,
         bounds: OFFSCREEN_BOUNDS,
         rendererBounds: OFFSCREEN_BOUNDS,
         zoomFactor: 1,
@@ -2061,11 +2067,22 @@ export function createBrowserViewHost(
   ): void {
     syncLiveViewport(session, entry);
     if (!session.visible) {
-      // Park hidden even while a phone is watching. A parked native view keeps
-      // its last on-screen frame (only its hidden flag changes), so re-applying
-      // these bounds to a "visible" view un-hides it over whatever the desktop
-      // shows next. The screencast capturer keeps a hidden page painting.
-      applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
+      if (session.live) {
+        // A never-shown hidden WebContentsView has no compositor surface:
+        // screencast emits nothing and captureScreenshot can wait forever.
+        // Show the native view before moving it so Chromium updates its bounds,
+        // but keep it completely outside the window while mobile is watching.
+        entry.view.setVisible?.(true);
+        applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS);
+        const parked = entry.view.getBounds?.();
+        if (parked && (parked.x !== OFFSCREEN_BOUNDS.x || parked.y !== OFFSCREEN_BOUNDS.y ||
+          parked.width !== OFFSCREEN_BOUNDS.width || parked.height !== OFFSCREEN_BOUNDS.height)) {
+          entry.view.setVisible?.(false);
+          session.live.sink.error("BROWSER_CAPTURE_UNAVAILABLE", "Browser capture could not be parked outside the desktop window");
+        }
+      } else {
+        applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
+      }
       return;
     }
     // Keep the initialized blank target available to automation, but let the
@@ -2191,6 +2208,8 @@ export function createBrowserViewHost(
     ) {
       cancelAnnotation(options, entry, "navigation");
     }
+    const owner = entries.get(entry.state.viewId);
+    if (owner) owner.livePreviewPending = false;
     const pendingNavigation = { url: normalized.href };
     entry.pendingNavigation = pendingNavigation;
     try {
@@ -2227,6 +2246,7 @@ export function createBrowserViewHost(
         "Browser target is unavailable",
       );
     assertProfileStable(session);
+    session.livePreviewPending = false;
     return withBrowserOperation(session, async () => {
       const entry = activeEntry(session);
       cancelAnnotation(options, entry, "navigation");
@@ -3390,7 +3410,10 @@ export function createBrowserViewHost(
 		const session = await ensureSessionReady(sessionId);
 		if (session.live) await stopLiveCapture(session);
 		session.live = { streamId, sink };
+		// Report an empty browser immediately, even before a hidden renderer
+		// finishes preparing capture. The phone must not wait for a blank frame.
 		try {
+			emitLiveState(session);
 			await retargetLiveStream(session);
 			return emitLiveState(session);
 		} catch (error) {
@@ -3529,17 +3552,22 @@ export function createBrowserViewHost(
 
 	// The desktop panel only opens a session's preview once it is mounted. A
 	// phone that starts watching first would otherwise stream an empty browser,
-	// so open the preview for it, but never over a page that is already there.
+	// so seed its initial unused tab once. Later blank tabs belong to the user.
 	async function openLivePreview(sessionId: string, url: string): Promise<void> {
 		const viewId = viewIdsBySessionId.get(sessionId);
 		const session = viewId ? entries.get(viewId) : undefined;
 		const target = url.trim();
-		if (!session?.live || !target) return;
+		if (!session?.live || !session.livePreviewPending || !target) return;
 		if (session.agentBrowserCommands > 0 || session.profileSwitching) return;
-		if (!isBlankBrowserEntry(activeEntry(session))) return;
+		const current = activeEntry(session);
+		if (!isBlankBrowserEntry(current) || current.pendingNavigation) {
+			session.livePreviewPending = false;
+			return;
+		}
 		await withBrowserOperation(session, async () => {
 			const entry = activeEntry(session);
-			if (!session.live || !isBlankBrowserEntry(entry)) return;
+			if (!session.live || !session.livePreviewPending || !isBlankBrowserEntry(entry) || entry.pendingNavigation) return;
+			session.livePreviewPending = false;
 			await navigateEntry(entry, normalizeAgentBrowserURL(target));
 			emitLiveState(session);
 		});
