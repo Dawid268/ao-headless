@@ -3494,8 +3494,8 @@ func (m *Manager) cleanupRecoveredTargetWorkspace(ctx context.Context, rec domai
 // unconfirmed source restore: the source stopped, the target never took
 // ownership, and no controller runs for the switch.
 func (m *Manager) sourceRestoreQuarantined(ctx context.Context, id domain.SessionID) bool {
-	store, err := m.switchStore()
-	if err != nil {
+	store, ok := m.store.(ports.AgentSwitchStore)
+	if !ok {
 		return false
 	}
 	sw, ok, err := store.GetActiveAgentSwitch(ctx, id)
@@ -3507,8 +3507,8 @@ func (m *Manager) sourceRestoreQuarantined(ctx context.Context, id domain.Sessio
 // that wins the source-stop race. Left active, the switch would quarantine the
 // session again at the next startup.
 func (m *Manager) settleSourceRestoreQuarantineOnKill(ctx context.Context, rec domain.SessionRecord) error {
-	store, err := m.switchStore()
-	if err != nil {
+	store, ok := m.store.(ports.AgentSwitchStore)
+	if !ok {
 		return nil
 	}
 	sw, ok, err := store.GetActiveAgentSwitch(ctx, rec.ID)
