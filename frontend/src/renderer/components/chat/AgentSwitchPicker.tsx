@@ -433,7 +433,7 @@ export function AgentModelPicker({
 }
 
 /** An on/off setting the agent has, as a menu row. The row owns the switch, so a click or Enter fires once. */
-function ToggleRow({ label, checked, onChange }: { label: string; checked?: boolean; onChange?: (next: boolean) => void }) {
+export function ToggleRow({ label, checked, onChange }: { label: string; checked?: boolean; onChange?: (next: boolean) => void }) {
 	if (checked === undefined) return null;
 	return (
 		<OptionMenuItem

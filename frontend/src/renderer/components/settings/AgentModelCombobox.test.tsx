@@ -522,4 +522,16 @@ describe("AgentModelCombobox", () => {
 		await userEvent.click(screen.getByRole("menuitem", { name: "Use “private/custom-model” as a custom model" }));
 		expect(onCustom).toHaveBeenCalledWith("private/custom-model");
 	});
+
+	it("lists a Cursor model once and sets its thinking as a control", async () => {
+		const { onChange } = renderCombobox([
+			{ id: "claude-opus-4-8-high", label: "Claude Opus 4.8 High", isDefault: true },
+			{ id: "claude-opus-4-8-thinking-high", label: "Claude Opus 4.8 High Thinking" },
+			{ id: "gpt-5.5-high", label: "GPT-5.5 High" },
+		], { agentId: "cursor", value: "claude-opus-4-8-high", compact: true });
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		expect(screen.getAllByRole("menuitem", { name: /Claude Opus 4.8/ })).toHaveLength(1);
+		await userEvent.click(screen.getByText("Thinking"));
+		expect(onChange).toHaveBeenCalledWith("claude-opus-4-8-thinking-high");
+	});
 });
