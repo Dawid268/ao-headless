@@ -523,7 +523,7 @@ describe("AgentModelCombobox", () => {
 		expect(onCustom).toHaveBeenCalledWith("private/custom-model");
 	});
 
-	it("lists a Cursor model once and sets its thinking as a control", async () => {
+	it("lists a Cursor model once and keeps its thinking with its effort", async () => {
 		const { onChange } = renderCombobox([
 			{ id: "claude-opus-4-8-high", label: "Claude Opus 4.8 High", isDefault: true },
 			{ id: "claude-opus-4-8-thinking-high", label: "Claude Opus 4.8 High Thinking" },
@@ -531,7 +531,9 @@ describe("AgentModelCombobox", () => {
 		], { agentId: "cursor", value: "claude-opus-4-8-high", compact: true });
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
 		expect(screen.getAllByRole("menuitem", { name: /Claude Opus 4.8/ })).toHaveLength(1);
-		await userEvent.click(screen.getByText("Thinking"));
+		expect(screen.queryByText("Fast mode")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
+		await userEvent.click(await screen.findByText("Thinking"));
 		expect(onChange).toHaveBeenCalledWith("claude-opus-4-8-thinking-high");
 	});
 });

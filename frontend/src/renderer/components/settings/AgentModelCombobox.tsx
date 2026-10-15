@@ -256,7 +256,10 @@ export function AgentModelCombobox({
 		onChange(modelID === defaultModel ? "" : modelID);
 	};
 	const selectCatalogModel = (event: Event, item: IndexedModel) => {
-		const openEffort = Boolean(tuning && item.model.efforts?.some((effort) => effort && effort.toLowerCase() !== "default"));
+		const family = families?.find((entry) => entry.id === item.id);
+		const openEffort = family
+			? family.efforts.length > 1 || family.hasThinkingChoice
+			: Boolean(tuning && item.model.efforts?.some((effort) => effort && effort.toLowerCase() !== "default"));
 		if (openEffort) event.preventDefault();
 		selectModel(item.id);
 		setEffortMenuOpen(openEffort);
@@ -518,25 +521,27 @@ export function AgentModelCombobox({
 						aria-hidden="true"
 					/>
 				</div>
-				{variant && (variant.family.efforts.length > 1 || variant.family.hasFast || variant.family.hasThinkingChoice) && (
+				{/* Cursor's effort and thinking open beside the model, like the other agents'
+				    effort. New Task has no fast mode for any agent, so Cursor's keeps its current speed. */}
+				{variant && (variant.family.efforts.length > 1 || variant.family.hasThinkingChoice) && (
 					<div className="shrink-0">
 						<DropdownMenuSeparator />
-						{variant.family.efforts.length > 1 && (
-							<OptionMenuSub>
-								<OptionMenuSubTrigger label={t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })} value={variant.variant.effort ? formatEffortLabel(variant.variant.effort, t) : undefined} />
-								<OptionMenuSubContent>
-									{variant.family.efforts.map((effort) => (
-										<OptionMenuItem key={effort} role="menuitemradio" aria-checked={effort === variant.variant.effort} active={effort === variant.variant.effort}
-											onSelect={() => selectModel(variant.variant.id, { effort })} className="gap-3 text-xs">
-											{formatEffortLabel(effort, t)}
-											{effort === variant.variant.effort && <Check className="ml-auto size-icon-sm shrink-0" aria-hidden="true" />}
-										</OptionMenuItem>
-									))}
-								</OptionMenuSubContent>
-							</OptionMenuSub>
-						)}
-						<ToggleRow label="Fast mode" checked={variant.family.hasFast ? variant.variant.fast : undefined} onChange={(fast) => selectModel(variant.variant.id, { fast })} />
-						<ToggleRow label="Thinking" checked={variant.family.hasThinkingChoice ? variant.variant.thinking : undefined} onChange={(thinking) => selectModel(variant.variant.id, { thinking })} />
+						<OptionMenuSub open={effortMenuOpen} onOpenChange={(open) => {
+							if (open || !awaitingEffort) setEffortMenuOpen(open);
+						}}>
+							<OptionMenuSubTrigger label={t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })} value={variant.variant.effort ? formatEffortLabel(variant.variant.effort, t) : undefined} />
+							<OptionMenuSubContent>
+								{variant.family.efforts.map((effort) => (
+									<OptionMenuItem key={effort} role="menuitemradio" aria-checked={effort === variant.variant.effort} active={effort === variant.variant.effort}
+										onSelect={() => { selectModel(variant.variant.id, { effort }); setAwaitingEffort(false); setEffortMenuOpen(false); setMenuOpen(false); }} className="gap-3 text-xs">
+										{formatEffortLabel(effort, t)}
+										{effort === variant.variant.effort && <Check className="ml-auto size-icon-sm shrink-0" aria-hidden="true" />}
+									</OptionMenuItem>
+								))}
+								{variant.family.hasThinkingChoice && variant.family.efforts.length > 1 && <DropdownMenuSeparator />}
+								<ToggleRow label="Thinking" checked={variant.family.hasThinkingChoice ? variant.variant.thinking : undefined} onChange={(thinking) => selectModel(variant.variant.id, { thinking })} />
+							</OptionMenuSubContent>
+						</OptionMenuSub>
 					</div>
 				)}
 				{showEffort && tuning && (
