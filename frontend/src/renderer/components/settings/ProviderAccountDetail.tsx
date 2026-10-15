@@ -1,7 +1,7 @@
 import { useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, ChevronDown, ChevronRight, CirclePause, Copy, ExternalLink, Laptop, Link2, LoaderCircle, X, type LucideIcon } from "lucide-react";
-import { canMoveSessions, PROVIDERS, percentLeft, type ProviderAccount, type ProviderLogin } from "../../hooks/useProviderAccounts";
+import { accountProvider, canMoveSessions, PROVIDERS, percentLeft, type ProviderAccount, type ProviderLogin } from "../../hooks/useProviderAccounts";
 import { useSessionUsageSummaries } from "../../hooks/useSessionUsageSummaries";
 import { useWorkspaceQuery } from "../../hooks/useWorkspaceQuery";
 import { aoBridge } from "../../lib/bridge";
@@ -166,6 +166,14 @@ export function LoginProgress({ login, page }: { login: ProviderLogin; page: Acc
 		</>
 	);
 }
+// The sessions an account serves now. A route the daemon keeps for an ended session's restore, or for a
+// switch back to this provider, does not count; a session this page has not loaded does.
+function served(account: ProviderAccount, workspaces: Parameters<typeof findSession>[0]) {
+	return account.sessions.filter((id) => {
+		const session = findSession(workspaces, id)?.session;
+		return !session || (!session.isTerminated && (!session.provider || accountProvider(session.provider) === account.provider));
+	});
+}
 // The sessions on the account by name, busiest today first, each one a click from being opened or moved.
 function AccountSessions({ account, page, others, language }: { account: ProviderAccount; page: AccountsPage; others: ProviderAccount[]; language: string }) {
 	const { t } = useTranslation();
@@ -174,7 +182,7 @@ function AccountSessions({ account, page, others, language }: { account: Provide
 	const [all, setAll] = useState(false);
 	const workspaces = useWorkspaceQuery({ includeCloud: false }).data ?? [];
 	const today = account.usage?.activity?.sessions ?? {};
-	const rows = account.sessions.flatMap((id) => findSession(workspaces, id) ?? []).sort((first, second) => (today[second.session.id] ?? 0) - (today[first.session.id] ?? 0));
+	const rows = served(account, workspaces).flatMap((id) => findSession(workspaces, id) ?? []).sort((first, second) => (today[second.session.id] ?? 0) - (today[first.session.id] ?? 0));
 	if (!rows.length) return null;
 	return (
 		<Rows title={t("providerAccounts.sessionsOnAccount", { count: rows.length })} data-testid="provider-account-sessions">
@@ -239,7 +247,9 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 	const info = PROVIDERS.find((provider) => provider.id === account.provider)!;
 	const { signedIn, displayName: name } = account;
 	const apiKey = account.kind === "api_key";
-	const count = account.sessions.length;
+	const workspaces = useWorkspaceQuery({ includeCloud: false }).data ?? [];
+	const sessions = served(account, workspaces);
+	const count = sessions.length;
 	// An API key has no limits to report, but the helper still knows its activity.
 	const usage = account.usage?.status === "available" || apiKey ? account.usage : undefined;
 	const known = account.usage; // The plan is shown whenever it is known, even while the limits are not.
@@ -249,6 +259,7 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 	const others = peers.filter((other) => canMoveSessions(account, other));
 	const currentDefault = page.accounts.find((other) => other.provider === account.provider && other.primary);
 	const offerFrom = page.moveOffer?.toId === account.id && account.primary ? page.accounts.find((other) => other.id === page.moveOffer?.fromId && canMoveSessions(other, account)) : undefined;
+	const offered = offerFrom ? served(offerFrom, workspaces) : [];
 	const signingIn = page.signIn.waiting && page.signIn.login?.accountId === account.id ? page.signIn.login : null;
 	// Removing the default needs a new one, offered straight away; any signed-in account can be it.
 	// Sessions it cannot take, a Codex key's on a sign-in for one, wait for a sign-in instead.
@@ -262,7 +273,7 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 	async function makeDefault() {
 		setRemoving(false);
 		const becomes = (other: ProviderAccount) => (other.provider !== account.provider ? {} : other.id === account.id ? { primary: true, reserved: false } : { primary: false });
-		if (await page.actNow(account.id, { action: "primary" }, becomes)) page.setMoveOffer(currentDefault?.sessions.length ? { fromId: currentDefault.id, toId: account.id } : null);
+		if (await page.actNow(account.id, { action: "primary" }, becomes)) page.setMoveOffer(currentDefault && served(currentDefault, workspaces).length ? { fromId: currentDefault.id, toId: account.id } : null);
 	}
 	async function remove() {
 		const done = t(signedIn ? "providerAccounts.signedOutOf" : "providerAccounts.removedAccount", { name });
@@ -419,15 +430,15 @@ export function AccountDetail({ account, page }: { account: ProviderAccount; pag
 										? <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Check aria-hidden="true" className="size-3.5 text-status-ready" />{t("providerAccounts.default")}</span>
 										: <Button type="button" variant="secondary" disabled={page.pending} onClick={() => void makeDefault()}>{t("providerAccounts.makeDefault")}</Button>}
 								</Row>
-								{offerFrom?.sessions.length ? (
-									<Row label={t("providerAccounts.moveSessions")} title={t("providerAccounts.sessionsStillUse", { count: offerFrom.sessions.length, name: offerFrom.displayName })} hint={t("providerAccounts.offerHint")}>
-										<Button type="button" variant="secondary" disabled={page.pending} onClick={() => void page.moveSessions(offerFrom.sessions, account, t("providerAccounts.sessionsMoved", { count: offerFrom.sessions.length, name: account.displayName }))}>{t("providerAccounts.moveSessionsHere", { count: offerFrom.sessions.length })}</Button>
-										<IconAction name={t("providerAccounts.leaveSessions", { count: offerFrom.sessions.length })} icon={X} disabled={page.pending} onClick={() => page.setMoveOffer(null)} />
+								{offered.length ? (
+									<Row label={t("providerAccounts.moveSessions")} title={t("providerAccounts.sessionsStillUse", { count: offered.length, name: offerFrom!.displayName })} hint={t("providerAccounts.offerHint")}>
+										<Button type="button" variant="secondary" disabled={page.pending} onClick={() => void page.moveSessions(offered, account, t("providerAccounts.sessionsMoved", { count: offered.length, name: account.displayName }))}>{t("providerAccounts.moveSessionsHere", { count: offered.length })}</Button>
+										<IconAction name={t("providerAccounts.leaveSessions", { count: offered.length })} icon={X} disabled={page.pending} onClick={() => page.setMoveOffer(null)} />
 									</Row>
 								) : null}
 								<Row title={t("providerAccounts.runningSessions")} hint={count ? t("providerAccounts.sessionsUsing", { count }) : t("providerAccounts.noSessionsUsing")}>
 									{count && others.length ? (
-										<AccountMenu accounts={others} onSelect={(target) => void page.moveSessions(account.sessions, target, t("providerAccounts.sessionsMoved", { count: account.sessions.length, name: target.displayName }))}>
+										<AccountMenu accounts={others} onSelect={(target) => void page.moveSessions(sessions, target, t("providerAccounts.sessionsMoved", { count, name: target.displayName }))}>
 											<Button type="button" variant="secondary" className="gap-1.5" disabled={page.pending}>{t("providerAccounts.moveSessions")}<ChevronDown aria-hidden="true" className="size-3.5 text-muted-foreground" /></Button>
 										</AccountMenu>
 									) : null}

@@ -4,6 +4,7 @@ import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, FileUp, KeyRound, LogIn, MonitorSmartphone, Plus, X } from "lucide-react";
 import { accountAction, accountHeadroom, cancelProviderLogin, fetchProviderAccounts, fetchProviderLogin, PROVIDERS, providerAccountsCatalogueKey, providerAccountsKey, startProviderLogin, useProviderAccounts, type AccountAction, type ProviderAccount, type ProviderLogin, type ProviderLoginRequest } from "../../hooks/useProviderAccounts";
 import { apiErrorMessage } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
@@ -39,7 +40,12 @@ function useProviderLogin(onSettled: (login: ProviderLogin, unreachable: boolean
 		cache.setQueryData(loginKey, next);
 		if (next.status !== "cancelled") onSettled(next, Boolean(poll.error && poll.error.code !== "PROVIDER_LOGIN_NOT_FOUND"));
 	}, [poll.data, poll.error]);
-	const start = async (body: ProviderLoginRequest) => cache.setQueryData(loginKey, await startProviderLogin(body));
+	// A browser sign-in opens the provider's page at once; its link stays in the panel for another browser.
+	const start = async (body: ProviderLoginRequest) => {
+		const next = await startProviderLogin(body);
+		cache.setQueryData(loginKey, next);
+		if (next.mode === "browser" && next.url) await aoBridge.app.openExternal(next.url);
+	};
 	const cancel = () => cancelProviderLogin(login!.id).then(() => cache.setQueryData(loginKey, null));
 	return { login, waiting, start, cancel };
 }
@@ -270,7 +276,8 @@ export function ProviderAccountsSection({ titleHidden }: { titleHidden?: boolean
 										</span>
 									</button>
 								</div>
-								{query.data && !accounts.some((account) => account.provider === provider && account.signedIn) ? (
+								{/* A provider without accounts is not managed: its agents keep this computer's own login. */}
+								{query.data && accounts.some((account) => account.provider === provider) && !accounts.some((account) => account.provider === provider && account.signedIn) ? (
 									<div className="px-3 pb-2 pt-1.5">
 										<p className="text-xs text-foreground">{t("providerAccounts.emptyAccounts", { provider: name })}</p>
 										<p className="mt-0.5 text-xs text-muted-foreground">{t("providerAccounts.managedNeedsLogin")}</p>

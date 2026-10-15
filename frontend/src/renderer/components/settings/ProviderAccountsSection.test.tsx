@@ -168,10 +168,17 @@ describe("accounts list and detail", () => {
 	it("says how to start when a provider has no account", async () => {
 		inventory.accounts = [];
 		renderAccounts();
-		await screen.findByText("No signed-in Codex account.");
-		expect(screen.getByText("No signed-in Claude account.")).toBeInTheDocument();
-		expect(screen.getAllByText("Managed sessions need you to sign in again.")).toHaveLength(2);
-		expect(screen.getByText("No accounts yet")).toBeInTheDocument();
+		expect(await screen.findByText("No accounts yet")).toBeInTheDocument();
+		// A provider without accounts is not managed, so no session waits for a sign-in.
+		expect(screen.queryByText(/No signed-in/)).toBeNull();
+		expect(screen.queryByText("Managed sessions need you to sign in again.")).toBeNull();
+	});
+	it("asks for a sign-in when every account of a provider is signed out", async () => {
+		inventory.accounts = [{ ...structuredClone(alice), signedIn: false }, { ...structuredClone(bob), signedIn: false }, structuredClone(clara)];
+		renderAccounts();
+		expect(await screen.findByText("No signed-in Codex account.")).toBeInTheDocument();
+		expect(screen.getAllByText("Managed sessions need you to sign in again.")).toHaveLength(1);
+		expect(screen.queryByText("No signed-in Claude account.")).toBeNull();
 	});
 	it("renames an account from its display name field", async () => {
 		const user = await start();
@@ -374,21 +381,21 @@ describe("adding an account", () => {
 		expect(await status()).toHaveTextContent("Login callback port is in use");
 		expect(addButtons()[1]).toBeEnabled();
 	});
-	it("keeps the provider link in the panel until the user opens it", async () => {
+	it("opens the provider's sign-in page, and keeps its link in the panel", async () => {
 		const user = await start();
+		// A browser that cannot be opened says so and leaves the link in reach.
+		mock.open.mockRejectedValueOnce(new Error("Browser could not be opened"));
 		const group = await startAdding(user, 0, "Browser");
 		expect(mock.post).toHaveBeenCalledWith(LOGIN, { body: { provider: "codex", mode: "browser" } });
+		expect(mock.open).toHaveBeenCalledWith("https://provider.test/login");
+		expect(await status()).toHaveTextContent("Browser could not be opened");
 		expect(await within(group).findByText("Complete sign-in in your browser.")).toBeInTheDocument();
 		// The sign-in under way keeps its own row; no other can be started.
 		expect(addButtons().map(button => button.disabled)).toEqual([false, true]);
-		expect(mock.open).not.toHaveBeenCalled();
 		await user.click(within(group).getByRole("button", { name: "Copy link" }));
 		expect(mock.clipboard).toHaveBeenCalledWith("https://provider.test/login");
-		// A browser that cannot be opened says so and leaves the link in reach.
-		mock.open.mockRejectedValueOnce(new Error("Browser could not be opened"));
 		await user.click(screen.getByRole("button", { name: "Open sign-in page" }));
-		expect(await status()).toHaveTextContent("Browser could not be opened");
-		await user.click(screen.getByRole("button", { name: "Open sign-in page" }));
+		expect(mock.open).toHaveBeenCalledTimes(2);
 		expect(mock.open).toHaveBeenLastCalledWith("https://provider.test/login");
 		// Another account can be viewed meanwhile; the sign-in keeps its place in the list.
 		await open(user, bob);
@@ -535,7 +542,7 @@ describe("signing in again", () => {
 		expect(mock.post).toHaveBeenCalledWith(LOGIN, { body: { provider: "codex", accountId: "b" } });
 		expect(await within(detail()).findByText("Complete sign-in in your browser.")).toBeInTheDocument();
 		expect(within(detail()).getByRole("button", { name: "Open sign-in page" })).toBeEnabled();
-		expect(mock.open).not.toHaveBeenCalled();
+		expect(mock.open).toHaveBeenCalledWith("https://provider.test/login");
 	});
 	it("is offered above the limits of an account whose sign-in has stopped renewing", async () => {
 		inventory.accounts[0].usage = { status: "available", signInEnding: true, signInEndsAt: "2099-01-01T00:00:00Z", windows: [{ durationSeconds: 18000, remainingFraction: 0.14 }] };
@@ -724,6 +731,24 @@ describe("the sessions on an account", () => {
 		];
 		inventory.accounts[0].sessions = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "gone"];
 		inventory.accounts[0].usage = { status: "available", windows: [], activity: { today: 49_200, week: 49_200, total: 49_200, sessions: { s7: 48_000, s2: 1_200 } } };
+	});
+	it("counts and moves only the sessions the account serves now", async () => {
+		// An ended session keeps its route for a restore, and one now on Claude keeps its Codex route for a switch back.
+		mock.workspaces = [{ id: "project-1", sessions: [
+			{ ...session("s1", "Fix login", "working"), provider: "codex" },
+			{ ...session("s2", "Ended"), provider: "codex", isTerminated: true },
+			{ ...session("s3", "On Claude now"), provider: "claude-code" },
+		] }];
+		inventory.accounts[0].sessions = ["s1", "s2", "s3"];
+		const user = await start();
+		expect(detail()).toHaveTextContent("1 session is using this account.");
+		expect(detail()).toHaveTextContent("1 session on this account");
+		expect(list()).not.toHaveTextContent("Ended");
+		expect(list()).not.toHaveTextContent("On Claude now");
+		await user.click(within(detail()).getByRole("button", { name: "Move sessions" }));
+		await user.click(await screen.findByRole("menuitem", { name: /Maple Codex/ }));
+		expect(await status()).toHaveTextContent("1 session moved to Maple Codex.");
+		expect(actions("assign-session")).toEqual([["b", { action: "assign-session", sessionId: "s1" }]]);
 	});
 	it("names them, the busiest today first and five at a time", async () => {
 		const user = await start();
