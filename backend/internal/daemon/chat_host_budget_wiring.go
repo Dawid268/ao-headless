@@ -19,6 +19,7 @@ type sessionKindReader interface {
 
 type chatHostWakeAdmittable interface {
 	SetChatHostWakeAdmit(func(context.Context, domain.SessionID) error)
+	SetChatHostWakeRelease(func(domain.SessionID))
 }
 
 type pressureHibernator interface {
@@ -119,6 +120,9 @@ func wireChatHostWakeAdmit(budget *chathostbudget.Budget, mgr chatHostWakeAdmitt
 			return sessionmanager.ErrChatHostQueued
 		}
 		return err
+	})
+	mgr.SetChatHostWakeRelease(func(id domain.SessionID) {
+		budget.ReleaseIfNoPID(string(id))
 	})
 }
 

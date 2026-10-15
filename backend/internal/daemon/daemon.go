@@ -34,6 +34,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
+	"github.com/aoagents/agent-orchestrator/backend/internal/chathostbudget"
 	"github.com/aoagents/agent-orchestrator/backend/internal/codexops"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -1075,7 +1076,13 @@ func Run() error {
 			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store, cfg.AppRunID); reconcileErr != nil {
 				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
 			}
-			if seedErr := chatHostBudget.Seed(cfg.DataDir); seedErr != nil {
+			if seedErr := chatHostBudget.Seed(cfg.DataDir, func(hostID string) chathostbudget.Class {
+				rec, found, err := store.GetSession(context.Background(), domain.SessionID(hostID))
+				if err != nil || !found {
+					return chathostbudget.ClassifyHostID(hostID)
+				}
+				return chathostbudget.Classify(hostID, rec.Kind == domain.KindOrchestrator)
+			}); seedErr != nil {
 				log.Error("chat host warm budget seed failed", "err", seedErr)
 				// Fail open for boot: allow spawns rather than wedging the daemon
 				// if the chat-hosts directory is unreadable after reconcile.

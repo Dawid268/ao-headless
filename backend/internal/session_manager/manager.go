@@ -486,7 +486,10 @@ type Manager struct {
 	// before beginAgentResume / clear HibernatedAt. Nil disables the gate.
 	// Returns ErrChatHostQueued when the wake was enqueued for later Drain.
 	chatHostWakeAdmit func(context.Context, domain.SessionID) error
-	statusRecoveryMu  sync.RWMutex
+	// chatHostWakeRelease frees a SoftAdmit reservation when resume fails
+	// before a host PID exists (nil disables).
+	chatHostWakeRelease func(domain.SessionID)
+	statusRecoveryMu    sync.RWMutex
 	statusRecoveryFailed        bool
 	statusRecoveryRevision      uint64
 	statusRecoveries            map[domain.SessionID]statusRecovery
@@ -663,6 +666,12 @@ func (m *Manager) SetPersistentHostReconcileDone(done <-chan struct{}) {
 // ResumeAgentWithMode before beginAgentResume.
 func (m *Manager) SetChatHostWakeAdmit(admit func(context.Context, domain.SessionID) error) {
 	m.chatHostWakeAdmit = admit
+}
+
+// SetChatHostWakeRelease installs the SoftAdmit rollback used when
+// beginAgentResume rejects after a successful soft-admit.
+func (m *Manager) SetChatHostWakeRelease(release func(domain.SessionID)) {
+	m.chatHostWakeRelease = release
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
@@ -3103,6 +3112,7 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	// Soft-queue cold wakes before beginAgentResume so capacity deferral is not
 	// mistaken for AGENT_RESUME_IN_PROGRESS and HibernatedAt stays set.
+	softAdmitted := false
 	if m.chatHostWakeAdmit != nil && (rec.HibernatedAt != nil ||
 		(domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
 			(m.chat == nil || !m.chat.HasLiveChatController(id)))) {
@@ -3111,8 +3121,16 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 		} else if admitErr != nil {
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, admitErr)
 		}
+		softAdmitted = true
+		// SoftAdmit may reserve a phantom slot (no PID yet). Roll it back on any
+		// failed resume so capacity is not starved until the next host sweep.
+		defer func() {
+			if softAdmitted && err != nil && m.chatHostWakeRelease != nil {
+				m.chatHostWakeRelease(id)
+			}
+		}()
 	}
-	if err := m.beginAgentResume(ctx, id); err != nil {
+	if err = m.beginAgentResume(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}
 	resumeHandedOff := false

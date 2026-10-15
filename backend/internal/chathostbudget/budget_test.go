@@ -168,7 +168,7 @@ func TestSeedFromDisk(t *testing.T) {
 	}
 	alive := map[string]bool{"live": true}
 	b := New(DefaultCaps(), func(id string) bool { return alive[id] }, nil)
-	if err := b.Seed(dir); err != nil {
+	if err := b.Seed(dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	snap := b.Snapshot()
@@ -254,6 +254,55 @@ func TestSoftAdmitWakeBeforeSeedQueues(t *testing.T) {
 	}
 	if b.Snapshot().Queued != 1 {
 		t.Fatalf("queued = %d", b.Snapshot().Queued)
+	}
+}
+
+func TestSeedClassifiesOrchestratorAndKeepsPhantomReservations(t *testing.T) {
+	dir := t.TempDir()
+	for _, id := range []string{"orch-1", "worker-1"} {
+		if err := os.MkdirAll(filepath.Join(dir, "chat-hosts", id), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alive := map[string]bool{"orch-1": true, "worker-1": true}
+	b := New(DefaultCaps(), func(id string) bool { return alive[id] }, nil)
+	b.MarkSeededForTest()
+	if err := b.SoftAdmitWake("phantom", ClassWorker, "p"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Seed(dir, func(hostID string) Class {
+		if hostID == "orch-1" {
+			return ClassOrchestrator
+		}
+		return ClassifyHostID(hostID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snap := b.Snapshot()
+	if snap.Held["orch-1"] != ClassOrchestrator {
+		t.Fatalf("orch class = %v", snap.Held["orch-1"])
+	}
+	if _, ok := snap.Held["phantom"]; !ok {
+		t.Fatal("phantom SoftAdmit reservation must survive Seed")
+	}
+}
+
+func TestDrainIsProjectFair(t *testing.T) {
+	b := New(Caps{
+		MaxTotal: 2, MaxOrchestrator: 1, MaxWorker: 2,
+		PressureTotal: 2, PressureOrch: 1, PressureWorker: 2,
+	}, func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	b.Enqueue(QueuedWake{HostID: "a1", ProjectID: "A", Class: ClassWorker})
+	b.Enqueue(QueuedWake{HostID: "a2", ProjectID: "A", Class: ClassWorker})
+	b.Enqueue(QueuedWake{HostID: "b1", ProjectID: "B", Class: ClassWorker})
+	got := b.Drain(context.Background())
+	if len(got) != 2 {
+		t.Fatalf("admitted = %v", got)
+	}
+	projects := map[string]bool{got[0].ProjectID: true, got[1].ProjectID: true}
+	if !projects["A"] || !projects["B"] {
+		t.Fatalf("expected one from each project, got %v", got)
 	}
 }
 

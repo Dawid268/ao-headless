@@ -134,8 +134,13 @@ func Classify(hostID string, orchestrator bool) Class {
 }
 
 // Seed inventories live hosts under dataDir/chat-hosts. Must run after
-// persistenthost.Reconcile on boot and before any spawn.
-func (b *Budget) Seed(dataDir string) error {
+// persistenthost.Reconcile on boot and before any spawn. classOf overrides
+// path-prefix classification (e.g. session rows that are orchestrators); nil
+// uses ClassifyHostID only.
+func (b *Budget) Seed(dataDir string, classOf func(hostID string) Class) error {
+	if classOf == nil {
+		classOf = ClassifyHostID
+	}
 	root := filepath.Join(dataDir, "chat-hosts")
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -155,10 +160,17 @@ func (b *Budget) Seed(dataDir string) error {
 		}
 		id := entry.Name()
 		if b.alive(id) {
-			next[id] = ClassifyHostID(id)
+			next[id] = classOf(id)
 		}
 	}
 	b.mu.Lock()
+	// Preserve in-flight SoftAdmit reservations that have no PID yet so a late
+	// Seed (or re-seed) cannot drop a just-reserved cold wake.
+	for id, class := range b.held {
+		if _, ok := next[id]; !ok && !b.alive(id) {
+			next[id] = class
+		}
+	}
 	b.held = next
 	b.seeded = true
 	b.refreshPressureLocked()
@@ -226,7 +238,14 @@ func (b *Budget) ReleaseIfDead(hostID string) bool {
 func (b *Budget) ForceRelease(hostID string) {
 	b.mu.Lock()
 	delete(b.held, hostID)
+	b.refreshPressureLocked()
 	b.mu.Unlock()
+}
+
+// ReleaseIfNoPID drops a SoftAdmit reservation when resume failed before a
+// host process published. No-op while a live PID still owns the host.
+func (b *Budget) ReleaseIfNoPID(hostID string) bool {
+	return b.ReleaseIfDead(hostID)
 }
 
 // Enqueue adds a deferred wake. Dedupes by hostID (last write wins class/project).
@@ -320,9 +339,9 @@ func (b *Budget) ShouldReclaim() bool {
 	return len(b.queue) > 0 && len(b.held) >= maxTotal
 }
 
-// Drain tries to admit queued wakes with round-robin rotation. Returns hosts
-// that newly acquired a spawn slot (caller must ConnectOrStart). Entries whose
-// host is already held are dropped from the queue without re-admitting.
+// Drain tries to admit queued wakes with project-fair round-robin. Returns
+// hosts that newly acquired a spawn slot (caller must ConnectOrStart). Entries
+// whose host is already held are dropped from the queue without re-admitting.
 func (b *Budget) Drain(ctx context.Context) []QueuedWake {
 	_ = ctx
 	b.mu.Lock()
@@ -331,13 +350,9 @@ func (b *Budget) Drain(ctx context.Context) []QueuedWake {
 		return nil
 	}
 	b.refreshPressureLocked()
-	n := len(b.queue)
-	ordered := make([]QueuedWake, 0, n)
-	for i := 0; i < n; i++ {
-		ordered = append(ordered, b.queue[(b.rr+i)%n])
-	}
+	ordered := projectFairOrder(b.queue, b.rr)
 	var admitted []QueuedWake
-	remaining := make([]QueuedWake, 0, n)
+	remaining := make([]QueuedWake, 0, len(b.queue))
 	for _, wake := range ordered {
 		if _, ok := b.held[wake.HostID]; ok {
 			continue // already warm; drop from queue
@@ -350,10 +365,55 @@ func (b *Budget) Drain(ctx context.Context) []QueuedWake {
 		admitted = append(admitted, wake)
 	}
 	b.queue = remaining
-	if n > 0 {
-		b.rr = (b.rr + 1) % n
+	if len(ordered) > 0 {
+		b.rr++
 	}
 	return admitted
+}
+
+// projectFairOrder rotates across distinct ProjectID buckets so one busy
+// project cannot starve others. Empty ProjectID is its own bucket.
+func projectFairOrder(queue []QueuedWake, rr int) []QueuedWake {
+	if len(queue) == 0 {
+		return nil
+	}
+	type bucket struct {
+		id    string
+		items []QueuedWake
+	}
+	order := make([]string, 0)
+	byID := make(map[string]*bucket)
+	for _, wake := range queue {
+		id := wake.ProjectID
+		if bkt, ok := byID[id]; ok {
+			bkt.items = append(bkt.items, wake)
+			continue
+		}
+		order = append(order, id)
+		byID[id] = &bucket{id: id, items: []QueuedWake{wake}}
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	start := rr % len(order)
+	out := make([]QueuedWake, 0, len(queue))
+	for taken := 0; taken < len(queue); {
+		progress := false
+		for i := 0; i < len(order); i++ {
+			bkt := byID[order[(start+i)%len(order)]]
+			if len(bkt.items) == 0 {
+				continue
+			}
+			out = append(out, bkt.items[0])
+			bkt.items = bkt.items[1:]
+			taken++
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+	return out
 }
 
 // Snapshot is a read-only view for diagnostics/tests.
