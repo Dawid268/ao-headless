@@ -152,8 +152,10 @@ type SessionArtifactVersion struct {
 type ArtifactVersionSource string
 
 const (
+	// ArtifactVersionSourceAgent marks a version the session's agent wrote.
 	ArtifactVersionSourceAgent ArtifactVersionSource = "agent"
-	ArtifactVersionSourceUser  ArtifactVersionSource = "user"
+	// ArtifactVersionSourceUser marks a version saved or restored in the app.
+	ArtifactVersionSourceUser ArtifactVersionSource = "user"
 )
 
 // SessionMetadata is the typed, off-status metadata for a session: operational

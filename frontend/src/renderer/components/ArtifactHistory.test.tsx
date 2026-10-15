@@ -3,14 +3,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ArtifactVersionSummary } from "../hooks/useArtifactVersions";
-import { ArtifactHistoryMenu, formatVersionTime } from "./ArtifactHistory";
+import { ArtifactHistoryMenu, ArtifactVersionPreview, formatVersionTime } from "./ArtifactHistory";
 import { TooltipProvider } from "./ui/tooltip";
 
-const { versionsMock, statusMock } = vi.hoisted(() => ({ versionsMock: vi.fn(), statusMock: vi.fn() }));
+const { versionsMock, versionMock, statusMock } = vi.hoisted(() => ({ versionsMock: vi.fn(), versionMock: vi.fn(), statusMock: vi.fn() }));
 vi.mock("../lib/github-daemon", () => ({ getGitHubStatus: statusMock }));
 vi.mock("../hooks/useArtifactVersions", () => ({
 	useArtifactVersions: versionsMock,
-	useArtifactVersion: () => ({ isPending: true }),
+	useArtifactVersion: versionMock,
 }));
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 15, 12, minute)).toISOString();
@@ -103,5 +103,35 @@ describe("formatVersionTime", () => {
 		// Day and month order follow the system locale.
 		expect(formatVersionTime(new Date(2026, 9, 11, 8, 31).toISOString(), now)).toMatch(/^(Oct 11|11 Oct), /);
 		expect(formatVersionTime("not a date", now)).toBe("");
+	});
+});
+
+describe("ArtifactVersionPreview", () => {
+	function renderPreview(props: Partial<React.ComponentProps<typeof ArtifactVersionPreview>> = {}) {
+		versionMock.mockReturnValue({ data: { content: "the older text", createdAt: at(0) }, isPending: false, isError: false, dataUpdatedAt: 1 });
+		const onRestore = vi.fn();
+		const onBack = vi.fn();
+		render(<ArtifactVersionPreview canRestore onBack={onBack} onRestore={onRestore} path="notes.txt" restoring={false} sessionId="s1" version={2} {...props} />);
+		return { onBack, onRestore };
+	}
+
+	it("shows the version and offers Restore and Back to current", async () => {
+		const { onBack, onRestore } = renderPreview();
+		expect(screen.getByText("the older text")).toBeTruthy();
+		await userEvent.click(screen.getByRole("button", { name: "Restore this version" }));
+		expect(onRestore).toHaveBeenCalledTimes(1);
+		await userEvent.click(screen.getByRole("button", { name: "Back to current" }));
+		expect(onBack).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps Restore off until the live file's fingerprint is known, and while one is running", () => {
+		renderPreview({ canRestore: false });
+		expect((screen.getByRole("button", { name: "Restore this version" }) as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it("says Restoring while a restore runs, and shows a refused one", () => {
+		renderPreview({ restoring: true, restoreError: "File changed while it was being edited" });
+		expect((screen.getByRole("button", { name: "Restoring" }) as HTMLButtonElement).disabled).toBe(true);
+		expect(screen.getByText("File changed while it was being edited")).toBeTruthy();
 	});
 });

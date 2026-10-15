@@ -732,7 +732,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Check whether a GitHub personal access token is stored locally */
+        /** Report whether a GitHub token is stored and the GitHub username AO is signed in as */
         get: operations["getGitHubStatus"];
         put?: never;
         post?: never;

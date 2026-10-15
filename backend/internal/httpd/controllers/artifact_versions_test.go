@@ -198,3 +198,66 @@ func TestArtifactVersionsAreNotImplementedWithoutAService(t *testing.T) {
 		t.Fatalf("status = %d, want 501", status)
 	}
 }
+
+func artifactErrorCode(t *testing.T, body []byte) string {
+	t.Helper()
+	var out struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode error body %q: %v", body, err)
+	}
+	return out.Code
+}
+
+func TestArtifactSaveRecordsAUserVersion(t *testing.T) {
+	srv, fake, dir := artifactVersionServer(t)
+
+	status, body := artifactVersionCall(t, http.MethodPut, srv.URL+"/api/v1/sessions/ao-1/artifact-files", map[string]any{
+		"path": "plan.md", "content": "v3 by hand", "expectedFileFingerprint": artifactSHA("v2 agent"),
+	})
+	if status != http.StatusOK {
+		t.Fatalf("save: status=%d body=%s", status, body)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "plan.md")); string(data) != "v3 by hand" {
+		t.Fatalf("file after save = %q", data)
+	}
+	last := fake.versions[len(fake.versions)-1]
+	if len(fake.versions) != 3 || last.Source != domain.ArtifactVersionSourceUser || fake.blobs[last.SHA256] != "v3 by hand" {
+		t.Fatalf("versions = %+v, want a third user version holding the saved text", fake.versions)
+	}
+}
+
+func TestArtifactVersionReadAndRestoreRefuseUnreadableVersions(t *testing.T) {
+	srv, fake, dir := artifactVersionServer(t)
+	base := srv.URL + "/api/v1/sessions/ao-1/artifact-versions"
+	restore := base + "/restore"
+	live := artifactSHA("v2 agent")
+	fake.add("\xff\xfe not text", domain.ArtifactVersionSourceAgent) // version 3
+	lostBlob := fake.versions[0].SHA256
+	delete(fake.blobs, lostBlob) // version 1's content is gone
+
+	status, body := artifactVersionCall(t, http.MethodGet, base+"/3?path=plan.md", nil)
+	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_BINARY" {
+		t.Errorf("read binary: status=%d body=%s, want 400 ARTIFACT_FILE_BINARY", status, body)
+	}
+	status, body = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 3, "expectedFileFingerprint": live})
+	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_BINARY" {
+		t.Errorf("restore binary: status=%d body=%s, want 400 ARTIFACT_FILE_BINARY", status, body)
+	}
+	status, body = artifactVersionCall(t, http.MethodGet, base+"/1?path=plan.md", nil)
+	if status != http.StatusNotFound || artifactErrorCode(t, body) != "ARTIFACT_VERSION_NOT_FOUND" {
+		t.Errorf("read lost blob: status=%d body=%s, want 404 ARTIFACT_VERSION_NOT_FOUND", status, body)
+	}
+	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1, "expectedFileFingerprint": live})
+	if status != http.StatusNotFound {
+		t.Errorf("restore lost blob: status=%d, want 404", status)
+	}
+	status, body = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 2})
+	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_FINGERPRINT_REQUIRED" {
+		t.Errorf("restore without fingerprint: status=%d body=%s, want 400 ARTIFACT_FILE_FINGERPRINT_REQUIRED", status, body)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "plan.md")); string(data) != "v2 agent" {
+		t.Fatalf("file after refused restores = %q, want unchanged", data)
+	}
+}

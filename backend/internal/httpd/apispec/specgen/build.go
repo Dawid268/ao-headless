@@ -3414,7 +3414,7 @@ func prOperations() []operation {
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/github/status", id: "getGitHubStatus", tag: "github",
-			summary: "Check whether a GitHub personal access token is stored locally",
+			summary: "Report whether a GitHub token is stored and the GitHub username AO is signed in as",
 			resps:   []respUnit{{http.StatusOK, controllers.GitHubStatusResponse{}}, {http.StatusInternalServerError, envelope.APIError{}}},
 		},
 		{
