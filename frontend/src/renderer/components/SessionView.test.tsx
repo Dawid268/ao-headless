@@ -640,7 +640,7 @@ vi.mock("./CloudWorkspaceDiff", () => ({
 const { browserDestroy, browserViewOptions, browserViewState } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
 	browserViewOptions: { current: undefined as { active: boolean; sessionId: string; terminated: boolean } | undefined },
-	browserViewState: { url: "", agentBrowserActive: false, agentBrowserActivity: null as BrowserAgentActivityState | null },
+	browserViewState: { url: "", tabCount: 1, agentBrowserActive: false, agentBrowserActivity: null as BrowserAgentActivityState | null },
 }));
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: (options: { active: boolean; sessionId: string; terminated: boolean }) => {
@@ -661,8 +661,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 			goForward: vi.fn(),
 			reload: vi.fn(),
 			stop: vi.fn(),
-			tabs: [{ id: "t1", url: "http://127.0.0.1:4173/", title: "Calculator", active: true }],
-			activeTabId: "t1",
+			tabs: browserViewState.tabCount ? [{ id: "t1", url: "http://127.0.0.1:4173/", title: "Calculator", active: true }] : [],
+			activeTabId: browserViewState.tabCount ? "t1" : "",
 			tabNotice: "",
 			agentBrowserActive: browserViewState.agentBrowserActive,
 			agentBrowserActivity: browserViewState.agentBrowserActivity,
@@ -961,6 +961,7 @@ describe("SessionView", () => {
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		browserViewState.url = "";
+		browserViewState.tabCount = 1;
 		browserViewState.agentBrowserActive = false;
 		browserViewState.agentBrowserActivity = null;
 		shellTerminalsState.data = [];
@@ -5532,20 +5533,24 @@ describe("SessionView", () => {
 		expect(browserUnseen("sess-2")).toBe(false);
 	});
 
-	it("switches to Summary when the final browser tab closes", () => {
+	it.each([false, true])("keeps the empty Browser selected after its final tab closes (popped out: %s)", (poppedOut) => {
 		let tabsListener: ((state: BrowserTabsState) => void) | undefined;
 		vi.spyOn(window.ao!.browser, "onTabsState").mockImplementation((listener) => {
 			tabsListener = listener;
 			return () => undefined;
 		});
-		render(<SessionView sessionId="sess-1" />);
+		browserViewState.url = "https://example.test/";
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
 		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		if (poppedOut) fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		act(() => {
+			browserViewState.url = "";
+			browserViewState.tabCount = 0;
+			tabsListener?.({ viewId: "browser:sess-1", activeTabId: "", tabs: [], change: { kind: "closed", tabId: "t1" } });
+		});
+		rerender(<SessionView sessionId="sess-1" />);
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		act(() => tabsListener!({ viewId: "browser:other", activeTabId: "", tabs: [], change: { kind: "closed", tabId: "t1" } }));
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		act(() => tabsListener!({ viewId: "browser:sess-1", activeTabId: "", tabs: [], change: { kind: "closed", tabId: "t1" } }));
-		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
-		expect(inspectorOpen("sess-1")).toBe(true);
+		if (poppedOut) expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
 		vi.mocked(window.ao!.browser.onTabsState).mockRestore();
 	});
 

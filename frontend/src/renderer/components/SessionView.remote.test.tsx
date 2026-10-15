@@ -1,4 +1,3 @@
-import type { BrowserTabsState } from "../../main/browser-view-host";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -408,15 +407,15 @@ it("automatically reveals a remote preview after session data finishes loading",
 	let sessionReads = 0;
 	let releaseInitialSessions!: () => void;
 	const initialSessions = new Promise<void>((resolve) => { releaseInitialSessions = resolve; });
-	const tabsListeners = new Set<(state: BrowserTabsState) => void>();
+	let emitTabs: ((state: { viewId: string; activeTabId: string; tabs: { id: string; url: string; title: string; active: boolean }[] }) => void) | undefined;
 	const resolvePreview = vi.spyOn(aoBridge.remotes, "previewUrl").mockResolvedValue("http://ao-preview.localhost/");
 	const ensure = vi.spyOn(window.ao!.browser, "ensure");
 	const onTabsState = vi.spyOn(window.ao!.browser, "onTabsState").mockImplementation((listener) => {
-		tabsListeners.add(listener);
-		return () => { tabsListeners.delete(listener); };
+		emitTabs = listener;
+		return () => { emitTabs = undefined; };
 	});
 	const navigate = vi.spyOn(window.ao!.browser, "navigate").mockImplementation(async ({ viewId, url }) => {
-		for (const listener of tabsListeners) listener({ viewId, activeTabId: "t1", tabs: [{ id: "t1", url, title: "QA preview", active: true }] });
+		emitTabs?.({ viewId, activeTabId: "t1", tabs: [{ id: "t1", url, title: "QA preview", active: true }] });
 		return { viewId, url, title: "AO preview", canGoBack: false, canGoForward: false, isLoading: false };
 	});
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
