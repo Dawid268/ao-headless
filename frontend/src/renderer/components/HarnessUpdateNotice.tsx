@@ -1,16 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, LoaderCircle, X } from "lucide-react";
-import { type CSSProperties, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useAgentAuthPlans } from "../hooks/useAgentAuth";
 import { cacheAgentReadiness, ensureAgentReadiness, useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { hasConfirmedHarnessUpdate, harnessUpdateNoticeKey, installedAgentIds, installerQueryKey, installersQueryOptions, installJobsQueryKey, installJobsQueryOptions, isActiveInstallJob, isFailedInstallJob, maintenanceMethodId, needsHarnessLogin, updateAdvisoryQueryKey, useHarnessUpdates, useStartHarnessUpdate, versionLabel, type AgentUpdateAdvisory, type InstallJob } from "../hooks/useHarnessUpdates";
+import { useWorkspaceTopbarBottom } from "../hooks/useWorkspaceTopbarBottom";
 import { AGENT_OPTIONS, agentLabel, type AgentId } from "../lib/agent-options";
 import { aoBridge } from "../lib/bridge";
+import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { AgentAvatar } from "./AgentAvatar";
+import { MiddleTruncatedText } from "./MiddleTruncatedText";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -175,7 +178,10 @@ export function HarnessUpdateNotice({ enabled }: { enabled: boolean }) {
 	const summary = !isExpanded && updates.length > 1;
 	// The caption size is written as a length: tailwind-merge reads a bare `text-caption`
 	// as a text colour and drops the button's own, leaving white text on the light fill.
-	const updateAllButton = (className: string) => <Button type="button" size="sm" className={cn(className, "text-[length:var(--font-size-caption)]")}
+	// While updates start the button stays solid: it reports progress, not an
+	// unavailable action.
+	const updateAllButton = (className: string) => <Button type="button" size="sm" className={cn(className, "text-[length:var(--font-size-caption)]", startingAll && "disabled:opacity-100")}
+		aria-busy={startingAll || undefined}
 		disabled={startingAll || updateAllTargets.length === 0} onClick={() => void startAllUpdates()}>
 		{startingAll ? <LoaderCircle className="size-3 animate-spin" aria-hidden="true" /> : null}
 		<span>{startingAll ? t("settings.harness.startingAllUpdates")
@@ -183,11 +189,7 @@ export function HarnessUpdateNotice({ enabled }: { enabled: boolean }) {
 	</Button>;
 	// Portaled to the end of <body>: Electron applies window drag regions in DOM
 	// order, so a later drag strip (the home page's) would otherwise override no-drag.
-	return createPortal(<aside role="region" aria-label={t("settings.harness.updateNoticeTitle")}
-		className="fixed right-4 top-3 isolate z-[calc(var(--z-overlay)-1)] w-[min(300px,calc(100vw-32px))] text-card-foreground"
-		data-browser-native-overlay="true" data-state="open"
-		// The stack reaches the window's drag region, which would swallow its clicks.
-		style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
+	return createPortal(<NoticeFrame label={t("settings.harness.updateNoticeTitle")}>
 		{/* The stack toggle sits above the cards so it never reads as part of one notice. */}
 		{/* Above the stack, whose negative margin reaches up into this row. */}
 		{isExpanded ? <div className="relative z-20 mb-4 flex items-center justify-between gap-2">
@@ -241,8 +243,8 @@ export function HarnessUpdateNotice({ enabled }: { enabled: boolean }) {
 						<p className="min-w-0 flex-1 break-words text-[13px] font-medium">{agentLabel(agentId)}</p>
 					</div>
 					<div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-						<p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1 text-caption"><span className="break-all font-mono text-settings-label">{versionLabel(advisory.currentVersion!)}</span><ArrowRight className="size-3 shrink-0 text-settings-muted" role="img" aria-label={t("settings.harness.availableVersion")} /><span className="break-all font-mono font-medium text-settings-accent">{versionLabel(advisory.latestVersion!)}</span></p>
-					{busy ? <Button size="sm" variant="outline" className="h-7 min-w-16 shrink-0 px-2 text-xs" disabled><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />{t("settings.harness.updating")}</Button>
+						<p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1 text-caption"><MiddleTruncatedText className="whitespace-nowrap font-mono text-settings-label" text={versionLabel(advisory.currentVersion!)} /><ArrowRight className="size-3 shrink-0 text-settings-muted" role="img" aria-label={t("settings.harness.availableVersion")} /><MiddleTruncatedText className="whitespace-nowrap font-mono font-medium text-settings-accent" text={versionLabel(advisory.latestVersion!)} /></p>
+					{busy ? <Button size="sm" variant="secondary" className="h-7 min-w-16 shrink-0 px-2 text-xs disabled:opacity-100" aria-busy="true" disabled><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />{t("settings.harness.updating")}</Button>
 						: ready && ((needsLogin && authPlan?.available) || (!needsLogin && canUpdate)) ? <Button size="sm" className="h-7 min-w-16 shrink-0 px-2 text-xs" disabled={startingAll} onClick={requestAction}>{t(needsLogin ? authPlan?.action === "setup" ? "settings.harness.setup" : "settings.harness.login" : error ? "settings.harness.retryUpdate" : "settings.harness.update")}</Button>
 						: ready && !needsLogin && plan?.documentationUrl ? <Tooltip>
 							<TooltipTrigger asChild><Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs" onClick={() => void aoBridge.app.openExternal(plan.documentationUrl)}>{t("settings.harness.manualUpdate")}</Button></TooltipTrigger>
@@ -255,5 +257,22 @@ export function HarnessUpdateNotice({ enabled }: { enabled: boolean }) {
 			})}
 		</div>
 		</div>
-	</aside>, document.body);
+	</NoticeFrame>, document.body);
+}
+
+/** The notice's fixed frame, kept below whichever top bar is showing so the
+ * stack and its Show less / Update all row never cover New task or Orchestrator. */
+function NoticeFrame({ label, children }: { label: string; children: ReactNode }) {
+	const topbarBottom = useWorkspaceTopbarBottom();
+	// Until a bar is laid out, assume the board's: below the toolbar (and Windows' titlebar).
+	const top = topbarBottom === null
+		? isWindowsPlatform() ? "calc(var(--size-window-titlebar) + var(--size-toolbar) + var(--space-3))" : "calc(var(--size-toolbar) + var(--space-3))"
+		: `calc(${topbarBottom}px + var(--space-3))`;
+	return <aside role="region" aria-label={label}
+		className="fixed right-4 isolate z-[calc(var(--z-overlay)-1)] w-[min(300px,calc(100vw-32px))] text-card-foreground"
+		data-browser-native-overlay="true" data-state="open"
+		// The stack reaches the window's drag region, which would swallow its clicks.
+		style={{ WebkitAppRegion: "no-drag", top } as CSSProperties}>
+		{children}
+	</aside>;
 }
