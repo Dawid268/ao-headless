@@ -45,6 +45,8 @@ const bootTicksPrefix = "boot+"
 // step): a preview launched before the step stopped matching its own record,
 // and AO refused to stop it. A Linux host whose boot id can't be read falls
 // back to lstart, as before boot ticks.
+// macOS uses the same native start identity as Chat; old lstart records still
+// use the legacy reader when checked.
 func previewProcessStartTime(pid int) string {
 	if pid <= 0 {
 		return ""
@@ -53,6 +55,9 @@ func previewProcessStartTime(pid int) string {
 		if start, err := processalive.BootStartTime(context.Background(), pid); err == nil {
 			return start
 		}
+	}
+	if runtime.GOOS == "darwin" {
+		return processalive.Identify(context.Background(), pid).StartID
 	}
 	return processalive.StartTime(context.Background(), pid)
 }
@@ -86,6 +91,11 @@ func signalPreviewGroup(pid int, recordedStart string, sig syscall.Signal) error
 		current, err = processalive.BootStartTime(context.Background(), pid)
 		if err != nil {
 			return fmt.Errorf("%w: %w", errStalePreviewPID, err)
+		}
+	} else if strings.HasPrefix(recordedStart, "darwin:") {
+		current = processalive.Identify(context.Background(), pid).StartID
+		if current == "" && processalive.Alive(pid) {
+			return errStalePreviewPID
 		}
 	} else {
 		current = processalive.StartTime(context.Background(), pid)

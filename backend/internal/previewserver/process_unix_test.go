@@ -46,6 +46,33 @@ func TestPreviewProcessStartTimeRejectsInvalidPID(t *testing.T) {
 	}
 }
 
+func TestPreviewProcessStartTimeUsesNativeIdentityOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("native start times come from macOS")
+	}
+	want := processalive.Identify(context.Background(), os.Getpid()).StartID
+	if want == "" {
+		t.Fatal("native process start identity is unavailable")
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := previewProcessStartTime(os.Getpid()); got != want {
+		t.Fatalf("process start identity = %q, want %q without ps", got, want)
+	}
+}
+
+func TestSignalPreviewGroupRefusesMismatchedNativeIdentity(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("native start times come from macOS")
+	}
+	cmd := startSleeper(t, "sleep", "60")
+	if err := signalPreviewGroup(cmd.Process.Pid, "darwin:0:0", syscall.SIGKILL); !errors.Is(err, errStalePreviewPID) {
+		t.Fatalf("signalPreviewGroup = %v, want errStalePreviewPID", err)
+	}
+	if !sleeperRunning(t, cmd.Process.Pid) {
+		t.Fatal("native identity mismatch killed an unrelated process")
+	}
+}
+
 func legacyPSStartTime(t *testing.T, pid int) string {
 	t.Helper()
 	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
