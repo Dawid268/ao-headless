@@ -487,16 +487,28 @@ func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
+	// Selection is session-owned. Discovering a repository index here can
+	// replace a running app (or an empty selection) with unrelated source HTML.
 	res := SessionPreviewResponse{SessionID: sessionID(r)}
-	if ok {
-		res.Entry = entry
-		res.PreviewURL, err = previewFileURL(r, sessionID(r), entry)
-		if err != nil {
-			writePreviewResolveError(w, r, err)
-			return
+	if selected, ok := previewutil.StoredEntryFromPreview(sess.Metadata.PreviewURL, sess.ID); ok {
+		root, entry := sess.Metadata.WorkspacePath, selected.Path
+		if selected.Scope == previewutil.StoredEntryScopeArtifact {
+			root = sess.Metadata.ArtifactDir
+			entry, _ = previewutil.ArtifactEntryPath(selected.Path)
 		}
+		if _, exists := previewutil.EntryAtPath(root, selected.Path); exists {
+			res.Entry = entry
+			res.PreviewURL, err = previewFileURL(r, sessionID(r), entry)
+			if err != nil {
+				writePreviewResolveError(w, r, err)
+				return
+			}
+		}
+	} else if target, parseErr := url.Parse(strings.TrimSpace(sess.Metadata.PreviewURL)); parseErr == nil &&
+		(target.Scheme == "http" || target.Scheme == "https") && target.Host != "" {
+		res.PreviewURL = target.String()
 	}
+
 	envelope.WriteJSON(w, http.StatusOK, res)
 }
 

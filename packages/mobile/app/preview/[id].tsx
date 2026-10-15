@@ -22,7 +22,7 @@ export default function SessionPreviewScreen() {
 }
 
 function SessionPreviewContent() {
-	const { id: rawID, title, previewUrl, hostId: routeHostId } = useLocalSearchParams<{ id: string; title?: string; previewUrl?: string; hostId?: string }>();
+	const { id: rawID, title, hostId: routeHostId } = useLocalSearchParams<{ id: string; title?: string; previewUrl?: string; hostId?: string }>();
 	const sessionID = String(rawID ?? "");
 	const navigation = useNavigation();
 	const router = useRouter();
@@ -50,7 +50,7 @@ function SessionPreviewContent() {
 		if (!hostMatches || !config || !sessionID) return;
 		const route = `${routeHostId ?? ""}|${sessionID}`;
 		try {
-			const value = await getPreview(config, sessionID, previewUrl);
+			const value = await getPreview(config, sessionID);
 			if (currentConfig.current === config && currentRoute.current === route) {
 				setLoaded({ config, id: sessionID, value });
 				if (!defaultDecided.current) {
@@ -62,7 +62,7 @@ function SessionPreviewContent() {
 		} catch (cause) {
 			if (currentConfig.current === config && currentRoute.current === route) setPreviewError(userFacingError(cause));
 		}
-	}, [config, hostMatches, previewUrl, routeHostId, sessionID]);
+	}, [config, hostMatches, routeHostId, sessionID]);
 
 	useEffect(() => {
 		userPickedTab.current = false;
