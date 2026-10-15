@@ -21,6 +21,9 @@ func (invalidGitHubPATService) StoreOAuthToken(context.Context, string, string, 
 	return nil
 }
 func (invalidGitHubPATService) HasPAT(context.Context) bool { return true }
+
+func (invalidGitHubPATService) Login(context.Context) string { return "" }
+
 func (invalidGitHubPATService) DeletePAT(context.Context) error {
 	return nil
 }

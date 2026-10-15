@@ -139,3 +139,23 @@ func (b blobStore) sweep() error {
 	}
 	return nil
 }
+
+// read returns the blob named by sum, refusing one larger than limit.
+func (b blobStore) read(sum string, limit int64) ([]byte, error) {
+	if len(sum) != sha256.Size*2 {
+		return nil, fs.ErrNotExist
+	}
+	f, err := b.root.Open(blobPath(sum))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, errTooLarge
+	}
+	return data, nil
+}

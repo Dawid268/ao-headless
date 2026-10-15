@@ -232,6 +232,7 @@ func (c *SessionsController) updateArtifactFile(w http.ResponseWriter, r *http.R
 		envelope.WriteError(w, r, err)
 		return
 	}
+	c.recordArtifactSave(r.Context(), sess.SessionRecord, clean)
 	envelope.WriteJSON(w, http.StatusOK, ArtifactFileResponse{
 		Path:            clean,
 		Size:            int64(len(in.Content)),

@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronLeft, Copy, FileText, FolderOpen, Globe, Maximize2, Minimize2, SquareTerminal, Trash2 } from "lucide-react";
 import type { OpenArtifactsTargetId } from "../../shared/editor-handoff";
 import { useOpenSessionArtifacts } from "../hooks/useEditorHandoff";
+import { useRestoreArtifactVersion } from "../hooks/useArtifactVersions";
 import { useOpenArtifactPreview } from "../hooks/useOpenArtifactPreview";
 import { deleteSessionArtifactFile, sessionArtifactFileQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKeyForHost } from "../hooks/useWorkspaceQuery";
@@ -15,6 +16,7 @@ import { sessionUiKey } from "../lib/hosts";
 import { cn } from "../lib/utils";
 import type { SessionArtifact, WorkspaceSession } from "../types/workspace";
 import { ArtifactFileView } from "./ArtifactFileView";
+import { ArtifactHistoryMenu, ArtifactVersionPreview } from "./ArtifactHistory";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -264,6 +266,81 @@ function ArtifactViewerFrame({
 }
 
 /**
+ * The open artifact's content: the live file, or a saved version in its place
+ * while the history panel is open. The live file stays mounted underneath, so
+ * an edit in progress survives a look at an earlier version.
+ */
+function ArtifactViewerBody({
+	artifact,
+	feedbackRequestKey,
+	hostId,
+	onFeedbackRequestConsumed,
+	onPreviewVersion,
+	previewVersion,
+	readOnly,
+	sessionId,
+	toolbarHost,
+}: {
+	artifact: SessionArtifact;
+	feedbackRequestKey?: number;
+	hostId?: string;
+	onFeedbackRequestConsumed?: (key: number) => void;
+	onPreviewVersion: (version: number | null) => void;
+	previewVersion: number | null;
+	readOnly: boolean;
+	sessionId: string;
+	toolbarHost: HTMLElement | null;
+}) {
+	const live = useQuery(sessionArtifactFileQueryOptions(sessionId, artifact.path, artifact.rawUrl));
+	const restore = useRestoreArtifactVersion({ hostId, path: artifact.path, rawUrl: artifact.rawUrl, sessionId });
+	const previewing = previewVersion !== null;
+	const artifactOrigin = useMemo(() => {
+		try {
+			return artifact.rawUrl ? new URL(artifact.rawUrl).origin : undefined;
+		} catch {
+			return undefined;
+		}
+	}, [artifact.rawUrl]);
+	const fingerprint = live.data?.fileFingerprint;
+	return (
+		<div className="flex h-full min-h-0">
+			<div className="relative min-h-0 min-w-0 flex-1">
+				<div className={cn("h-full", previewing && "hidden")}>
+					<ArtifactFileView
+						artifactName={artifact.name}
+						feedbackRequestKey={feedbackRequestKey}
+						hostId={hostId}
+						onFeedbackRequestConsumed={onFeedbackRequestConsumed}
+						path={artifact.path}
+						rawUrl={artifact.rawUrl}
+						readOnly={readOnly}
+						sessionId={sessionId}
+						toolbarHost={previewing ? null : toolbarHost}
+					/>
+				</div>
+				{previewing ? (
+					<ArtifactVersionPreview
+						artifactOrigin={artifactOrigin}
+						hostId={hostId}
+						onBack={() => onPreviewVersion(null)}
+						onRestore={() => {
+							if (fingerprint && previewVersion !== null) {
+								restore.mutate({ expectedFileFingerprint: fingerprint, version: previewVersion }, { onSuccess: () => onPreviewVersion(null) });
+							}
+						}}
+						path={artifact.path}
+						restoreError={restore.isError ? restore.error.message : undefined}
+						restoring={restore.isPending || !fingerprint}
+						sessionId={sessionId}
+						version={previewVersion}
+					/>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
  * The inspector's Artifacts view (its own inspector tab): every file in
  * the session's artifact directory. HTML artifacts open in the Browser panel;
  * markdown and other files open in a viewer in place of the list, which can
@@ -285,10 +362,13 @@ export function SessionArtifactsView({
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [toolbarHost, setToolbarHost] = useState<HTMLElement | null>(null);
 	const [fullscreen, setFullscreen] = useState(false);
+	const [previewVersion, setPreviewVersion] = useState<number | null>(null);
 	const openArtifactPreview = useOpenArtifactPreview(session.id, hostId);
 	const uiKey = sessionUiKey(session.id, hostId);
 
 	useEffect(() => setSelectedPath(null), [uiKey]);
+	// History is per file: opening another one starts on its live content.
+	useEffect(() => setPreviewVersion(null), [selectedPath, uiKey]);
 	const exitFullscreen = useMemo(() => () => setFullscreen(false), []);
 	useEffect(() => {
 		if (request) setSelectedPath(request.path);
@@ -316,6 +396,9 @@ export function SessionArtifactsView({
 					</Button>
 					<ArtifactMenu artifact={selected} hostId={hostId} key={selected.path} session={session} />
 					<div className="ml-auto flex shrink-0 items-center" ref={setToolbarHost} />
+					{session.cloud ? null : (
+						<ArtifactHistoryMenu fallbackHarness={session.provider} hostId={hostId} onSelect={setPreviewVersion} path={selected.path} selectedVersion={previewVersion} sessionId={session.id} />
+					)}
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button
@@ -334,13 +417,13 @@ export function SessionArtifactsView({
 					</Tooltip>
 				</div>
 				<div className="min-h-0 flex-1">
-					<ArtifactFileView
-						artifactName={selected.name}
+					<ArtifactViewerBody
+						artifact={selected}
 						feedbackRequestKey={request?.feedback && request.path === selected.path ? request.key : undefined}
 						hostId={hostId}
 						onFeedbackRequestConsumed={onRequestConsumed}
-						path={selected.path}
-						rawUrl={selected.rawUrl}
+						onPreviewVersion={setPreviewVersion}
+						previewVersion={previewVersion}
 						readOnly={Boolean(session.cloud)}
 						sessionId={session.id}
 						toolbarHost={toolbarHost}

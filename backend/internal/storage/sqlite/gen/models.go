@@ -702,6 +702,8 @@ type SessionArtifactVersion struct {
 	ContentType string
 	Mtime       int64
 	CreatedAt   time.Time
+	Source      string
+	Harness     string
 }
 
 type SessionCleanupFact struct {
