@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,30 @@ func TestBuiltHelperServesTheSDKsSignInsAndKeepsAPIKeysAcrossRestarts(t *testing
 
 // The SDK's management comes with a Redis listener on the same port, whose failed
 // sign-ins ban 127.0.0.1 for half an hour: the daemon's own address.
+// Sign-ins a helper saved readable to others before it set its umask are the user's alone after the next start.
+func TestSignInsSavedReadableToOthersAreMadePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are POSIX")
+	}
+	root := t.TempDir()
+	saved := filepath.Join(root, "auth", "claude-someone.json")
+	if err := os.MkdirAll(filepath.Dir(saved), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(saved, []byte(`{"type":"claude"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(saved, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(root, freePort(t), control, inference, "", openTestRoutes(t), openTestActivity(t), nil); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(saved); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode=%v err=%v", info.Mode(), err)
+	}
+}
+
 func TestRedisCommandsOnThePortGetNoAnswerAndLockNobodyOut(t *testing.T) {
 	root, port := t.TempDir(), freePort(t)
 	service, err := Build(root, port, control, inference, "", openTestRoutes(t), openTestActivity(t), nil)
@@ -372,6 +397,58 @@ func TestRedisCommandsOnThePortGetNoAnswerAndLockNobodyOut(t *testing.T) {
 }
 
 // The daemon replaces a helper whose build is not its own: once no request holds an account, it asks it to stop and starts its own.
+// A helper whose identity a new daemon replaced stops by itself, once no request holds an account.
+func TestAHelperWhoseIdentityWasReplacedStops(t *testing.T) {
+	root := t.TempDir()
+	write := func(content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, "run"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "run", "host.json"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for content, want := range map[string]bool{
+		"": false, "{": false, `{"port":4}`: false,
+		`{"port":4001,"control_key":"` + control + `"}`: false,
+		`{"port":4002,"control_key":"` + control + `"}`: true,
+		`{"port":4001,"control_key":"another"}`:         true,
+	} {
+		write(content)
+		if got := replaced(root, 4001, control); got != want {
+			t.Errorf("%s: replaced=%v", content, got)
+		}
+	}
+	defer func(every time.Duration) { replacedCheck = every }(replacedCheck)
+	replacedCheck = 100 * time.Millisecond
+	port := freePort(t)
+	write(fmt.Sprintf(`{"port":%d,"control_key":"%s"}`, port, control))
+	for len(loaded) > 0 {
+		<-loaded
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	finished := make(chan error, 1)
+	go func() { finished <- Run(ctx, root, port, control, inference, "") }()
+	awaitLoad(t, 300*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case err := <-finished:
+		t.Fatalf("a helper whose identity is current stopped: %v", err)
+	default:
+	}
+	write(fmt.Sprintf(`{"port":%d,"control_key":"%s"}`, port+1, control))
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("the run ended with %v", err)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatal("a helper whose identity was replaced kept serving")
+	}
+}
+
 func TestRunReportsItsBuildAndEndsWhenAskedToStop(t *testing.T) {
 	root, port := t.TempDir(), freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())

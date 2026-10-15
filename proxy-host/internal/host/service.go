@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,6 +30,14 @@ func Build(root string, port int, controlKey, inferenceKey, build string, routes
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Sign-ins a helper without its umask saved readable to others are the user's alone too.
+	if entries, err := os.ReadDir(authDir); err == nil {
+		for _, entry := range entries {
+			if entry.Type().IsRegular() {
+				_ = os.Chmod(filepath.Join(authDir, entry.Name()), 0o600)
+			}
+		}
 	}
 	// A saved file is loaded strictly: the lenient load answers a bad file with an empty one, which would lose its API keys.
 	cfg, err := config.LoadConfig(path)
@@ -58,12 +68,29 @@ func Build(root string, port int, controlKey, inferenceKey, build string, routes
 		WithServerOptions(proxyapi.WithEngineConfigurator(func(e *gin.Engine) { e.Use(b.Middleware) }), proxyapi.WithMiddleware(activity.bind), proxyapi.WithRouterConfigurator(b.Configure)).Build()
 }
 
+// replacedCheck is how often a helper looks whether its identity is still the one the daemon keeps.
+var replacedCheck = 10 * time.Second
+
+// replaced reports that the daemon's identity file names another port or control key than this helper's.
+// None, or one cut short, replaces nothing: the daemon that writes the file decides.
+func replaced(root string, port int, controlKey string) bool {
+	var id struct {
+		Port       int    `json:"port"`
+		ControlKey string `json:"control_key"`
+	}
+	data, err := os.ReadFile(filepath.Join(root, "run", "host.json"))
+	if err != nil || json.Unmarshal(data, &id) != nil || id.Port == 0 || id.ControlKey == "" {
+		return false
+	}
+	return id.Port != port || subtle.ConstantTimeCompare([]byte(id.ControlKey), []byte(controlKey)) != 1
+}
+
 // Run serves until ctx ends or the daemon asks the helper to stop; either is a clean end.
 func Run(ctx context.Context, root string, port int, controlKey, inferenceKey, build string) error {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	activity := OpenActivity(filepath.Join(root, "run", "activity.json"))
-	service, err := Build(root, port, controlKey, inferenceKey, build, OpenRoutes(filepath.Join(root, "run", "routes.json")), activity, stop)
+	activity, routes := OpenActivity(filepath.Join(root, "run", "activity.json")), OpenRoutes(filepath.Join(root, "run", "routes.json"))
+	service, err := Build(root, port, controlKey, inferenceKey, build, routes, activity, stop)
 	if err != nil {
 		return err
 	}
@@ -72,6 +99,16 @@ func Run(ctx context.Context, root string, port int, controlKey, inferenceKey, b
 	go func() {
 		for range time.Tick(30 * time.Second) {
 			activity.save()
+		}
+	}()
+	// A helper whose identity a daemon replaced serves nobody AO controls: it stops once idle, so two never share root.
+	every := replacedCheck
+	go func() {
+		for range time.Tick(every) {
+			if replaced(root, port, controlKey) && !routes.Busy() {
+				stop()
+				return
+			}
 		}
 	}()
 	if err = service.Run(ctx); ctx.Err() != nil {

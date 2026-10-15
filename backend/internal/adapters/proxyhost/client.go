@@ -80,25 +80,41 @@ func New(root, binary string) (*Client, error) {
 		}
 	}
 	c := &Client{root: root, binary: binary, http: &http.Client{Timeout: time.Minute, Transport: &http.Transport{Proxy: nil}}}
-	path := filepath.Join(root, "run", "host.json")
-	data, err := os.ReadFile(path)
-	if err == nil {
-		err = json.Unmarshal(data, &c.id)
-	}
-	// None yet, or one a crash or a full disk cut short: a new one, so AO still starts.
-	if id := c.id; err != nil || id.Port == 0 || id.ControlKey == "" || id.InferenceKey == "" || id.TicketKey == "" {
-		c.id = identity{}
-		if data, err = newIdentity(path); err == nil {
-			err = json.Unmarshal(data, &c.id)
+	// The identity is kept twice. A new one would leave a helper still running on the old one, and its
+	// sessions on tickets no daemon knows, so a lost or broken copy is put back from the other.
+	paths, saved := []string{filepath.Join(root, "run", "host.json"), filepath.Join(root, "host.json")}, []byte(nil)
+	for _, path := range paths {
+		if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &c.id) == nil && c.id.complete() {
+			saved = data
+			break
 		}
+		c.id = identity{}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("account helper identity: %w", err)
+	// None yet, or both cut short by a crash or a full disk: a new one, so AO still starts.
+	if saved == nil {
+		var err error
+		if saved, err = newIdentity(); err != nil {
+			return nil, fmt.Errorf("account helper identity: %w", err)
+		}
+		_ = json.Unmarshal(saved, &c.id)
+	}
+	for _, path := range paths {
+		if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, saved) {
+			continue
+		}
+		_ = os.MkdirAll(filepath.Dir(path), 0o700)
+		if err := hookutil.AtomicWriteFile(path, saved, 0o600); err != nil {
+			return nil, fmt.Errorf("account helper identity: %w", err)
+		}
 	}
 	return c, nil
 }
 
-func newIdentity(path string) ([]byte, error) {
+func (id identity) complete() bool {
+	return id.Port != 0 && id.ControlKey != "" && id.InferenceKey != "" && id.TicketKey != ""
+}
+
+func newIdentity() ([]byte, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -111,9 +127,7 @@ func newIdentity(path string) ([]byte, error) {
 		_, _ = rand.Read(raw[:])
 		*key = hex.EncodeToString(raw[:])
 	}
-	data, _ := json.Marshal(id)
-	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	return data, hookutil.AtomicWriteFile(path, data, 0o600)
+	return json.Marshal(id)
 }
 
 // build names the helper binary by its contents; "" when it cannot be read.

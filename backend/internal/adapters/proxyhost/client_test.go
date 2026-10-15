@@ -118,24 +118,56 @@ func TestIdentityIsCreatedOncePrivateAndReloaded(t *testing.T) {
 	}
 }
 
-func TestABrokenIdentityIsReplacedSoAOStillStarts(t *testing.T) {
+// A lost or broken copy of the identity is put back from the other, so a helper still running keeps
+// serving its sessions; with neither left, a new identity lets AO start anyway.
+func TestALostIdentityIsRestoredFromItsCopyOrElseReplaced(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "proxy")
-	path := filepath.Join(root, "run", "host.json")
+	paths := []string{filepath.Join(root, "run", "host.json"), filepath.Join(root, "host.json")}
 	first, err := New(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	copies := func() []identity {
+		var ids []identity
+		for _, path := range paths {
+			var id identity
+			data, _ := os.ReadFile(path)
+			_ = json.Unmarshal(data, &id)
+			if stat, err := os.Stat(path); err != nil || stat.Mode().Perm() != 0o600 {
+				t.Fatalf("%s: stat=%v err=%v", path, stat, err)
+			}
+			ids = append(ids, id)
+		}
+		return ids
+	}
 	// Empty is what a start cut short leaves behind.
+	for _, lost := range paths {
+		for _, broken := range []string{"", "{", `{"port":4}`, "removed"} {
+			if broken == "removed" {
+				err = os.Remove(lost)
+			} else {
+				err = os.WriteFile(lost, []byte(broken), 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			kept, err := New(root, "")
+			if err != nil || kept.id != first.id || !reflect.DeepEqual(copies(), []identity{first.id, first.id}) {
+				t.Fatalf("%s %q: the identity was not kept and put back: err=%v", filepath.Base(filepath.Dir(lost)), broken, err)
+			}
+		}
+	}
 	for _, broken := range []string{"", "{", `{"port":4}`} {
-		if err = os.WriteFile(path, []byte(broken), 0o600); err != nil {
-			t.Fatal(err)
+		for _, path := range paths {
+			if err = os.WriteFile(path, []byte(broken), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 		fresh, err := New(root, "")
 		if err != nil || fresh.id == first.id || fresh.id.Port <= 0 || len(fresh.id.TicketKey) != 64 {
 			t.Fatalf("identity %q: err=%v", broken, err)
 		}
-		reloaded, err := New(root, "")
-		if err != nil || reloaded.id != fresh.id {
+		if reloaded, err := New(root, ""); err != nil || reloaded.id != fresh.id || !reflect.DeepEqual(copies(), []identity{fresh.id, fresh.id}) {
 			t.Fatalf("identity %q was not saved in its place: err=%v", broken, err)
 		}
 	}
