@@ -976,7 +976,10 @@ type ResumeAgentResponse struct {
 	OK         bool                       `json:"ok"`
 	SessionID  domain.SessionID           `json:"sessionId"`
 	ResumeMode sessionsvc.RestoreModeView `json:"resumeMode" enum:"native,saved_prompt,fresh"`
-	Session    SessionView                `json:"session"`
+	// Queued means the warm-host budget deferred the spawn; the session may still
+	// be hibernated and will wake when capacity frees.
+	Queued  bool        `json:"queued,omitempty"`
+	Session SessionView `json:"session"`
 }
 
 // StartSessionInterfaceTransitionRequest is the body of POST

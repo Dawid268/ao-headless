@@ -152,9 +152,22 @@ func (s *Service) liveViewLeasesLocked(id domain.SessionID) map[string]time.Time
 // HibernateChat stops a quiescent provider without ending its AO session. A
 // false result means the final locked eligibility check found useful work.
 func (s *Service) HibernateChat(ctx context.Context, id domain.SessionID) (bool, error) {
+	return s.hibernateChat(ctx, id, false)
+}
+
+// HibernateChatForPressure is the capacity-reclaim path: same fences as idle
+// hibernation (views, turns, CanHibernate, orch exclusion) but ignores the
+// Dev Mode idle-hibernation toggle so MemAvailable pressure always reclaims
+// reclaimable workers.
+func (s *Service) HibernateChatForPressure(ctx context.Context, id domain.SessionID) (bool, error) {
+	return s.hibernateChat(ctx, id, true)
+}
+
+func (s *Service) hibernateChat(ctx context.Context, id domain.SessionID, forPressure bool) (bool, error) {
 	// Skip eligibility and queue reads while the feature is off. Recheck before
 	// stopping the provider in case the setting changes during those reads.
-	if s.hibernationEnabled == nil || !s.hibernationEnabled() {
+	// Pressure reclaim stays on even when idle hibernation is disabled.
+	if !forPressure && (s.hibernationEnabled == nil || !s.hibernationEnabled()) {
 		return false, nil
 	}
 	marker, ok := s.sessions.(hibernationStore)
@@ -267,7 +280,7 @@ func (s *Service) HibernateChat(ctx context.Context, id domain.SessionID) (bool,
 		controller.sendMu.Unlock()
 		return false, nil
 	}
-	if s.hibernationEnabled == nil || !s.hibernationEnabled() {
+	if !forPressure && (s.hibernationEnabled == nil || !s.hibernationEnabled()) {
 		controller.sendMu.Unlock()
 		return false, nil
 	}

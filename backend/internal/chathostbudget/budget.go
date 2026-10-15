@@ -60,6 +60,10 @@ var ErrNoCapacity = errors.New("chat host warm capacity exhausted")
 // ErrNotSeeded means Seed has not run yet; spawn must wait for boot inventory.
 var ErrNotSeeded = errors.New("chat host budget not seeded")
 
+// ErrQueued means the wake was deferred onto the fair queue instead of starting
+// now. Callers must not clear HibernatedAt or take ErrResumeInProgress.
+var ErrQueued = errors.New("chat host wake queued for capacity")
+
 // HostAlive reports whether hostID still has a live provider process.
 type HostAlive func(hostID string) bool
 
@@ -229,6 +233,10 @@ func (b *Budget) ForceRelease(hostID string) {
 func (b *Budget) Enqueue(wake QueuedWake) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.enqueueLocked(wake)
+}
+
+func (b *Budget) enqueueLocked(wake QueuedWake) {
 	for i, q := range b.queue {
 		if q.HostID == wake.HostID {
 			b.queue[i] = wake
@@ -236,6 +244,60 @@ func (b *Budget) Enqueue(wake QueuedWake) {
 		}
 	}
 	b.queue = append(b.queue, wake)
+}
+
+// SoftAdmitWake returns nil when hostID may proceed to resume/spawn now
+// (already held, or capacity available). On capacity miss it enqueues and
+// returns ErrQueued so callers soft-defer without clearing hibernation.
+func (b *Budget) SoftAdmitWake(hostID string, class Class, projectID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.seeded {
+		return ErrNotSeeded
+	}
+	if _, ok := b.held[hostID]; ok {
+		return nil
+	}
+	b.refreshPressureLocked()
+	if b.canAdmitLocked(class) {
+		return nil
+	}
+	b.enqueueLocked(QueuedWake{HostID: hostID, ProjectID: projectID, Class: class})
+	return ErrQueued
+}
+
+// PressureActive reports whether MemAvailable hysteresis is in the pressure band.
+func (b *Budget) PressureActive() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refreshPressureLocked()
+	return b.pressure
+}
+
+// WorkerHostIDs returns held non-orchestrator host IDs (pressure reclaim targets).
+func (b *Budget) WorkerHostIDs() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.held))
+	for id, class := range b.held {
+		if class != ClassOrchestrator {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// OverPressureCap reports whether current holdings exceed the pressure (or
+// normal) total cap — used to trigger reclaim even before MemAvailable dips.
+func (b *Budget) OverPressureCap() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refreshPressureLocked()
+	maxTotal := b.caps.MaxTotal
+	if b.pressure {
+		maxTotal = b.caps.PressureTotal
+	}
+	return len(b.held) > maxTotal
 }
 
 // Drain tries to admit queued wakes with round-robin rotation. Returns hosts

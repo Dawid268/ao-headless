@@ -1758,6 +1758,7 @@ func (c *SessionsController) resumeAgent(w http.ResponseWriter, r *http.Request)
 		OK:         true,
 		SessionID:  sessionID(r),
 		ResumeMode: out.Mode,
+		Queued:     out.Queued,
 		Session:    sessionView(r, out.Session),
 	})
 }

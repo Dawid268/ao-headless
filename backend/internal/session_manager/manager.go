@@ -153,6 +153,9 @@ var (
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")
+	// ErrChatHostQueued means warm-host capacity deferred the wake onto the fair
+	// queue. Hibernation markers must stay set; this is not a 409 resume race.
+	ErrChatHostQueued = errors.New("session: chat host wake queued for capacity")
 	// ErrAwaitingDecision means the session is paused on a pending
 	// permission/approval dialog. Send refuses to paste into it: the runtime
 	// appends Enter after every paste, and an Enter into a decision dialog
@@ -338,6 +341,9 @@ const (
 type RestoreResult struct {
 	Session domain.SessionRecord
 	Mode    RestoreMode
+	// Queued means the warm-host budget deferred the spawn; Session is unchanged
+	// (still hibernated when applicable) and no resume lock was taken.
+	Queued bool
 }
 
 // Store is the persistence surface needed by the internal session Manager.
@@ -476,7 +482,11 @@ type Manager struct {
 	// A cold Chat resume must not launch a new persistent host while startup's
 	// orphan-host sweep is using its earlier snapshot of sleeping sessions.
 	persistentHostReconcileDone <-chan struct{}
-	statusRecoveryMu            sync.RWMutex
+	// chatHostWakeAdmit soft-gates cold wakes against the warm-host budget
+	// before beginAgentResume / clear HibernatedAt. Nil disables the gate.
+	// Returns ErrChatHostQueued when the wake was enqueued for later Drain.
+	chatHostWakeAdmit func(context.Context, domain.SessionID) error
+	statusRecoveryMu  sync.RWMutex
 	statusRecoveryFailed        bool
 	statusRecoveryRevision      uint64
 	statusRecoveries            map[domain.SessionID]statusRecovery
@@ -647,6 +657,12 @@ func (m *Manager) SetAgentReadiness(provider ports.AgentReadinessProvider) {
 // Daemon wiring installs the channel before opening the HTTP listener.
 func (m *Manager) SetPersistentHostReconcileDone(done <-chan struct{}) {
 	m.persistentHostReconcileDone = done
+}
+
+// SetChatHostWakeAdmit installs the warm-host soft-queue gate used by
+// ResumeAgentWithMode before beginAgentResume.
+func (m *Manager) SetChatHostWakeAdmit(admit func(context.Context, domain.SessionID) error) {
+	m.chatHostWakeAdmit = admit
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
@@ -3073,6 +3089,29 @@ func (m *Manager) WakeHibernatedChat(ctx context.Context, id domain.SessionID) e
 // identity and never changes the durable terminated flag as an intermediate
 // step.
 func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (result RestoreResult, err error) {
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	if !ok {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrNotFound)
+	}
+	// Soft-queue cold wakes before beginAgentResume so capacity deferral is not
+	// mistaken for AGENT_RESUME_IN_PROGRESS and HibernatedAt stays set.
+	if m.chatHostWakeAdmit != nil && (rec.HibernatedAt != nil ||
+		(domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
+			(m.chat == nil || !m.chat.HasLiveChatController(id)))) {
+		if admitErr := m.chatHostWakeAdmit(ctx, id); errors.Is(admitErr, ErrChatHostQueued) {
+			return RestoreResult{Session: rec, Mode: RestoreModeNative, Queued: true}, nil
+		} else if admitErr != nil {
+			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, admitErr)
+		}
+	}
 	if err := m.beginAgentResume(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}
@@ -3082,12 +3121,8 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 			m.endAgentResume(id)
 		}
 	}()
-	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: interface transition: %w", id, err)
-	} else if active {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrInterfaceTransitionInProgress)
-	}
-	rec, ok, err := m.store.GetSession(ctx, id)
+	// Re-load after the soft gate; concurrent hibernation/resume may have raced.
+	rec, ok, err = m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}

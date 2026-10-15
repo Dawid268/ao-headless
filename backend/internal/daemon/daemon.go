@@ -621,6 +621,9 @@ func Run() error {
 	if fenced, ok := sessMgr.(interface{ SetPersistentHostReconcileDone(<-chan struct{}) }); ok {
 		fenced.SetPersistentHostReconcileDone(persistentHostsReconciled)
 	}
+	if admit, ok := any(sessMgr).(chatHostWakeAdmittable); ok {
+		wireChatHostWakeAdmit(chatHostBudget, admit, store, cfg.DataDir)
+	}
 	if wake, ok := sessMgr.(interface {
 		WakeHibernatedChat(context.Context, domain.SessionID) error
 	}); ok {
@@ -1115,6 +1118,16 @@ func Run() error {
 					}
 					for hostID := range chatHostBudget.Snapshot().Held {
 						chatHostBudget.ReleaseIfDead(hostID)
+					}
+					// Pressure reclaim ignores the idle-hibernation Dev Mode toggle.
+					reclaimChatHostsUnderPressure(ctx, chatHostBudget, chatSvc, log)
+					for hostID := range chatHostBudget.Snapshot().Held {
+						chatHostBudget.ReleaseIfDead(hostID)
+					}
+					if wake, ok := sessMgr.(interface {
+						WakeHibernatedChat(context.Context, domain.SessionID) error
+					}); ok {
+						drainChatHostWakeQueue(ctx, chatHostBudget, wake, log)
 					}
 				}
 			}

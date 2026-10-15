@@ -152,6 +152,9 @@ type RestoreOutcome struct {
 type ResumeAgentOutcome struct {
 	Session domain.Session  `json:"session"`
 	Mode    RestoreModeView `json:"resumeMode"`
+	// Queued means warm-host capacity deferred the wake; Session may still be
+	// hibernated and no agent process was started yet.
+	Queued bool `json:"queued,omitempty"`
 }
 
 // ExitAgentOutcome reports the still-live AO session after only its agent
@@ -745,7 +748,7 @@ func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeA
 	if err != nil {
 		return ResumeAgentOutcome{}, err
 	}
-	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode), Queued: res.Queued}, nil
 }
 
 // InterfaceTransitionStatus returns capability and progress without launching

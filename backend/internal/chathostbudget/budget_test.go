@@ -201,3 +201,26 @@ func TestNotSeededBlocksSpawn(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestSoftAdmitWakeQueuesWithoutHolding(t *testing.T) {
+	b := New(Caps{
+		MaxTotal: 1, MaxOrchestrator: 1, MaxWorker: 1,
+		PressureTotal: 1, PressureOrch: 1, PressureWorker: 1,
+	}, func(string) bool { return false }, nil)
+	b.MarkSeededForTest()
+	if err := b.TryAcquireSpawn("held", ClassWorker); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SoftAdmitWake("waiting", ClassWorker, "p1"); !errors.Is(err, ErrQueued) {
+		t.Fatalf("got %v, want ErrQueued", err)
+	}
+	if _, ok := b.Snapshot().Held["waiting"]; ok {
+		t.Fatal("soft admit must not hold a slot")
+	}
+	if b.Snapshot().Queued != 1 {
+		t.Fatalf("queued = %d", b.Snapshot().Queued)
+	}
+	if err := b.SoftAdmitWake("held", ClassWorker, ""); err != nil {
+		t.Fatalf("already-held soft admit: %v", err)
+	}
+}
