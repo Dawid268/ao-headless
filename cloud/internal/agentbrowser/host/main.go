@@ -881,7 +881,8 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 	h.ctl.agentBusy--
 	h.ctl.mu.Unlock()
 	h.broadcastControl()
-	paths := req.Args
+	// The files it was given went up, not down: only what it saved comes back.
+	paths := slices.DeleteFunc(slices.Clone(req.Args), func(p string) bool { _, up := req.Files[p]; return up })
 	for _, m := range absPath.FindAllStringSubmatch(string(out), -1) {
 		paths = append(paths, m[1])
 	}
@@ -896,13 +897,18 @@ func (h *host) handleAgent(w http.ResponseWriter, r *http.Request) {
 // where it chose): a "/" that starts a word, not the one in "./shot.png".
 var absPath = regexp.MustCompile(`(?:^|[\s'"])(/[^\s'"]+)`)
 
+// fileClockSlack covers file times, which Linux takes from a coarse clock up
+// to a tick behind time.Now: a file saved just after start can carry a time
+// just before it.
+const fileClockSlack = time.Second
+
 // written returns the files among the agent's paths that changed since start
 // (a screenshot, pdf or download), for an agent on another machine.
 func written(paths []string, start time.Time) map[string][]byte {
 	files := map[string][]byte{}
 	for _, p := range paths {
 		st, err := os.Stat(here(p))
-		if err != nil || !st.Mode().IsRegular() || st.ModTime().Before(start) || st.Size() > 64<<20 {
+		if err != nil || !st.Mode().IsRegular() || st.ModTime().Before(start.Add(-fileClockSlack)) || st.Size() > 64<<20 {
 			continue
 		}
 		if b, err := os.ReadFile(here(p)); err == nil {
