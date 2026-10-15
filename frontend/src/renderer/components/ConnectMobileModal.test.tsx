@@ -764,7 +764,7 @@ test("turns the keep-awake option on", async () => {
 		return { data: {}, error: undefined } as never;
 	});
 	await userEvent.click(toggle);
-	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true } });
+	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true, lidClosed: false } });
 	// Flipped immediately and never falls back to off while the refetch lands.
 	expect(toggle).toBeChecked();
 	await waitFor(() => expect(toggle).toBeChecked());
@@ -866,4 +866,35 @@ test("an inactive remembered lid choice is unchecked and can enable both modes",
 	expect(screen.queryByText("Closed-lid keep awake is armed.")).not.toBeInTheDocument();
 	await userEvent.click(toggle);
 	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true, lidClosed: true } });
+});
+
+test("enabling idle wake never restores an unchecked legacy lid choice", async () => {
+	mobileStatus.keepAwake = {
+		supported: true, enabled: false, active: false, hasBattery: true,
+		lidSupported: true, lidClosed: true, lidActive: false,
+	};
+	let finishPost: (() => void) | undefined;
+	vi.mocked(apiClient.POST).mockImplementationOnce(() => new Promise((resolve) => {
+		finishPost = () => {
+			Object.assign(mobileStatus.keepAwake!, { enabled: true, active: true, lidClosed: false });
+			resolve({ data: {}, error: undefined });
+		};
+	}));
+	renderMobileSettings();
+	const mainToggle = await screen.findByRole("switch", { name: "Keep this Mac awake" });
+	const lidToggle = screen.getByRole("switch", { name: "Keep awake with lid closed" });
+	expect(lidToggle).not.toBeChecked();
+	await userEvent.click(mainToggle);
+	await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", {
+		body: { enabled: true, lidClosed: false },
+	}));
+	// The optimistic state must not flash lid mode on while the POST is pending.
+	expect(mainToggle).toBeChecked();
+	expect(lidToggle).not.toBeChecked();
+	expect(lidToggle).toBeDisabled();
+	finishPost!();
+	await waitFor(() => expect(lidToggle).not.toBeDisabled());
+	expect(mainToggle).toBeChecked();
+	expect(lidToggle).not.toBeChecked();
+	expect(screen.queryByText("Closed-lid keep awake is armed.")).not.toBeInTheDocument();
 });

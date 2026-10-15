@@ -346,7 +346,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 
 	const setKeepAwake = useMutation({
 		mutationFn: async (keepAwake: boolean) => {
-			const { data, error } = await apiClient.POST("/api/v1/mobile/keep-awake", { body: { enabled: keepAwake, ...(!keepAwake ? { lidClosed: false } : {}) } });
+			const { data, error } = await apiClient.POST("/api/v1/mobile/keep-awake", { body: { enabled: keepAwake, lidClosed: false } });
 			if (error) throw new Error(apiErrorMessage(error));
 			return data;
 		},
@@ -358,7 +358,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			if (previous?.keepAwake) {
 				queryClient.setQueryData<MobileStatus>(mobileStatusQueryKey, {
 					...previous,
-					keepAwake: { ...previous.keepAwake, enabled: keepAwake },
+					keepAwake: { ...previous.keepAwake, enabled: keepAwake, lidClosed: false, lidActive: false },
 				});
 			}
 			return { previous };
