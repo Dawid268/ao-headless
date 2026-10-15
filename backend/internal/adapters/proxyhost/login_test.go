@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,13 +42,14 @@ func assertRelayClosed(t *testing.T, provider string) {
 }
 
 // browserHelper is a helper that hands out one sign-in link and reports status.
-func browserHelper(status *string) func(call) (int, string) {
+// The page a browser returns to reads the status from the relay's own goroutine.
+func browserHelper(status *atomic.Value) func(call) (int, string) {
 	return func(received call) (int, string) {
 		switch received.Path {
 		case "/v8/management/oauth/auth-url":
 			return http.StatusOK, `{"status":"ok","state":"private-state","url":"https://provider.test/sign-in"}`
 		case "/v8/management/oauth/status":
-			return http.StatusOK, `{"status":"` + *status + `"}`
+			return http.StatusOK, `{"status":"` + status.Load().(string) + `"}`
 		case "/v8/management/oauth/session":
 			return http.StatusInternalServerError, `{}`
 		}
@@ -55,11 +57,17 @@ func browserHelper(status *string) func(call) (int, string) {
 	}
 }
 
+func browserStatus(value string) *atomic.Value {
+	status := &atomic.Value{}
+	status.Store(value)
+	return status
+}
+
 func TestBrowserLoginRelaysOnlyTheMatchingCallback(t *testing.T) {
 	for provider, callback := range callbacks {
 		t.Run(provider, func(t *testing.T) {
-			status := "wait"
-			c, helper := helperClient(t, browserHelper(&status))
+			status := browserStatus("wait")
+			c, helper := helperClient(t, browserHelper(status))
 			login, err := c.StartLogin(ctx, "attempt", ports.ProviderLoginRequest{Provider: provider})
 			if err != nil {
 				t.Fatal(err)
@@ -83,27 +91,99 @@ func TestBrowserLoginRelaysOnlyTheMatchingCallback(t *testing.T) {
 			if len(helper.calls) != 1 {
 				t.Fatalf("a rejected callback reached the helper: %v", helper.lines())
 			}
-			code, body := relayRequest(t, provider, http.MethodGet, callback[1], url.Values{"state": {"private-state"}, "code": {"secret-code"}})
-			if code != http.StatusOK || !strings.Contains(body, "return to AO") || strings.Contains(body, "secret-code") || strings.Contains(body, "private-state") {
-				t.Fatalf("status=%d body=%q", code, body)
-			}
-			forwarded := helper.calls[1]
-			if forwarded.line() != "POST /v8/management/oauth/callback" || forwarded.Body != `{"code":"secret-code","error":"","provider":"`+provider+`","state":"private-state"}` {
-				t.Fatalf("forwarded %s %s", forwarded.line(), forwarded.Body)
-			}
-			// The relay stays up while the provider is still deciding, and closes when it has.
+			// The relay stays up while the provider is still deciding.
 			if got, err := c.LoginStatus(ctx, login); got != "waiting" || err != nil {
 				t.Fatalf("status=%q err=%v", got, err)
 			}
-			if code, _ = relayRequest(t, provider, http.MethodGet, "/other", nil); code != http.StatusBadRequest {
+			if code, _ := relayRequest(t, provider, http.MethodGet, "/other", nil); code != http.StatusBadRequest {
 				t.Fatal("the relay closed while the login was waiting")
 			}
-			status = "ok"
+			status.Store("ok")
+			code, body := relayRequest(t, provider, http.MethodGet, callback[1], url.Values{"state": {"private-state"}, "code": {"secret-code"}})
+			if code != http.StatusOK || !strings.Contains(body, "Signed in to "+providerNames[provider]) || !strings.Contains(body, "close this tab") || strings.Contains(body, "secret-code") || strings.Contains(body, "private-state") {
+				t.Fatalf("status=%d body=%q", code, body)
+			}
+			if forwarded := helper.calls[2]; forwarded.line() != "POST /v8/management/oauth/callback" || forwarded.Body != `{"code":"secret-code","error":"","provider":"`+provider+`","state":"private-state"}` {
+				t.Fatalf("forwarded %s %s", forwarded.line(), forwarded.Body)
+			}
+			// It closes once the daemon has seen the outcome.
 			if got, err := c.LoginStatus(ctx, login); got != "complete" || err != nil || helper.calls[len(helper.calls)-1].Query != "state=private-state" {
 				t.Fatalf("status=%q err=%v", got, err)
 			}
 			assertRelayClosed(t, provider)
 		})
+	}
+}
+
+// The page a browser returns to says how the sign-in ended, and repeats nothing from the request.
+func TestTheReturnPageSaysHowTheSignInEnded(t *testing.T) {
+	defer func(wait time.Duration) { callbackWait = wait }(callbackWait)
+	callbackWait = 300 * time.Millisecond
+	for name, run := range map[string]struct {
+		status, refusal string
+		lost            bool
+		code            int
+		says            []string
+	}{
+		"signed in":           {status: "ok", code: http.StatusOK, says: []string{"Signed in to Claude", "close this tab"}},
+		"declined":            {status: "error", refusal: "access_denied", code: http.StatusOK, says: []string{"did not finish", "Claude answered access_denied.", "try again"}},
+		"refused oddly":       {status: "error", refusal: "<b>secret-code</b>", code: http.StatusOK, says: []string{"did not finish", "try again"}},
+		"still deciding":      {status: "wait", code: http.StatusAccepted, says: []string{"AO received the Claude sign-in"}},
+		"helper out of reach": {status: "ok", lost: true, code: http.StatusBadGateway, says: []string{"could not finish", "try again"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status := browserStatus(run.status)
+			answer := browserHelper(status)
+			c, _ := helperClient(t, func(received call) (int, string) {
+				if run.lost && received.Path == "/v8/management/oauth/callback" {
+					return 0, ""
+				}
+				return answer(received)
+			})
+			if _, err := c.StartLogin(ctx, "attempt", ports.ProviderLoginRequest{Provider: "claude"}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { c.closeRelay("attempt") })
+			query := url.Values{"state": {"private-state"}, "code": {"secret-code"}}
+			if run.refusal != "" {
+				query = url.Values{"state": {"private-state"}, "error": {run.refusal}}
+			}
+			code, body := relayRequest(t, "claude", http.MethodGet, callbacks["claude"][1], query)
+			if code != run.code || strings.Contains(body, "secret-code") || strings.Contains(body, "private-state") {
+				t.Fatalf("status=%d body=%q", code, body)
+			}
+			for _, part := range run.says {
+				if !strings.Contains(body, part) {
+					t.Errorf("the page does not say %q: %q", part, body)
+				}
+			}
+		})
+	}
+}
+
+// A page still being answered when the daemon closes the relay is answered in full.
+func TestClosingTheRelayLetsThePageBeingAnsweredFinish(t *testing.T) {
+	status := browserStatus("wait")
+	c, _ := helperClient(t, browserHelper(status))
+	if _, err := c.StartLogin(ctx, "attempt", ports.ProviderLoginRequest{Provider: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	answered := make(chan string, 1)
+	go func() {
+		_, body := relayRequest(t, "codex", http.MethodGet, callbacks["codex"][1], url.Values{"state": {"private-state"}, "code": {"secret-code"}})
+		answered <- body
+	}()
+	time.Sleep(300 * time.Millisecond)
+	c.closeRelay("attempt")
+	assertRelayClosed(t, "codex")
+	status.Store("ok")
+	select {
+	case body := <-answered:
+		if !strings.Contains(body, "Signed in to Codex") {
+			t.Fatalf("body=%q", body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the page was not answered")
 	}
 }
 
@@ -139,8 +219,8 @@ func TestBrowserLoginReservesItsPortFirstAndReleasesItOnFailure(t *testing.T) {
 }
 
 func TestBrowserLoginClosesItsRelayOnFailureAndCancel(t *testing.T) {
-	status := "error"
-	c, helper := helperClient(t, browserHelper(&status))
+	status := browserStatus("error")
+	c, helper := helperClient(t, browserHelper(status))
 	request := ports.ProviderLoginRequest{Provider: "claude"}
 	login, err := c.StartLogin(ctx, "refused", request)
 	if err != nil {
@@ -150,7 +230,7 @@ func TestBrowserLoginClosesItsRelayOnFailureAndCancel(t *testing.T) {
 		t.Fatalf("status=%q err=%v", got, err)
 	}
 	assertRelayClosed(t, "claude")
-	status = "surprise"
+	status.Store("surprise")
 	if _, err = c.LoginStatus(ctx, login); err == nil {
 		t.Fatal("an unknown status was passed on")
 	}
