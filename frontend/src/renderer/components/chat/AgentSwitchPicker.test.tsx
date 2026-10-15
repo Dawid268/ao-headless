@@ -18,7 +18,7 @@ vi.mock("../../hooks/useAgentModelsQuery", () => ({
 	}),
 }));
 
-function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-code", extra: Partial<PickerSource> = {}) {
+function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-code", extra: Partial<PickerSource> = {}, loading = false) {
 	const onPendingChange = vi.fn();
 	const current: PickerSource = {
 		models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }],
@@ -36,6 +36,7 @@ function open(pending?: PendingAgentSwitch, terminal = false, harness = "claude-
 				currentHarness={harness}
 				current={current}
 				terminal={terminal}
+				loading={loading}
 				agentSwitch={{ projectId: "p", pending, onPendingChange }}
 			/>
 		</QueryClientProvider>,
@@ -63,6 +64,15 @@ describe("AgentModelPicker", () => {
 		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
 		expect(screen.getByRole("menuitem", { name: /Effort.*High/ })).toBeInTheDocument();
 		expect(screen.getByText("Thinking")).toBeInTheDocument();
+	});
+
+	it("shows the settings as loading while the agent answers a change", async () => {
+		const user = userEvent.setup();
+		open(undefined, false, "cursor", { thinking: true, onToggleThinking: vi.fn() }, true);
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		expect(screen.getByText("Loading settings")).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /Effort/ })).not.toBeInTheDocument();
+		expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
 	});
 
 	it("holds another agent as pending when it is picked", async () => {

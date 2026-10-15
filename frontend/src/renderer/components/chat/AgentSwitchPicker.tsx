@@ -10,7 +10,7 @@
 
 import { useQueries } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { Brain, ChevronRight, RefreshCw, Star, TriangleAlert, X, Zap } from "lucide-react";
+import { Brain, ChevronRight, Loader2, RefreshCw, Star, TriangleAlert, X, Zap } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { agentModelsQueryOptions, type AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
@@ -164,6 +164,7 @@ export function AgentModelPicker({
 	current,
 	agentSwitch,
 	disabled,
+	loading,
 	title,
 	mark,
 	extras,
@@ -180,6 +181,8 @@ export function AgentModelPicker({
 	terminal?: boolean;
 	/** The current agent's own settings cannot be changed right now. */
 	disabled?: boolean;
+	/** The running agent is answering a settings change; its other settings are not known yet. */
+	loading?: boolean;
 	title?: string;
 	/** A flag on the trigger, such as a substituted model. */
 	mark?: ReactNode;
@@ -374,7 +377,13 @@ export function AgentModelPicker({
 										</OptionMenuSubContent>
 									</OptionMenuSub>
 								) : null}
-								{settable && source.efforts.length > 0 ? (
+								{loading && !pending ? (
+									<OptionMenuItem disabled className="gap-2 text-xs text-muted-foreground">
+										<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+										Loading settings
+									</OptionMenuItem>
+								) : null}
+								{settable && !(loading && !pending) && source.efforts.length > 0 ? (
 									<OptionMenuSub>
 										<OptionMenuSubTrigger label="Effort" value={source.efforts.find((choice) => choice.value === source.effort)?.label} />
 										<OptionMenuSubContent className={SUB_CLASS}>
@@ -398,7 +407,7 @@ export function AgentModelPicker({
 									</OptionMenuSub>
 								) : null}
 							</div>
-							{settable && (source.fast !== undefined || source.thinking !== undefined) ? (
+							{settable && !(loading && !pending) && (source.fast !== undefined || source.thinking !== undefined) ? (
 								<div className={DIVIDER}>
 									<ToggleRow label="Fast mode" checked={source.fast} onChange={source.onToggleFast} />
 									<ToggleRow label="Thinking" checked={source.thinking} onChange={source.onToggleThinking} />

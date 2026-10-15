@@ -384,6 +384,7 @@ export function TurnSettingsBar({
 								current={current}
 								agentSwitch={agentSwitch}
 								disabled={optionDisabled}
+								loading={configPending}
 								title={reroute ? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}` : undefined}
 								mark={reroute ? <Shuffle className="size-3 shrink-0 text-warning" aria-hidden="true" /> : undefined}
 								extras={pickerExtras}

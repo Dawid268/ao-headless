@@ -1328,7 +1328,19 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		// Held across the whole write, paired with the cancel below: `onMutate`
 		// runs before the request and `onSettled` after the result is committed,
 		// so no poll can start or land inside that window.
-		onMutate: () => setWriting(true),
+		// The picked value shows at once; the agent's reply, which can take seconds,
+		// brings the settings that depend on it.
+		onMutate: async ({ optionId, value }) => {
+			setWriting(true);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<ChatConfigOption[]>(queryKey);
+			queryClient.setQueryData<ChatConfigOption[]>(queryKey, previous?.map((option) => option.id !== optionId ? option
+				: "value" in value ? { ...option, currentValue: value.value } : { ...option, currentBoolean: value.enabled }));
+			return { previous };
+		},
+		onError: (_error, _variables, context) => {
+			if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+		},
 		onSettled: () => setWriting(false),
 		mutationFn: async ({
 			optionId,
