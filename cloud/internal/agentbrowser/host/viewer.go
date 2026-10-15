@@ -854,6 +854,9 @@ func (v *viewer) onEvent(sid string, m cdpMsg) {
 		}
 		if json.Unmarshal(m.Params, &p) == nil && top && p.FrameID == v.target() {
 			v.sendJSON(map[string]any{"t": "loading", "on": m.Method == "Page.frameStartedLoading"})
+			if m.Method == "Page.frameStoppedLoading" {
+				go v.sendHistory()
+			}
 		}
 	case "Runtime.bindingCalled":
 		var p struct {
@@ -947,18 +950,36 @@ func clipboardReport(payload string) bool {
 }
 
 // sendHistory tells the view whether Back and Forward have somewhere to go,
-// for a host app whose own buttons drive this tab.
+// for a host app whose own buttons drive this tab. While a cross-site
+// navigation moves the page to a new renderer, Chromium answers "Not attached
+// to an active page" for a moment: it asks again, and the load stopping asks
+// once more, so Back is not left disabled.
 func (v *viewer) sendHistory() {
-	res, err := v.call("Page.getNavigationHistory", nil)
-	var h struct {
-		CurrentIndex int               `json:"currentIndex"`
-		Entries      []json.RawMessage `json:"entries"`
+	for try := 1; ; try++ {
+		res, err := v.call("Page.getNavigationHistory", nil)
+		var h struct {
+			CurrentIndex int               `json:"currentIndex"`
+			Entries      []json.RawMessage `json:"entries"`
+		}
+		if err == nil && json.Unmarshal(res, &h) == nil {
+			v.sendJSON(map[string]any{"t": "history", "back": h.CurrentIndex > 0, "fwd": h.CurrentIndex < len(h.Entries)-1})
+			return
+		}
+		if try == historyTries {
+			return
+		}
+		select {
+		case <-v.ctx.Done():
+			return
+		case <-time.After(historyRetry):
+		}
 	}
-	if err != nil || json.Unmarshal(res, &h) != nil {
-		return
-	}
-	v.sendJSON(map[string]any{"t": "history", "back": h.CurrentIndex > 0, "fwd": h.CurrentIndex < len(h.Entries)-1})
 }
+
+const (
+	historyTries = 3
+	historyRetry = 150 * time.Millisecond
+)
 
 // setVisible pauses the stream of a view the host app hid (one per agent
 // tab, most of them in the background) and resumes it, in front, when shown.

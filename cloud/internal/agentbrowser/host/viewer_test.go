@@ -1,9 +1,17 @@
 package host
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // A page can call the shims' binding itself, from any frame and whenever it
@@ -47,4 +55,68 @@ func TestClipboardReports(t *testing.T) {
 	if relayed("S", 1, copied) {
 		t.Error("relayed after the person's click or key had expired")
 	}
+}
+
+// During a cross-site navigation Chromium briefly refuses the tab's history.
+// Back and Forward must still end up right: the view asks again, and asks
+// once more when the load stops.
+func TestHistoryAfterCrossSiteNavigation(t *testing.T) {
+	var refusals atomic.Int32 // history requests still to refuse
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		for {
+			_, data, err := c.Read(r.Context())
+			var m cdpMsg
+			if err != nil || json.Unmarshal(data, &m) != nil {
+				return
+			}
+			reply := fmt.Sprintf(`{"id":%d,"result":{"currentIndex":1,"entries":[{},{}]}}`, m.ID)
+			if refusals.Add(-1) >= 0 {
+				reply = fmt.Sprintf(`{"id":%d,"error":{"code":-32000,"message":"Not attached to an active page"}}`, m.ID)
+			}
+			_ = c.Write(r.Context(), websocket.MessageText, []byte(reply))
+		}
+	}))
+	defer srv.Close()
+	cdp, err := dialCDP(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	v := &viewer{h: &host{cdp: cdp}, ctx: ctx, cancel: cancel, session: "S", targetID: "T", out: make(chan []byte, 8)}
+	history := func(name string) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			select {
+			case b := <-v.out:
+				if strings.Contains(string(b), `"t":"history"`) {
+					if want := `{"back":true,"fwd":false,"t":"history"}`; string(b) != want {
+						t.Errorf("%s: sent %s, want %s", name, b, want)
+					}
+					return
+				}
+			case <-deadline:
+				t.Errorf("%s: Back and Forward were never sent", name)
+				return
+			}
+		}
+	}
+	navigated := cdpMsg{Method: "Page.frameNavigated", Params: json.RawMessage(`{"frame":{"id":"T","url":"https://b.test/"}}`), SessionID: "S"}
+
+	refusals.Store(1) // refused at first, answered on a retry
+	v.onEvent("S", navigated)
+	history("a retry after the navigation")
+
+	refusals.Store(1 << 20) // refused until the load stops
+	v.onEvent("S", navigated)
+	time.Sleep(historyTries * historyRetry * 2)
+	refusals.Store(0)
+	v.onEvent("S", cdpMsg{Method: "Page.frameStoppedLoading", Params: json.RawMessage(`{"frameId":"T"}`), SessionID: "S"})
+	history("the load stopping")
 }
