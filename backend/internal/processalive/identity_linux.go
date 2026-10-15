@@ -4,33 +4,79 @@ package processalive
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
 )
 
 func identify(ctx context.Context, pid int) Identity {
-	path := "/proc/" + strconv.Itoa(pid) + "/stat"
-	stat, err := os.ReadFile(path)
+	bootID, err := readLinuxBootID(ctx)
 	if err != nil {
 		return Identity{}
 	}
-	ticks := linuxStartTicks(string(stat))
+	ticks := readLinuxStartTicks(ctx, pid)
 	if ticks == "" {
-		return Identity{}
-	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	bootID := strings.TrimSpace(string(boot))
-	if err != nil || bootID == "" {
 		return Identity{}
 	}
 	startedAt := processStartedAt(ctx, pid)
 	// The slower wall-clock lookup must describe the same process incarnation.
-	current, err := os.ReadFile(path)
-	if err != nil || linuxStartTicks(string(current)) != ticks {
+	if readLinuxStartTicks(ctx, pid) != ticks {
 		return Identity{}
 	}
 	return Identity{StartID: "linux:" + bootID + ":" + ticks, StartedAt: startedAt}
+}
+
+// BootStartTime returns boot+<boot id>+<start ticks> without invoking ps. A boot
+// lookup error is distinct from an unavailable process and must not match a record.
+func BootStartTime(ctx context.Context, pid int) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if pid <= 0 {
+		return "", nil
+	}
+	bootID, err := readLinuxBootID(ctx)
+	if err != nil {
+		return "", err
+	}
+	ticks := readLinuxStartTicks(ctx, pid)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if ticks == "" {
+		return "", nil
+	}
+	return "boot+" + bootID + "+" + ticks, nil
+}
+
+func readLinuxBootID(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	bootID := strings.TrimSpace(string(data))
+	if bootID == "" {
+		return "", errors.New("linux boot identity is unavailable")
+	}
+	return bootID, nil
+}
+
+func readLinuxStartTicks(ctx context.Context, pid int) string {
+	if pid <= 0 || ctx.Err() != nil {
+		return ""
+	}
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return linuxStartTicks(string(data))
 }
 
 func linuxStartTicks(stat string) string {

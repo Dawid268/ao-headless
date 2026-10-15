@@ -123,7 +123,7 @@ import {
 	type TurnOutcomeRetryControl,
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
-import { ChatLinkProvider } from "./ChatMarkdown";
+import { ChatLinkProvider, ChatOpeningRef } from "./ChatMarkdown";
 import { ChatImageSourceProvider } from "./chat-image-source";
 import type { ComposerPromptSuggestion } from "./ComposerEditor";
 import { ChatComposer, type ChatComposerHandle, type StoredComposerAttachment } from "./ChatComposer";
@@ -232,6 +232,9 @@ function DraggableChatTab({ children, value }: { children: ReactNode; value: str
 				if ((event.target as HTMLElement).closest("[data-terminal-tab-action],input,a")) return;
 				dragControls.start(event);
 			}}
+			// Reorder needs layout measurement, but tabs should snap into place
+			// when a sibling opens or closes rather than slide.
+			transition={{ layout: { duration: 0 } }}
 			value={value}
 		>
 			{children}
@@ -1730,6 +1733,11 @@ function ChatWorkspaceContent({
 										{t(artifactSession ? "chat.welcome.artifactHeading" : "chat.welcome.heading")}
 									</h1>
 								) : null}
+								<WelcomePromptSuggestions
+									open={conversationEmpty && !newWorkDisabled && composerEmpty}
+									artifact={artifactSession}
+									onPick={(text) => composerFocusRef.current?.setDraft(text)}
+								/>
 								<div ref={composerBoxRef} className="relative">
 									{welcomeLeaving ? (
 										<h1
@@ -1828,11 +1836,6 @@ function ChatWorkspaceContent({
 										acceptedClientMessageIds={acceptedClientMessageIds}
 									/>
 								</div>
-								<WelcomePromptSuggestions
-									open={conversationEmpty && !newWorkDisabled && composerEmpty}
-									artifact={artifactSession}
-									onPick={(text) => composerFocusRef.current?.setDraft(text)}
-								/>
 								{compactStartup ? <OrchestratorStartupStatus {...compactStartup} /> : null}
 							</div>
 						</div>
@@ -2135,7 +2138,7 @@ function ChatHeader({
 							</button>
 						)}
 						<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
-							<div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto">
+							<motion.div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto" layoutScroll>
 								<div className="flex w-max items-stretch">
 								<Reorder.Group
 									as="div"
@@ -2184,7 +2187,7 @@ function ChatHeader({
 								</Reorder.Group>
 								{workspaceTabActions}
 								</div>
-							</div>
+							</motion.div>
 							{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
 							{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
 						</div>
@@ -2694,6 +2697,21 @@ export function Timeline({
 	// widens chat; shorter histories (common on non-Codex harnesses) often
 	// stop overflowing and used to lose the minimap exactly then.
 	const minimapEnabled = scrollbar.markers.length > 0;
+	// Replies rendered with the chat's first commit were already on screen
+	// before the switch; streamed text in them must not fade in again.
+	const chatOpening = useRef(true);
+	useEffect(() => {
+		chatOpening.current = false;
+	}, []);
+	// The minimap appears once the opened chat is measured. That first reveal is
+	// part of opening the chat, so it is instant; only later changes (the inspector
+	// covering it) fade.
+	const [minimapRevealed, setMinimapRevealed] = useState(false);
+	useEffect(() => {
+		if (!minimapEnabled || minimapRevealed) return;
+		const frame = window.requestAnimationFrame(() => setMinimapRevealed(true));
+		return () => window.cancelAnimationFrame(frame);
+	}, [minimapEnabled, minimapRevealed]);
 	const { t } = useTranslation();
 	const openingTurnId = startup?.openingTurnId;
 	// The checklist holds the working slot until the agent is up and its first
@@ -3740,6 +3758,7 @@ export function Timeline({
 	}
 
 	return (
+		<ChatOpeningRef.Provider value={chatOpening}>
 		<div
 			className="relative min-h-0 flex-1"
 			data-testid="chat-timeline"
@@ -3952,7 +3971,8 @@ export function Timeline({
 				onBlur={() => setHoveredMarker(null)}
 				onPointerLeave={() => setHoveredMarker(null)}
 					className={cn(
-						"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+						"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+						minimapRevealed && "transition-opacity",
 						minimapEnabled && !inspectorOpenRef.current
 							? "cursor-pointer opacity-100"
 							: "pointer-events-none opacity-0",
@@ -4029,6 +4049,7 @@ export function Timeline({
 				</Button>
 			) : null}
 		</div>
+		</ChatOpeningRef.Provider>
 	);
 }
 
@@ -4831,8 +4852,8 @@ const CHAT_PROMPT_KEYS = [
 ] as const;
 
 /**
- * Sample requests under an empty chat's composer; picking one fills the composer.
- * The list collapses its height, and the gap above it, on the way in and out so the
+ * Sample requests above an empty chat's composer; picking one fills the composer.
+ * The list collapses its height, and the gap below it, on the way in and out so the
  * centered composer glides instead of jumping.
  */
 function WelcomePromptSuggestions({ open, artifact, onPick }: { open: boolean; artifact: boolean; onPick: (text: string) => void }) {
@@ -4849,9 +4870,9 @@ function WelcomePromptSuggestions({ open, artifact, onPick }: { open: boolean; a
 					exit={{ height: 0, opacity: 0, transition: { duration: reducedMotion ? 0 : 0.16, ease: [0.4, 0, 1, 1] } }}
 					// The dock's gap-2 sits outside this box. Cancel it and put the space back as
 					// padding inside, so it collapses with the height instead of snapping.
-					className="-mt-2 overflow-hidden"
+					className="-mb-2 overflow-hidden"
 				>
-					<ul aria-label={t(artifact ? "chat.welcome.artifactPrompts" : "chat.welcome.prompts")} className="flex flex-col divide-y divide-border pt-3">
+					<ul aria-label={t(artifact ? "chat.welcome.artifactPrompts" : "chat.welcome.prompts")} className="flex flex-col divide-y divide-border pb-3">
 						{keys.map((key) => (
 							<li key={key} className="py-0.5">
 								<button

@@ -30,6 +30,8 @@ import type { ConnectedHostView } from "./main/remote-registry";
 import type { RemoteHealth } from "./main/remote-request";
 import type {
 	EditorHandoffState,
+	EditorHandoffStateOptions,
+	OpenSessionArtifactsInput,
 	OpenSessionTargetInput,
 	OpenSessionTargetResult,
 } from "./shared/editor-handoff";
@@ -375,10 +377,12 @@ const api = {
 		capture: (closedSideId?: string, cancelClose = false) => ipcRenderer.invoke("sideChats:capture", closedSideId, cancelClose) as Promise<void>,
 	},
 	editorHandoff: {
-		getState: (sessionId: string) =>
-			ipcRenderer.invoke("editorHandoff:getState", sessionId) as Promise<EditorHandoffState>,
+		getState: (sessionId: string, options?: EditorHandoffStateOptions) =>
+			ipcRenderer.invoke("editorHandoff:getState", sessionId, options) as Promise<EditorHandoffState>,
 		open: (input: OpenSessionTargetInput) =>
 			ipcRenderer.invoke("editorHandoff:open", input) as Promise<OpenSessionTargetResult>,
+		openArtifacts: (input: OpenSessionArtifactsInput) =>
+			ipcRenderer.invoke("editorHandoff:openArtifacts", input) as Promise<OpenSessionTargetResult>,
 		copyWorkspacePath: (sessionId: string) =>
 			ipcRenderer.invoke("editorHandoff:copyWorkspacePath", sessionId) as Promise<void>,
 	},
@@ -600,6 +604,7 @@ const api = {
 			ipcRenderer.invoke("browserProfiles:rename", input) as Promise<BrowserProfile>,
 		clear: (id: string) => ipcRenderer.invoke("browserProfiles:clear", { id }) as Promise<void>,
 		delete: (id: string) => ipcRenderer.invoke("browserProfiles:delete", { id }) as Promise<void>,
+		setDefault: (id: string | null) => ipcRenderer.invoke("browserProfiles:setDefault", { id }) as Promise<void>,
 		discoverImportSources: (input?: BrowserImportDiscoveryRequest) =>
 			(input === undefined
 				? ipcRenderer.invoke("browserProfiles:import:discover")

@@ -4,16 +4,32 @@ package processalive
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 )
 
 func TestIdentifyLinuxWithoutPSKeepsKernelIdentity(t *testing.T) {
 	first := Identify(context.Background(), os.Getpid())
+	bootStart, err := BootStartTime(context.Background(), os.Getpid())
+	if err != nil || bootStart == "" {
+		t.Fatalf("boot start = %q, err = %v, want kernel identity", bootStart, err)
+	}
 	t.Setenv("PATH", t.TempDir())
 	withoutPS := Identify(context.Background(), os.Getpid())
 	if first.StartID == "" || withoutPS.StartID != first.StartID || !withoutPS.StartedAt.IsZero() {
 		t.Fatalf("identities = %+v, %+v; want same kernel identity without wall-clock time", first, withoutPS)
+	}
+	if got, err := BootStartTime(context.Background(), os.Getpid()); err != nil || got != bootStart {
+		t.Fatalf("boot start without ps = %q, err = %v, want %q", got, err, bootStart)
+	}
+}
+
+func TestBootStartTimeCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got, err := BootStartTime(ctx, os.Getpid()); got != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled boot start = %q, err = %v, want no identity and cancellation", got, err)
 	}
 }
 

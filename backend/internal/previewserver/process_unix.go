@@ -5,9 +5,12 @@ package previewserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -24,8 +27,33 @@ func previewCommand(name string, args ...string) *exec.Cmd {
 // re-verified as the process AO launched, so no signal was sent.
 var errStalePreviewPID = errors.New("preview pid is stale or recycled; refusing to signal")
 
-// Keep the legacy ps lstart format so saved previews remain verifiable.
+// bootTicksPrefix marks a start time read as the boot's id plus clock ticks
+// since that boot.
+const bootTicksPrefix = "boot+"
+
+// previewProcessStartTime returns the kernel-reported start time of pid as an
+// opaque string, or "" when it cannot be read (the process is gone, or ps
+// failed). It is captured at launch and compared verbatim before any group
+// signal: a bare PID stops identifying anything the moment the child is
+// reaped, and a group kill on a recycled number destroys an unrelated process
+// family — a tmux server is its own group leader, so one stale group kill took
+// out every tmux session at once (issue #3475).
+//
+// On Linux it is the boot id plus the start in clock ticks since boot
+// (/proc/<pid>/stat field 22). ps derives lstart from the boot time, which
+// moves whenever the wall clock steps (a VM resumed from a pause, an NTP
+// step): a preview launched before the step stopped matching its own record,
+// and AO refused to stop it. A Linux host whose boot id can't be read falls
+// back to lstart, as before boot ticks.
 func previewProcessStartTime(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	if runtime.GOOS == "linux" {
+		if start, err := processalive.BootStartTime(context.Background(), pid); err == nil {
+			return start
+		}
+	}
 	return processalive.StartTime(context.Background(), pid)
 }
 
@@ -52,7 +80,16 @@ func signalPreviewGroup(pid int, recordedStart string, sig syscall.Signal) error
 	if recordedStart == "" {
 		return errStalePreviewPID
 	}
-	current := previewProcessStartTime(pid)
+	var current string
+	if strings.HasPrefix(recordedStart, bootTicksPrefix) {
+		var err error
+		current, err = processalive.BootStartTime(context.Background(), pid)
+		if err != nil {
+			return fmt.Errorf("%w: %w", errStalePreviewPID, err)
+		}
+	} else {
+		current = processalive.StartTime(context.Background(), pid)
+	}
 	if current == "" {
 		return nil // leader gone: nothing provably AO's remains
 	}
