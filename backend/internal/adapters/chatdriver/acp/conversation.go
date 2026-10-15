@@ -524,6 +524,11 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		if (option.ID == "model" && legacyModel) || (option.ID == "mode" && legacyMode) {
 			return nil
 		}
+		if offered, known := c.configOptionOffers(option.ID, option.Value); known && !offered && option.Name != "" {
+			if value := c.configOptionValueNamed(option.ID, option.Name); value != "" {
+				option.Value = value
+			}
+		}
 		if !catalogStale && c.configOptionCurrent(option.ID) == option.Value {
 			return nil
 		}

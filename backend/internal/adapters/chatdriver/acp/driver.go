@@ -130,6 +130,9 @@ type SessionOption struct {
 	// Optional settings are skipped when the session rejects them, such
 	// as a thinking setting on a model that has none.
 	Optional bool
+	// Name finds the choice when the agent lists it under another value, such as
+	// Claude Code offering claude-opus-5-5 as "opus", named "Opus 5.5".
+	Name string
 }
 
 // Driver opens ACP conversations for a single harness.

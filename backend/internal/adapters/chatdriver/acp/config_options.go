@@ -188,6 +188,23 @@ func (c *conversation) configOptionOffers(id, value string) (offered, known bool
 	return false, false
 }
 
+// configOptionValueNamed is the value of the choice shown under name, or "".
+func (c *conversation) configOptionValueNamed(id, name string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.configOptions {
+		if c.configOptions[i].ID != id {
+			continue
+		}
+		for _, choice := range c.configOptions[i].Choices {
+			if strings.EqualFold(strings.TrimSpace(choice.Name), name) {
+				return choice.Value
+			}
+		}
+	}
+	return ""
+}
+
 // configOptionCurrent is a select option's current value, or "" when the
 // session does not list it.
 func (c *conversation) configOptionCurrent(id string) string {

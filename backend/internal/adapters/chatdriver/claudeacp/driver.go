@@ -353,17 +353,32 @@ func claudeSessionMode(permission ports.PermissionMode) string {
 	}
 }
 
-// claudeModelFamily matches a Claude model id such as "claude-haiku-5-5" and names its family.
-var claudeModelFamily = regexp.MustCompile(`^claude-(opus|sonnet|haiku|fable)-\d`)
+// claudeModelFamily matches a full Claude model id such as "claude-haiku-5-5"
+// or "claude-opus-4-5-20251101", capturing its family and version.
+var claudeModelFamily = regexp.MustCompile(`^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$`)
+
+// claudeModelName is the name Claude Code shows a model under: "Opus 5.5".
+func claudeModelName(id string) string {
+	match := claudeModelFamily.FindStringSubmatch(id)
+	if match == nil {
+		return ""
+	}
+	name := strings.ToUpper(match[1][:1]) + match[1][1:] + " " + match[2]
+	if match[3] != "" {
+		name += "." + match[3]
+	}
+	return name
+}
 
 func claudeSessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
 	options := make([]acpdriver.SessionOption, 0, 3)
-	if family := claudeModelFamily.FindStringSubmatch(settings.Model); family != nil {
-		// Claude Code offers the newest model of a family by its alias ("haiku") and
-		// older ones by id. The alias is set first, and an id it also offers wins.
-		options = append(options,
-			acpdriver.SessionOption{ID: "model", Value: family[1], Optional: true},
-			acpdriver.SessionOption{ID: "model", Value: settings.Model, Optional: true})
+	if claudeModelFamily.MatchString(settings.Model) {
+		// A full id saved elsewhere, as a terminal switch does, may not be one
+		// Claude Code offers in chat: it lists the newest of a family by alias. The
+		// alias is found by the model's name, since an alias can name an older
+		// model ("haiku" is Haiku 4.5). One it does not offer at all leaves Claude
+		// Code's own model, which the chat then shows, instead of failing the start.
+		options = append(options, acpdriver.SessionOption{ID: "model", Value: settings.Model, Optional: true, Name: claudeModelName(settings.Model)})
 	} else if settings.Model != "" {
 		options = append(options, acpdriver.SessionOption{ID: "model", Value: settings.Model})
 	}
