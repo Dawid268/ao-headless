@@ -3419,7 +3419,8 @@ func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
 	model, modelCalls := agent.model, agent.modelCalls
 	mode, modeCalls, configCalls := agent.mode, agent.modeCalls, agent.configCalls
 	agent.mu.Unlock()
-	if model != "kimi-code/kimi-for-coding" || modelCalls != 2 ||
+	// Start finds the session already on the model and sends nothing; the explicit set does.
+	if model != "kimi-code/kimi-for-coding" || modelCalls != 1 ||
 		mode != "default" || modeCalls != 1 || configCalls != 0 {
 		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
 			model, modelCalls, mode, modeCalls, configCalls)

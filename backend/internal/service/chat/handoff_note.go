@@ -172,6 +172,8 @@ func handoffChangedFiles(ctx context.Context, workspace, base string) []string {
 		globalArgs := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-C", workspace}
 		cmd := aoprocess.CommandContext(ctx, "git", append(globalArgs, args...)...)
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=Never")
+		// A child git leaves holding the pipe open must not stretch the timeout.
+		cmd.WaitDelay = time.Second
 		out, err := cmd.Output()
 		if err != nil {
 			continue

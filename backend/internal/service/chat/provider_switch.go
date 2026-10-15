@@ -125,7 +125,17 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nativeEditHandoffLimit)
 	defer cancel()
 	if err := source.closeForBranchHandoff(operationCtx); err != nil {
-		return fmt.Errorf("stop source provider: %w", err)
+		closeErr := fmt.Errorf("stop source provider: %w", err)
+		// A source that stopped anyway is brought back, or the session would sit
+		// idle with no provider behind it.
+		if source.State() == ports.ChatControllerStopped {
+			if restoreErr := s.restoreClosedSourceController(operationCtx, id, source, activeBranch, startCfg, sourceDriver); restoreErr != nil {
+				closeErr = errors.Join(closeErr, restoreErr)
+			} else {
+				abortSource = false
+			}
+		}
+		return closeErr
 	}
 
 	targetCfg := cloneStartConfig(startCfg)
@@ -164,7 +174,7 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 			Detail:  detail, RequestID: strings.TrimSpace(request.IdempotencyKey),
 			ProviderItemID: started.ProviderBoundary.ID + ":provider-switch",
 		}
-		if err := s.store.CommitProviderSwitch(ctx, targetRecord, *started.ProviderBoundary, started.ControllerGeneration, switchActivity); err != nil {
+		if err := s.store.CommitProviderSwitch(operationCtx, targetRecord, *started.ProviderBoundary, started.ControllerGeneration, switchActivity); err != nil {
 			return ControllerCommit{}, err
 		}
 		committed := started.Conversation
@@ -198,7 +208,7 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 		// the target once it exists rather than passed through its launch.
 		settings := target.Settings()
 		settings.FastMode = true
-		if err := target.SetSettings(ctx, settings); err != nil {
+		if err := target.SetSettings(operationCtx, settings); err != nil {
 			s.log.Warn("apply fast mode after provider switch", "session", id, "error", err)
 		}
 	}

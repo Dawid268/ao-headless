@@ -285,6 +285,7 @@ export function invalidateConversationProviderCatalogs(queryClient: QueryClient,
 const CONVERSATION_PAGE_SIZE = 200;
 const remoteConversationRefreshErrorKey = (sessionId: string, hostId: string) => ["remote-conversation-refresh-error", hostId, sessionId] as const;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
+const CONFIG_OPTION_WRITE_TIMEOUT_MS = 60_000;
 const SKILLS_POLL_INTERVAL_MS = 60_000;
 
 /**
@@ -1336,10 +1337,12 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 			const previous = queryClient.getQueryData<ChatConfigOption[]>(queryKey);
 			queryClient.setQueryData<ChatConfigOption[]>(queryKey, previous?.map((option) => option.id !== optionId ? option
 				: "value" in value ? { ...option, currentValue: value.value } : { ...option, currentBoolean: value.enabled }));
-			return { previous };
+			return { previous, controllerEpoch: conversationProviderCatalogEpoch(queryClient, sessionUiKey(sessionId as string, hostId)) };
 		},
 		onError: (_error, _variables, context) => {
-			if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+			// A switch since the pick replaced the list; the old agent's must not come back.
+			if (!context?.previous || context.controllerEpoch !== conversationProviderCatalogEpoch(queryClient, sessionUiKey(sessionId as string, hostId))) return;
+			queryClient.setQueryData(queryKey, context.previous);
 		},
 		onSettled: () => setWriting(false),
 		mutationFn: async ({
@@ -1364,6 +1367,8 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 						},
 					},
 					body: value,
+					// An agent that never answers must not hold the settings locked.
+					signal: AbortSignal.timeout(CONFIG_OPTION_WRITE_TIMEOUT_MS),
 				},
 			);
 			if (error) throw error;

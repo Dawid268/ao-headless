@@ -82,6 +82,15 @@ func (m *Manager) SwitchTUIProvider(ctx context.Context, id domain.SessionID, re
 	if err := m.stopSourceControllerConclusive(rec); err != nil {
 		return &domain.ProviderSwitchError{Kind: domain.ProviderSwitchRefusalRecoveryRequired, Detail: "AO could not confirm that the source provider stopped: " + err.Error(), Cause: err}
 	}
+	// The source is gone, so held input has nothing left to reach. The target
+	// starts on the same terminal, and its own startup queries must get through.
+	if releaseInput != nil {
+		releaseInput()
+	}
+	// From here on the request's deadline must not cut the switch short: a store
+	// write failing half way would leave the session with no provider at all.
+	ctx, cancelSwitch := context.WithTimeout(context.WithoutCancel(ctx), tuiSwitchAfterStopLimit)
+	defer cancelSwitch()
 
 	source := rec
 	source.Metadata.RuntimeHandleID = ""
@@ -97,12 +106,15 @@ func (m *Manager) SwitchTUIProvider(ctx context.Context, id domain.SessionID, re
 	launchStore, _ := m.store.(launchOptionsStore)
 	sourceLaunch := m.sessionLaunchOptions(ctx, id)
 	restoreSource := func(cause error, what string) error {
+		// A target that used up the switch's time still leaves the restore its own.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*interfaceTransitionStepLimit)
+		defer cancel()
 		if launchStore != nil {
-			_ = launchStore.SetSessionLaunchOptions(context.WithoutCancel(ctx), id, sourceLaunch)
+			_ = launchStore.SetSessionLaunchOptions(ctx, id, sourceLaunch)
 		}
 		restoreErr := m.store.UpdateSession(ctx, source)
 		if restoreErr == nil {
-			_, restoreErr = m.relaunchSessionWithPolicy(context.WithoutCancel(ctx), "restore source provider", source, project, ws, nil, false, false, domain.SessionInterfaceTransitionHistoryStrict)
+			_, restoreErr = m.relaunchSessionWithPolicy(ctx, "restore source provider", source, project, ws, nil, false, false, domain.SessionInterfaceTransitionHistoryStrict)
 		}
 		if restoreErr != nil {
 			return &domain.ProviderSwitchError{
@@ -143,18 +155,18 @@ func (m *Manager) SwitchTUIProvider(ctx context.Context, id domain.SessionID, re
 		}
 	}
 
-	started, err := m.relaunchSessionWithPolicyAndGeneration(context.WithoutCancel(ctx), "switch TUI provider", targetRecord, project, ws, nil,
+	started, err := m.relaunchSessionWithPolicyAndGeneration(ctx, "switch TUI provider", targetRecord, project, ws, nil,
 		true, false, "", domain.SessionInterfaceTransitionHistoryStrict, &request.HandoffNote)
 	if err != nil {
 		return restoreSource(err, "target provider failed to start")
 	}
-	if err := m.confirmTUISwitchTargetAlive(context.WithoutCancel(ctx), started.Session); err != nil {
+	if err := m.confirmTUISwitchTargetAlive(ctx, started.Session); err != nil {
 		// The target's terminal outlives it to keep its last output. It has to
 		// go before the source can have the session's terminal back.
-		m.destroySpawnRuntimeAfterFailure(context.WithoutCancel(ctx), runtimeHandle(started.Session.Metadata))
+		m.destroySpawnRuntimeAfterFailure(ctx, runtimeHandle(started.Session.Metadata))
 		return restoreSource(err, "target provider did not stay running")
 	}
-	m.adoptTUISwitchSettings(context.WithoutCancel(ctx), id, request)
+	m.adoptTUISwitchSettings(ctx, id, request)
 	return nil
 }
 
@@ -191,6 +203,9 @@ func (m *Manager) adoptTUISwitchSettings(ctx context.Context, id domain.SessionI
 // How long a freshly started target is watched before the switch is reported
 // as done. Variables so tests do not have to wait.
 var (
+	// tuiSwitchAfterStopLimit bounds everything after the source stops: starting
+	// the target, and restoring the source if the target fails.
+	tuiSwitchAfterStopLimit   = 3 * interfaceTransitionStepLimit
 	tuiSwitchTargetSettle     = 1500 * time.Millisecond
 	tuiSwitchTargetSettlePoll = 250 * time.Millisecond
 )

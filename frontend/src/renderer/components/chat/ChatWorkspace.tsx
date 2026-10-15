@@ -1337,7 +1337,9 @@ function ChatWorkspaceContent({
 				<TurnSettingsBar
 					agentSwitch={agentSwitch}
 					beforePicker={agentSwitch ? <ContextMeter usage={stableUsage} compactsAt={compactsAt} /> : undefined}
-					modelsLoading={snapshot.controller.state === "hibernated" || snapshot.controller.state === "connecting"}
+					// Only while the agent is starting: a sleeping chat whose wake failed would
+					// otherwise read "Loading models" for good. It shows its saved model instead.
+					modelsLoading={snapshot.controller.state === "connecting"}
 					afterPermissions={composerAction}
 					models={models ?? []}
 					settings={stableSettings}

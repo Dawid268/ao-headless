@@ -188,6 +188,19 @@ func (c *conversation) configOptionOffers(id, value string) (offered, known bool
 	return false, false
 }
 
+// configOptionCurrent is a select option's current value, or "" when the
+// session does not list it.
+func (c *conversation) configOptionCurrent(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.configOptions {
+		if c.configOptions[i].ID == id && c.configOptions[i].Type == ports.ChatConfigOptionSelect {
+			return c.configOptions[i].Current.Select
+		}
+	}
+	return ""
+}
+
 func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatConfigOption {
 	out := make([]ports.ChatConfigOption, 0, len(options))
 	for _, option := range options {

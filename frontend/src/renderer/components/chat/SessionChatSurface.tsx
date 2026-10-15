@@ -234,7 +234,9 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	const saveAutoCompact = useLatestCallback((value: TurnSettings["autoCompactWindow"]) => {
 		if (!snapshot) return;
 		setApplyingAutoCompact(true);
-		void commands.chooseStartSettings({ ...snapshot.settings, autoCompactWindow: value }).catch(() => {}).finally(() => setApplyingAutoCompact(false));
+		void commands.chooseStartSettings({ ...snapshot.settings, autoCompactWindow: value })
+			.catch((error) => useUiStore.getState().showGlobalToast("Auto-compact change failed", apiErrorMessage(error), "error"))
+			.finally(() => setApplyingAutoCompact(false));
 	});
 	const agentBusy = controllerBusy || hasRunningTurn || queuedTurnCount > 0;
 	// The restart is only safe while the agent is not working.

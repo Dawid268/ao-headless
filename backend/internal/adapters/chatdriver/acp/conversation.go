@@ -478,6 +478,10 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	if optionsFor != nil {
 		options = optionsFor(settings)
 	}
+	// Each setting the session already has is skipped: some agents take seconds
+	// per change, and a turn would otherwise wait on every one of them. After
+	// session/set_model the list is stale, so everything is sent.
+	catalogStale := false
 	if legacyModel && settings.Model != "" {
 		// A binding may name the model differently from the turn settings.
 		model := settings.Model
@@ -502,11 +506,14 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		if !modelOptionFound {
 			return fmt.Errorf("%w: ACP session does not advertise a model option", ports.ErrChatConfigOptionInvalid)
 		}
-		if err := c.legacyWire.setModel(ctx, sessionID, model); err != nil {
-			if isACPMethodNotFound(err) {
-				return fmt.Errorf("%w: session/set_model %q", ErrACPSetterUnsupported, model)
+		if c.configOptionCurrent("model") != model {
+			if err := c.legacyWire.setModel(ctx, sessionID, model); err != nil {
+				if isACPMethodNotFound(err) {
+					return fmt.Errorf("%w: session/set_model %q", ErrACPSetterUnsupported, model)
+				}
+				return fmt.Errorf("set ACP session model %q: %w", model, err)
 			}
-			return fmt.Errorf("set ACP session model %q: %w", model, err)
+			catalogStale = true
 		}
 		c.applyAcceptedConfigOption("model", ports.ChatConfigOptionValue{Select: model})
 	}
@@ -515,6 +522,9 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			return nil
 		}
 		if (option.ID == "model" && legacyModel) || (option.ID == "mode" && legacyMode) {
+			return nil
+		}
+		if !catalogStale && c.configOptionCurrent(option.ID) == option.Value {
 			return nil
 		}
 		// The models offered do not depend on the model chosen, so an optional one
