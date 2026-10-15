@@ -288,8 +288,8 @@ export function AgentModelPicker({
 			<OptionMenuTrigger
 				ref={management.triggerRef}
 				disabled={disabled && agentSwitch.disabled}
-				aria-label={terminal ? "Agent running in this terminal" : "Agent, model and reasoning effort for the next message"}
-				title={title ?? (terminal ? "Switch to another agent" : "Agent, model and reasoning effort for the next message")}
+				aria-label={terminal ? t("agentSwitch.terminalAgent") : t("agentSwitch.pickerLabel")}
+				title={title ?? (terminal ? t("agentSwitch.switchAnother") : t("agentSwitch.pickerLabel"))}
 				className={cn(TRIGGER_CLASS, terminal ? "w-full justify-start" : undefined)}
 				showCaret={!terminal}
 				data-shortcut-target={terminal ? undefined : "model-picker"}
@@ -298,7 +298,7 @@ export function AgentModelPicker({
 				{loadingModels && !pending && !terminal ? (
 					<span className="flex items-center gap-1.5 text-muted-foreground">
 						<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-						Loading models…
+						{t("settings.models.loading")}
 					</span>
 				) : <>
 				<span className={cn("min-w-0 max-w-[28ch] truncate", shownUltra && !terminal ? "ultra-text" : undefined)}>
@@ -306,8 +306,8 @@ export function AgentModelPicker({
 				</span>
 				{terminal ? <ChevronRight aria-hidden="true" className="ml-auto size-icon-sm shrink-0 text-muted-foreground" /> : (
 					<>
-						{shownFast ? <Zap aria-label="Fast mode" className="size-3 shrink-0 fill-current" /> : null}
-						{shownThinking ? <Brain aria-label="Thinking" className="size-3 shrink-0" /> : null}
+						{shownFast ? <Zap aria-label={t("agentSwitch.fastMode")} className="size-3 shrink-0 fill-current" /> : null}
+						{shownThinking ? <Brain aria-label={t("agentSwitch.thinking")} className="size-3 shrink-0" /> : null}
 						{shownEffort ? <span className={cn("shrink-0", shownUltra ? "ultra-text" : "text-muted-foreground")}>{shownEffort}</span> : null}
 						{mark}
 					</>
@@ -349,8 +349,8 @@ export function AgentModelPicker({
 								>
 									<ProviderMark provider={favorite.harness} className="mr-2 size-3.5" />
 									<span className="min-w-0 truncate">{favorite.label}</span>
-									{favorite.fast ? <Zap aria-label="Fast mode" className="ml-1.5 size-3 shrink-0 fill-current" /> : null}
-									{favorite.thinking ? <Brain aria-label="Thinking" className="ml-1.5 size-3 shrink-0" /> : null}
+									{favorite.fast ? <Zap aria-label={t("agentSwitch.fastMode")} className="ml-1.5 size-3 shrink-0 fill-current" /> : null}
+									{favorite.thinking ? <Brain aria-label={t("agentSwitch.thinking")} className="ml-1.5 size-3 shrink-0" /> : null}
 									{favorite.effortLabel ? <span className="ml-1.5 shrink-0 text-muted-foreground">{favorite.effortLabel}</span> : null}
 									<FavoriteStar starred onToggle={() => toggleModelFavorite(favorite)} />
 								</OptionMenuItem>
@@ -395,7 +395,7 @@ export function AgentModelPicker({
 								{loading && !pending ? (
 									<OptionMenuItem disabled className="gap-2 text-xs text-muted-foreground">
 										<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-										Loading settings
+										{t("agentSwitch.loadingSettings")}
 									</OptionMenuItem>
 								) : null}
 								{settable && !(loading && !pending) && source.efforts.length > 0 ? (
@@ -424,8 +424,8 @@ export function AgentModelPicker({
 							</div>
 							{settable && !(loading && !pending) && (source.fast !== undefined || source.thinking !== undefined) ? (
 								<div className={DIVIDER}>
-									<ToggleRow label="Fast mode" checked={source.fast} onChange={source.onToggleFast} />
-									<ToggleRow label="Thinking" checked={source.thinking} onChange={source.onToggleThinking} />
+									<ToggleRow label={t("agentSwitch.fastMode")} checked={source.fast} onChange={source.onToggleFast} />
+									<ToggleRow label={t("agentSwitch.thinking")} checked={source.thinking} onChange={source.onToggleThinking} />
 								</div>
 							) : null}
 							{extras && !pending ? <div className={DIVIDER}>{extras}</div> : null}
@@ -434,7 +434,7 @@ export function AgentModelPicker({
 									<AutoCompactRow
 										value={pending?.autoCompactWindow}
 										onChange={(value) => pending && onPendingChange({ ...pending, autoCompactWindow: value })}
-										title="When Claude Code compacts the conversation on its own."
+										title={t("agentSwitch.autoCompactHint")}
 									/>
 								</div>
 							) : null}
@@ -598,12 +598,13 @@ function favoriteFor(harness: string, model: PickerModel, chosen: PickerSource |
 
 /** The star at the end of a model row. It shows on hover, and stays once starred. */
 function FavoriteStar({ starred, onToggle }: { starred: boolean; onToggle: () => void }) {
+	const { t } = useTranslation();
 	return (
 		<span
 			role="button"
 			tabIndex={-1}
-			aria-label={starred ? "Remove from favourites" : "Add to favourites"}
-			title={starred ? "Remove from favourites" : "Add to favourites"}
+			aria-label={starred ? t("agentSwitch.removeFavourite") : t("agentSwitch.addFavourite")}
+			title={starred ? t("agentSwitch.removeFavourite") : t("agentSwitch.addFavourite")}
 			// Starring must not also pick the model.
 			onPointerDown={(event) => event.stopPropagation()}
 			onPointerUp={(event) => event.stopPropagation()}
@@ -680,10 +681,11 @@ const AUTO_COMPACT_CHOICES = [{ value: undefined, label: "Auto" }, { value: "200
 
 /** A menu row: where Claude Code compacts on its own. */
 export function AutoCompactRow({ value, disabled, onChange, title }: AutoCompactControl & { title: string }) {
+	const { t } = useTranslation();
 	return (
 		<div className="flex h-9 items-center gap-2 px-3 text-xs" title={title}>
-			<span className="text-muted-foreground">Auto-compact</span>
-			<span role="radiogroup" aria-label="Auto-compact" className="ml-auto flex rounded-md bg-interactive-active p-0.5">
+			<span className="text-muted-foreground">{t("agentSwitch.autoCompact")}</span>
+			<span role="radiogroup" aria-label={t("agentSwitch.autoCompact")} className="ml-auto flex rounded-md bg-interactive-active p-0.5">
 				{AUTO_COMPACT_CHOICES.map((choice) => (
 					<button
 						key={choice.label}

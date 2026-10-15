@@ -64,7 +64,7 @@ export function TerminalSessionMenu({
 				<button
 					type="button"
 					disabled={blocked || providerSwitch.isPending}
-					title={blocked ? "The agent is working. Switch when it is idle." : `Switch this terminal to ${target}`}
+					title={blocked ? t("agentSwitch.busy") : t("agentSwitch.switchTerminalTo", { target })}
 					onClick={switchNow}
 					className="shrink-0 rounded-md bg-primary px-2 py-px text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
 				>
@@ -93,7 +93,7 @@ export function TerminalSessionMenu({
 				{switchAction ? (
 					<DropdownMenuItem disabled={switchAction.disabled} title={switchAction.reason} onSelect={switchAction.run}>
 						<RoundedInterfaceIcon target="chat" className="size-icon-lg" />
-						Switch to chat UI
+						{t("agentSwitch.switchToChat")}
 					</DropdownMenuItem>
 				) : null}
 			</DropdownMenuContent>

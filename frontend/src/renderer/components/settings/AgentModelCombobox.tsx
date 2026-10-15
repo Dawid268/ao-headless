@@ -539,7 +539,7 @@ export function AgentModelCombobox({
 									</OptionMenuItem>
 								))}
 								{variant.family.hasThinkingChoice && variant.family.efforts.length > 1 && <DropdownMenuSeparator />}
-								<ToggleRow label="Thinking" checked={variant.family.hasThinkingChoice ? variant.variant.thinking : undefined} onChange={(thinking) => selectModel(variant.variant.id, { thinking })} />
+								<ToggleRow label={t("agentSwitch.thinking")} checked={variant.family.hasThinkingChoice ? variant.variant.thinking : undefined} onChange={(thinking) => selectModel(variant.variant.id, { thinking })} />
 							</OptionMenuSubContent>
 						</OptionMenuSub>
 					</div>
