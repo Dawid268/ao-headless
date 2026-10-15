@@ -31,6 +31,7 @@ type ArtifactVersionService interface {
 	List(ctx context.Context, id domain.SessionID, relPath string) ([]domain.SessionArtifactVersion, error)
 	ReadVersion(sess domain.SessionRecord, v domain.SessionArtifactVersion) ([]byte, error)
 	RecordSave(ctx context.Context, sess domain.SessionRecord, relPath string) error
+	RecordRestore(ctx context.Context, sess domain.SessionRecord, relPath string, from int64) error
 	Sync(ctx context.Context, sess domain.SessionRecord, relPath string) error
 }
 
@@ -40,6 +41,7 @@ func artifactVersionSummary(v domain.SessionArtifactVersion) ArtifactVersionSumm
 		Size:            v.Size,
 		Source:          string(v.Source),
 		Harness:         string(v.Harness),
+		RestoredFrom:    v.RestoredFrom,
 		FileFingerprint: v.SHA256,
 		CreatedAt:       v.CreatedAt,
 	}
@@ -190,7 +192,7 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 		envelope.WriteError(w, r, err)
 		return
 	}
-	c.recordArtifactSave(r.Context(), sess.SessionRecord, clean)
+	c.recordArtifactSave(r.Context(), sess.SessionRecord, clean, in.Version)
 	envelope.WriteJSON(w, http.StatusOK, ArtifactFileResponse{
 		Path:            clean,
 		Size:            int64(len(content)),
@@ -213,15 +215,23 @@ func (c *SessionsController) writeArtifactSnapshotted(ctx context.Context, sess 
 	return writeArtifactFile(sess.Metadata.ArtifactDir, relPath, expected, content)
 }
 
-// recordArtifactSave notes a save as a user version. The save already
-// happened and its response must not depend on the client staying connected,
-// so it runs on a context that outlives the request. A failure only delays the
-// version: the observer records the content as an agent version on a later tick.
-func (c *SessionsController) recordArtifactSave(ctx context.Context, sess domain.SessionRecord, relPath string) {
+// recordArtifactSave notes a save as a user version, or a restore of version
+// restoredFrom when that is above zero. The write already happened and its
+// response must not depend on the client staying connected, so this runs on a
+// context that outlives the request. A failure only delays the version: the
+// observer records the content as an agent version on a later tick.
+func (c *SessionsController) recordArtifactSave(ctx context.Context, sess domain.SessionRecord, relPath string, restoredFrom int64) {
 	if c.ArtifactVersions == nil {
 		return
 	}
-	if err := c.ArtifactVersions.RecordSave(context.WithoutCancel(ctx), sess, relPath); err != nil {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	if restoredFrom > 0 {
+		err = c.ArtifactVersions.RecordRestore(ctx, sess, relPath, restoredFrom)
+	} else {
+		err = c.ArtifactVersions.RecordSave(ctx, sess, relPath)
+	}
+	if err != nil {
 		slog.Default().Warn("artifact versions: record save failed", "session", sess.ID, "path", relPath, "err", err)
 	}
 }

@@ -39,6 +39,24 @@ func TestRecordSaveStampsTheUserAndReadVersionReturnsTheContent(t *testing.T) {
 	}
 }
 
+func TestRecordRestoreNamesTheVersionItRestored(t *testing.T) {
+	h := newHarness(t)
+	h.write("plan.md", "first")
+	h.tick()
+	h.tick()
+	h.write("plan.md", "second")
+	h.tick()
+	h.tick()
+	h.write("plan.md", "first")
+	if err := h.cap.RecordRestore(h.ctx, h.sess, "plan.md", 1); err != nil {
+		t.Fatalf("RecordRestore: %v", err)
+	}
+	vs := h.versions("plan.md")
+	if len(vs) != 3 || vs[0].Source != domain.ArtifactVersionSourceUser || vs[0].RestoredFrom != 1 || vs[1].RestoredFrom != 0 {
+		t.Fatalf("versions = %+v, want a third, user-written one that restored version 1", vs)
+	}
+}
+
 func TestRecordSaveOfUnchangedContentRecordsNothing(t *testing.T) {
 	h := newHarness(t)
 	h.write("plan.md", "same")

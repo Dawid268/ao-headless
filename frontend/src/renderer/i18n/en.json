@@ -1834,6 +1834,8 @@
 	"artifacts.history.current": "Current",
 	"artifacts.history.you": "You",
 	"artifacts.history.showMore": "Show more",
+	"artifacts.history.restoredFrom": "Restored from {{time}}",
+	"artifacts.history.restoredFromOlder": "Restored from an earlier version",
 	"artifacts.history.empty": "No earlier versions yet.",
 	"artifacts.history.error": "Unable to load version history",
 	"artifacts.history.viewing": "Viewing the version from {{time}}",

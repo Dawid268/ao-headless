@@ -3904,6 +3904,11 @@ export interface components {
             /** @description The agent that was running the session when the version was recorded; absent for older versions. */
             harness?: string;
             path: string;
+            /**
+             * Format: int64
+             * @description The version this one restored, when it is a restore.
+             */
+            restoredFrom?: number;
             /** Format: int64 */
             size: number;
             /**
@@ -3921,6 +3926,11 @@ export interface components {
             fileFingerprint: string;
             /** @description The agent that was running the session when the version was recorded; absent for older versions. */
             harness?: string;
+            /**
+             * Format: int64
+             * @description The version this one restored, when it is a restore.
+             */
+            restoredFrom?: number;
             /** Format: int64 */
             size: number;
             /**

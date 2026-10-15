@@ -146,6 +146,9 @@ type SessionArtifactVersion struct {
 	// Harness is the agent that was running the session when the version was
 	// recorded; empty for a version recorded before this was kept.
 	Harness AgentHarness
+	// RestoredFrom is the version number whose content a restore wrote back;
+	// zero for a version that is not a restore.
+	RestoredFrom int64
 }
 
 // ArtifactVersionSource names who wrote an artifact version.

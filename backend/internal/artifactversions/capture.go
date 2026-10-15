@@ -47,6 +47,15 @@ type versionStore interface {
 	DeleteSessionArtifactVersions(ctx context.Context, id domain.SessionID) error
 }
 
+// writer says who a captured version is attributed to.
+type writer struct {
+	source domain.ArtifactVersionSource
+	// harness is the agent running the session when the version was recorded.
+	harness domain.AgentHarness
+	// restoredFrom is the version a restore wrote back; zero otherwise.
+	restoredFrom int64
+}
+
 // observation is a file's size and modification time as seen on one call.
 type observation struct {
 	size  int64
@@ -146,7 +155,7 @@ func (c *Capturer) CaptureSession(ctx context.Context, sess domain.SessionRecord
 			continue
 		}
 		spent += obs.size
-		captured, err := c.capture(ctx, sess.ID, dir, blobs, f.Path, obs, last, hasLast, domain.ArtifactVersionSourceAgent, sess.Harness)
+		captured, err := c.capture(ctx, sess.ID, dir, blobs, f.Path, obs, last, hasLast, writer{source: domain.ArtifactVersionSourceAgent, harness: sess.Harness})
 		switch {
 		case err != nil:
 			if !errors.Is(err, errUnsettled) {
@@ -168,7 +177,7 @@ func (c *Capturer) CaptureSession(ctx context.Context, sess domain.SessionRecord
 
 // capture snapshots one file. It reports false when the content equals the
 // latest version, which records nothing.
-func (c *Capturer) capture(ctx context.Context, id domain.SessionID, dir string, blobs blobStore, relPath string, obs observation, last domain.SessionArtifactVersion, hasLast bool, source domain.ArtifactVersionSource, harness domain.AgentHarness) (bool, error) {
+func (c *Capturer) capture(ctx context.Context, id domain.SessionID, dir string, blobs blobStore, relPath string, obs observation, last domain.SessionArtifactVersion, hasLast bool, w writer) (bool, error) {
 	file, info, _, err := previewutil.OpenWorkspaceFile(dir, relPath)
 	if err != nil {
 		return false, err
@@ -193,15 +202,16 @@ func (c *Capturer) capture(ctx context.Context, id domain.SessionID, dir string,
 		return false, err
 	}
 	_, pruned, err := c.store.AppendSessionArtifactVersion(ctx, domain.SessionArtifactVersion{
-		SessionID:   id,
-		Path:        relPath,
-		SHA256:      staged.sum,
-		Size:        staged.size,
-		ContentType: contentType(relPath),
-		ModTime:     info.ModTime(),
-		CreatedAt:   c.now().UTC(),
-		Source:      source,
-		Harness:     harness,
+		SessionID:    id,
+		Path:         relPath,
+		SHA256:       staged.sum,
+		Size:         staged.size,
+		ContentType:  contentType(relPath),
+		ModTime:      info.ModTime(),
+		CreatedAt:    c.now().UTC(),
+		Source:       w.source,
+		Harness:      w.harness,
+		RestoredFrom: w.restoredFrom,
 	}, MaxVersionsPerFile)
 	if err != nil {
 		c.removeUnreferenced(ctx, id, blobs, staged.sum)
@@ -234,7 +244,14 @@ func contentType(relPath string) string {
 // to the latest version records nothing. It holds the capture lock, so it
 // cannot interleave with a capture of the same file.
 func (c *Capturer) RecordSave(ctx context.Context, sess domain.SessionRecord, relPath string) error {
-	return c.recordNow(ctx, sess, relPath, domain.ArtifactVersionSourceUser, 0)
+	return c.recordNow(ctx, sess, relPath, writer{source: domain.ArtifactVersionSourceUser, harness: sess.Harness}, 0)
+}
+
+// RecordRestore records the current content of one artifact file as a user
+// version that restored version from, so the history can say where it came
+// from. Otherwise it behaves like RecordSave.
+func (c *Capturer) RecordRestore(ctx context.Context, sess domain.SessionRecord, relPath string, from int64) error {
+	return c.recordNow(ctx, sess, relPath, writer{source: domain.ArtifactVersionSourceUser, harness: sess.Harness, restoredFrom: from}, 0)
 }
 
 // SettleWindow is how long a file must have gone unmodified before Sync
@@ -246,12 +263,12 @@ const SettleWindow = 2 * time.Second
 // SettleWindow. The observer needs two ticks to notice a change; Sync lets a
 // reader of the history see an edit as soon as it settles.
 func (c *Capturer) Sync(ctx context.Context, sess domain.SessionRecord, relPath string) error {
-	return c.recordNow(ctx, sess, relPath, domain.ArtifactVersionSourceAgent, SettleWindow)
+	return c.recordNow(ctx, sess, relPath, writer{source: domain.ArtifactVersionSourceAgent, harness: sess.Harness}, SettleWindow)
 }
 
 // recordNow snapshots one file under the capture lock. A file modified within
 // settle is left for a later call.
-func (c *Capturer) recordNow(ctx context.Context, sess domain.SessionRecord, relPath string, source domain.ArtifactVersionSource, settle time.Duration) error {
+func (c *Capturer) recordNow(ctx context.Context, sess domain.SessionRecord, relPath string, w writer, settle time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	dir := cmp.Or(sess.Metadata.ArtifactDir, sessionartifacts.Dir(c.dataDir, sess.ID))
@@ -280,7 +297,7 @@ func (c *Capturer) recordNow(ctx context.Context, sess domain.SessionRecord, rel
 		return nil
 	}
 	obs := observation{size: info.Size(), mtime: info.ModTime().UnixNano()}
-	if _, err := c.capture(ctx, sess.ID, dir, blobStore{root: root}, relPath, obs, last, len(rows) > 0, source, sess.Harness); err != nil {
+	if _, err := c.capture(ctx, sess.ID, dir, blobStore{root: root}, relPath, obs, last, len(rows) > 0, w); err != nil {
 		return err
 	}
 	delete(c.observed[sess.ID], relPath)

@@ -1614,6 +1614,8 @@
 	"artifacts.history.current": "현재",
 	"artifacts.history.you": "나",
 	"artifacts.history.showMore": "더 보기",
+	"artifacts.history.restoredFrom": "{{time}}에서 복원됨",
+	"artifacts.history.restoredFromOlder": "이전 버전에서 복원됨",
 	"artifacts.history.empty": "이전 버전이 아직 없습니다.",
 	"artifacts.history.error": "버전 기록을 불러오지 못했습니다",
 	"artifacts.history.viewing": "{{time}} 버전 보는 중",

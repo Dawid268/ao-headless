@@ -1642,6 +1642,8 @@
 	"artifacts.history.current": "Atual",
 	"artifacts.history.you": "Você",
 	"artifacts.history.showMore": "Mostrar mais",
+	"artifacts.history.restoredFrom": "Restaurada de {{time}}",
+	"artifacts.history.restoredFromOlder": "Restaurada de uma versão anterior",
 	"artifacts.history.empty": "Ainda não há versões anteriores.",
 	"artifacts.history.error": "Não foi possível carregar o histórico de versões",
 	"artifacts.history.viewing": "Vendo a versão de {{time}}",

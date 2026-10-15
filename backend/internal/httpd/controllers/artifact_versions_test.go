@@ -66,6 +66,14 @@ func (f *fakeArtifactVersions) Sync(_ context.Context, _ domain.SessionRecord, r
 	return nil
 }
 
+func (f *fakeArtifactVersions) RecordRestore(ctx context.Context, sess domain.SessionRecord, relPath string, from int64) error {
+	if err := f.RecordSave(ctx, sess, relPath); err != nil {
+		return err
+	}
+	f.versions[len(f.versions)-1].RestoredFrom = from
+	return nil
+}
+
 func (f *fakeArtifactVersions) RecordSave(_ context.Context, _ domain.SessionRecord, relPath string) error {
 	data, err := os.ReadFile(filepath.Join(f.dir, relPath))
 	if err != nil {
@@ -181,8 +189,8 @@ func TestArtifactVersionRestoreWritesTheFileAndRecordsAUserVersion(t *testing.T)
 		t.Fatalf("file after restore = %q, want v1 agent", data)
 	}
 	last := fake.versions[len(fake.versions)-1]
-	if len(fake.versions) != 3 || last.Version != 3 || last.Source != domain.ArtifactVersionSourceUser {
-		t.Fatalf("versions = %+v, want a third, user-written one", fake.versions)
+	if len(fake.versions) != 3 || last.Version != 3 || last.Source != domain.ArtifactVersionSourceUser || last.RestoredFrom != 1 {
+		t.Fatalf("versions = %+v, want a third, user-written one that restored version 1", fake.versions)
 	}
 
 	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 7, "expectedFileFingerprint": artifactSHA("v1 agent")})

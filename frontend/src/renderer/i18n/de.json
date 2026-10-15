@@ -1614,6 +1614,8 @@
 	"artifacts.history.current": "Aktuell",
 	"artifacts.history.you": "Du",
 	"artifacts.history.showMore": "Mehr anzeigen",
+	"artifacts.history.restoredFrom": "Wiederhergestellt von {{time}}",
+	"artifacts.history.restoredFromOlder": "Von einer früheren Version wiederhergestellt",
 	"artifacts.history.empty": "Noch keine früheren Versionen.",
 	"artifacts.history.error": "Versionsverlauf konnte nicht geladen werden",
 	"artifacts.history.viewing": "Version von {{time}} wird angezeigt",

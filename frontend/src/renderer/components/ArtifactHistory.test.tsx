@@ -52,9 +52,6 @@ describe("ArtifactHistoryMenu", () => {
 		const items = within(menu).getAllByRole("menuitem");
 		expect(items).toHaveLength(4);
 		expect(within(items[0]!).getByText("Current")).toBeTruthy();
-		// "Current" sits right after the time, on the left; the author mark is the last child.
-		const parts = Array.from(items[0]!.children).map((child) => child.textContent);
-		expect(parts[1]).toBe("Current");
 		// The agent shows as its logo (named by the harness), a user save as a lettered avatar.
 		expect(within(items[0]!).getByAltText(/claude/i)).toBeTruthy();
 		// A version saved in the app wears the GitHub account's avatar, named by its username.
@@ -73,6 +70,16 @@ describe("ArtifactHistoryMenu", () => {
 		await userEvent.click(within(menu).getByText("Show more"));
 		expect(within(menu).getAllByRole("menuitem")).toHaveLength(11);
 		expect(within(menu).queryByText("Show more")).toBeNull();
+	});
+
+	it("says where a restored version came from", async () => {
+		const restored = { ...v(3, "user", 200), restoredFrom: 1 };
+		const lost = { ...v(4, "user", 300), restoredFrom: 99 };
+		renderMenu([lost, restored, v(2, "agent", 100), v(1, "agent", 0)]);
+		await userEvent.click(screen.getByRole("button", { name: "Version history" }));
+		const menu = await screen.findByRole("menu");
+		expect(within(menu).getByText(/^Restored from .+\d/)).toBeTruthy();
+		expect(within(menu).getByText("Restored from an earlier version")).toBeTruthy();
 	});
 
 	it("opens the live file from the current row", async () => {

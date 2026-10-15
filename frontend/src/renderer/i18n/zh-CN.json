@@ -1598,6 +1598,8 @@
 	"artifacts.history.current": "当前",
 	"artifacts.history.you": "你",
 	"artifacts.history.showMore": "显示更多",
+	"artifacts.history.restoredFrom": "从 {{time}} 恢复",
+	"artifacts.history.restoredFromOlder": "从更早的版本恢复",
 	"artifacts.history.empty": "还没有更早的版本。",
 	"artifacts.history.error": "无法加载版本历史",
 	"artifacts.history.viewing": "正在查看 {{time}} 的版本",

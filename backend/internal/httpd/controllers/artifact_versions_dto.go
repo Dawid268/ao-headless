@@ -18,6 +18,7 @@ type ArtifactVersionSummary struct {
 	Version         int64     `json:"version"`
 	Size            int64     `json:"size"`
 	Source          string    `json:"source" enum:"agent,user" description:"Who wrote the version: the agent, or the user through a save or restore."`
+	RestoredFrom    int64     `json:"restoredFrom,omitempty" description:"The version this one restored, when it is a restore."`
 	Harness         string    `json:"harness,omitempty" description:"The agent that was running the session when the version was recorded; absent for older versions."`
 	FileFingerprint string    `json:"fileFingerprint" description:"Hex SHA-256 of the version's content."`
 	CreatedAt       time.Time `json:"createdAt"`

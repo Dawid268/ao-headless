@@ -39,6 +39,7 @@ function VersionItem({
 	fallbackHarness,
 	login,
 	onSelect,
+	restoredNote,
 	selected,
 	version,
 }: {
@@ -48,6 +49,8 @@ function VersionItem({
 	/** The user's GitHub username, once known; a version they saved shows their avatar. */
 	login?: string;
 	onSelect: () => void;
+	/** "Restored from …", for a version that came from a restore. */
+	restoredNote?: string;
 	selected: boolean;
 	version: ArtifactVersionSummary;
 }) {
@@ -55,8 +58,13 @@ function VersionItem({
 	const harness = version.harness || fallbackHarness;
 	return (
 		<DropdownMenuItem aria-current={selected ? "true" : undefined} className={cn(selected && "bg-interactive-hover text-foreground")} onSelect={onSelect}>
-			<span className="min-w-0 truncate tabular-nums">{formatVersionTime(version.createdAt)}</span>
-			{current ? <span className="shrink-0 text-caption text-passive">{t("artifacts.history.current")}</span> : null}
+			<span className="flex min-w-0 flex-col">
+				<span className="flex items-baseline gap-2">
+					<span className="min-w-0 truncate tabular-nums">{formatVersionTime(version.createdAt)}</span>
+					{current ? <span className="shrink-0 text-caption text-passive">{t("artifacts.history.current")}</span> : null}
+				</span>
+				{restoredNote ? <span className="truncate text-caption text-passive">{restoredNote}</span> : null}
+			</span>
 			{/* Who wrote it: the agent's logo, or the user's avatar for a save made in the app. One fixed box keeps both the same size and centre. */}
 			<span className="ml-auto flex size-icon-lg shrink-0 items-center justify-center" title={version.source === "user" ? login || t("artifacts.history.you") : undefined}>
 				{version.source === "user" ? (
@@ -115,6 +123,12 @@ export function ArtifactHistoryMenu({
 	const list = versions.data ?? [];
 	const shown = showAll ? list : list.slice(0, VERSIONS_SHOWN);
 	const currentVersion = list[0]?.version;
+	// A restore says which version it came from; the source may have been pruned since.
+	const restoredNoteOf = (version: ArtifactVersionSummary) => {
+		if (!version.restoredFrom) return undefined;
+		const source = list.find((candidate) => candidate.version === version.restoredFrom);
+		return source ? t("artifacts.history.restoredFrom", { time: formatVersionTime(source.createdAt) }) : t("artifacts.history.restoredFromOlder");
+	};
 	return (
 		<DropdownMenu
 			onOpenChange={(open) => {
@@ -159,6 +173,7 @@ export function ArtifactHistoryMenu({
 								key={version.version}
 								login={login}
 								onSelect={() => onSelect(isCurrent ? null : version.version)}
+								restoredNote={restoredNoteOf(version)}
 								selected={isCurrent ? selectedVersion === null : selectedVersion === version.version}
 								version={version}
 							/>

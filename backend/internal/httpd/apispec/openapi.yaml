@@ -11687,6 +11687,10 @@ components:
           type: string
         path:
           type: string
+        restoredFrom:
+          description: The version this one restored, when it is a restore.
+          format: int64
+          type: integer
         size:
           format: int64
           type: integer
@@ -11721,6 +11725,10 @@ components:
           description: The agent that was running the session when the version was
             recorded; absent for older versions.
           type: string
+        restoredFrom:
+          description: The version this one restored, when it is a restore.
+          format: int64
+          type: integer
         size:
           format: int64
           type: integer

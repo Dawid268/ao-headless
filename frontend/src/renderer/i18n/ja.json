@@ -1614,6 +1614,8 @@
 	"artifacts.history.current": "現在",
 	"artifacts.history.you": "あなた",
 	"artifacts.history.showMore": "さらに表示",
+	"artifacts.history.restoredFrom": "{{time}} から復元",
+	"artifacts.history.restoredFromOlder": "以前のバージョンから復元",
 	"artifacts.history.empty": "以前のバージョンはまだありません。",
 	"artifacts.history.error": "バージョン履歴を読み込めませんでした",
 	"artifacts.history.viewing": "{{time}} のバージョンを表示中",
