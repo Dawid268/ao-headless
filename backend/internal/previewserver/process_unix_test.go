@@ -10,10 +10,51 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestPreviewProcessStartTimeKeepsLegacyFormat(t *testing.T) {
+	for _, tc := range []struct{ name, locale, zone string }{
+		{"UTC", "C", "UTC"},
+		{"non-UTC", "C", "Asia/Kolkata"},
+		{"localized", "fr_FR.UTF-8", "Europe/Paris"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.locale)
+			t.Setenv("TZ", tc.zone)
+			want := legacyPSStartTime(t, os.Getpid())
+			if got := previewProcessStartTime(os.Getpid()); got != want {
+				t.Fatalf("process start time = %q, want legacy ps format %q", got, want)
+			}
+		})
+	}
+}
+
+func TestPreviewProcessStartTimeRejectsInvalidPID(t *testing.T) {
+	for _, pid := range []int{-1, 0} {
+		if got := previewProcessStartTime(pid); got != "" {
+			t.Fatalf("process start time for pid %d = %q, want empty identity", pid, got)
+		}
+	}
+}
+
+func legacyPSStartTime(t *testing.T, pid int) string {
+	t.Helper()
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("read legacy process start time: %v", err)
+	}
+	start := strings.TrimSpace(string(out))
+	if start == "" {
+		t.Fatal("legacy ps returned no process start time")
+	}
+	return start
+}
 
 // fakeStartTime is a launch identity that can never match a live process.
 const fakeStartTime = "Thu Jan  1 00:00:00 1970"
@@ -104,10 +145,7 @@ func TestReapPersistedProcessesSkipsLegacyEntriesWithoutStartTime(t *testing.T) 
 // Reap still does its job when the recorded identity checks out.
 func TestReapPersistedProcessesKillsVerifiedProcess(t *testing.T) {
 	cmd := startSleeper(t, "sleep", "60")
-	startTime := previewProcessStartTime(cmd.Process.Pid)
-	if startTime == "" {
-		t.Fatal("could not capture launch identity")
-	}
+	startTime := legacyPSStartTime(t, cmd.Process.Pid)
 
 	dataDir := t.TempDir()
 	registry, err := json.Marshal([]persistedProcess{{

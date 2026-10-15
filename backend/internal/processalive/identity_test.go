@@ -27,11 +27,17 @@ func TestIdentifyInvalidOrCancelled(t *testing.T) {
 		if got := Identify(context.Background(), pid); got != (Identity{}) {
 			t.Fatalf("Identify(%d) = %+v, want zero", pid, got)
 		}
+		if got := StartTime(context.Background(), pid); got != "" {
+			t.Fatalf("StartTime(%d) = %q, want unknown", pid, got)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if got := Identify(ctx, os.Getpid()); got != (Identity{}) {
 		t.Fatalf("cancelled Identify = %+v, want zero", got)
+	}
+	if got := StartTime(ctx, os.Getpid()); got != "" {
+		t.Fatalf("cancelled StartTime = %q, want unknown", got)
 	}
 }
 

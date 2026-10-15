@@ -3,14 +3,15 @@
 package previewserver
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"syscall"
 
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
 func previewCommand(name string, args ...string) *exec.Cmd {
@@ -23,22 +24,9 @@ func previewCommand(name string, args ...string) *exec.Cmd {
 // re-verified as the process AO launched, so no signal was sent.
 var errStalePreviewPID = errors.New("preview pid is stale or recycled; refusing to signal")
 
-// previewProcessStartTime returns the kernel-reported start time of pid as an
-// opaque string (`ps -o lstart=`), or "" when the process does not exist or ps
-// fails. It is captured at launch and compared verbatim before any group
-// signal: a bare PID stops identifying anything the moment the child is
-// reaped, and a group kill on a recycled number destroys an unrelated process
-// family — a tmux server is its own group leader, so one stale group kill
-// took out every tmux session at once (issue #3475).
+// Keep the legacy ps lstart format so saved previews remain verifiable.
 func previewProcessStartTime(pid int) string {
-	if pid <= 0 {
-		return ""
-	}
-	out, err := aoprocess.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return processalive.StartTime(context.Background(), pid)
 }
 
 // previewGroupHasMembers reports whether any process still belongs to process

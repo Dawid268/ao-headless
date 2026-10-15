@@ -6,10 +6,16 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
 )
+
+// StartTime returns the legacy decimal FILETIME token, or "" when unavailable.
+func StartTime(ctx context.Context, pid int) string {
+	return strings.TrimPrefix(Identify(ctx, pid).StartID, "windows:")
+}
 
 func identify(_ context.Context, pid int) Identity {
 	if uint64(pid) > math.MaxUint32 {
