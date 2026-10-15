@@ -48,8 +48,25 @@ export interface paths {
         /** Get the current or last install job for one agent harness */
         get: operations["getAgentInstallStatus"];
         put?: never;
-        /** Start an asynchronous install for one fixed agent harness */
+        /** Start an asynchronous install, reinstall, or update for one fixed agent harness */
         post: operations["startAgentInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open the fixed native logout flow for one agent */
+        post: operations["logoutAgent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -101,6 +118,23 @@ export interface paths {
         put?: never;
         /** Ensure launch-fresh readiness for one agent adapter */
         post: operations["probeAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/update-advisory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare an installed harness version with its known package source */
+        get: operations["getAgentUpdateAdvisory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -548,6 +582,23 @@ export interface paths {
         put?: never;
         /** Dispatch an agent cue to a session or send a command cue to a scoped shell terminal */
         post: operations["invokeCue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/desktop/sessions/{sessionId}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve a session artifact directory for the loopback desktop supervisor */
+        get: operations["getDesktopSessionArtifacts"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1638,6 +1689,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/artifact-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one file from a session's artifact directory and return the session with its refreshed artifact list */
+        delete: operations["deleteSessionArtifactFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/artifact-files/*": {
         parameters: {
             query?: never;
@@ -1927,6 +1995,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/prompt-suggestion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest the next human message after a completed chat turn */
+        post: operations["suggestSessionConversationPrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/queue/reorder": {
         parameters: {
             query?: never;
@@ -1959,6 +2044,247 @@ export interface paths {
         head?: never;
         /** Choose the model, reasoning effort and approval mode for the next turn */
         patch: operations["setSessionConversationTurnSettings"];
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listSessionSideChats"];
+        put?: never;
+        /** Open an independent launch-scoped side chat */
+        post: operations["createSessionConversationSideChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSessionSideChat"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteSessionSideChat"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/approvals/{requestId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveSessionSideChatApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["compactSessionSideChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSessionSideChatDraft"];
+        put: operations["putSessionSideChatDraft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["streamSessionSideChat"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/inputs/{requestId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveSessionSideChatInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/interrupt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["interruptSessionSideQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/label": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["renameSessionSideChat"];
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["sendSessionSideChatQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["recoverSessionSideChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateSessionSideChatSettings"];
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/turns/{turnId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["editSessionQueuedSideQuestion"];
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/turns/{turnId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancelSessionSideQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/side-chats/{sideId}/turns/{turnId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retrySessionSideQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/sessions/{sessionId}/conversation/skills": {
@@ -2858,6 +3184,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Classify a path as a workspace file, a session artifact, or neither */
+        get: operations["resolveSessionWorkspacePath"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/workspace/search": {
         parameters: {
             query?: never;
@@ -2960,6 +3303,23 @@ export interface paths {
         patch: operations["updateCloudOffering"];
         trace?: never;
     };
+    "/api/v1/settings/harness-defaults/{agent}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Choose which models one harness's pickers offer */
+        patch: operations["updateHarnessDefault"];
+        trace?: never;
+    };
     "/api/v1/settings/session-interface": {
         parameters: {
             query?: never;
@@ -3011,6 +3371,54 @@ export interface paths {
         head?: never;
         /** Rename a standalone shell terminal tab */
         patch: operations["renameShellTerminal"];
+        trace?: never;
+    };
+    "/api/v1/side-chats/launch/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claimSideChatLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/side-chats/launch/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retireSideChatLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/side-chats/launch/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportSideChatLaunch"];
+        put?: never;
+        post: operations["recoverSideChatLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/system/github-auth": {
@@ -3556,6 +3964,33 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        AgentAccountIdentity: {
+            email?: string;
+            /** @enum {string} */
+            method?: "account" | "api_key" | "token";
+            name?: string;
+            organization?: string;
+            plan?: string;
+            provider?: string;
+            source?: string;
+            /** @enum {string} */
+            sourceKind?: "environment" | "file" | "command" | "keychain";
+        };
+        AgentAuthDiagnostic: {
+            cached: boolean;
+            /** Format: date-time */
+            checkedAt: string;
+            code: string;
+            /** Format: int64 */
+            durationMs: number;
+            exitCode?: null | number;
+            httpStatus?: number;
+            method: string;
+            nextStep?: string;
+            provider?: string;
+            reason: string;
+            source?: string;
+        };
         AgentAuthPlan: {
             action: string;
             agentId: string;
@@ -3565,13 +4000,16 @@ export interface components {
             guidance?: string;
             /** @enum {string} */
             launchMode: "terminal" | "documentation";
+            logoutCommand?: string;
             reason?: string;
         };
         AgentAuthenticationObservation: {
+            account?: components["schemas"]["AgentAccountIdentity"];
             /** Format: date-time */
             attemptedAt: null | string;
             /** Format: date-time */
             checkedAt: null | string;
+            diagnostics?: components["schemas"]["AgentAuthDiagnostic"][];
             /** @enum {string} */
             freshness: "fresh" | "stale" | "checking";
             reason: string;
@@ -3616,6 +4054,9 @@ export interface components {
             reinstallAvailable: boolean;
             reinstallCommand?: string;
             reinstallReason?: string;
+            updateAvailable: boolean;
+            updateCommand?: string;
+            updateReason?: string;
         };
         AgentInstallPlan: {
             agentId: string;
@@ -3645,9 +4086,12 @@ export interface components {
             agents: components["schemas"]["AgentInstallPlan"][];
         };
         AgentModelInfo: {
+            /** Format: int64 */
+            contextWindow?: number;
             defaultEffort?: string;
             efforts?: string[];
             id: string;
+            inputs?: string[];
             isDefault?: boolean;
             label: string;
             /** Format: date-time */
@@ -3658,6 +4102,7 @@ export interface components {
             agentId: string;
             allowCustom: boolean;
             binaryVersion?: string;
+            configuredProviders?: string[];
             /** @enum {string} */
             customModelEntry: "none" | "direct" | "configured";
             /** Format: date-time */
@@ -3669,6 +4114,7 @@ export interface components {
                 [key: string]: string;
             };
             models: components["schemas"]["AgentModelInfo"][];
+            providers?: string[];
             refreshError?: string;
             refreshRecommended?: boolean;
             /** @enum {string} */
@@ -3722,6 +4168,20 @@ export interface components {
         };
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
+        };
+        AgentUpdateAdvisory: {
+            agentId: string;
+            binaryPath?: string;
+            /** Format: date-time */
+            checkedAt: string;
+            currentVersion?: string;
+            latestVersion?: string;
+            maintenanceMethod?: string;
+            /** @enum {string} */
+            reason?: "ownership_unconfirmed" | "unsupported_source" | "version_unparseable" | "channel_unconfirmed" | "lookup_failed" | "disabled" | "build_unordered";
+            source?: string;
+            /** @enum {string} */
+            status: "unknown" | "current" | "behind_latest" | "ahead_of_latest";
         };
         AppMemoryResponse: {
             /** @description False when there was no earlier sample to measure against: cpuPercent is unknown, not zero. */
@@ -4087,6 +4547,9 @@ export interface components {
             hasBattery: boolean;
             supported: boolean;
         };
+        ControllersKillSessionRequest: {
+            deleteArtifacts?: boolean;
+        };
         ControllersRemoteHostAccountTokenResponse: {
             hostId: string;
             token: string;
@@ -4171,6 +4634,8 @@ export interface components {
             provisionState?: "provisioning" | "ready" | "failed";
             provisionSteps?: components["schemas"]["SessionProvisionStep"][];
             prs: components["schemas"]["SessionPRFacts"][];
+            /** @enum {string} */
+            requestedOutput?: "artifact";
             reviewerConfig?: components["schemas"]["AgentConfig"];
             /** @enum {string} */
             reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "opencode-v2" | "kiro" | "pi" | "agy" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
@@ -4271,6 +4736,7 @@ export interface components {
         ConversationContentSummaryResponse: {
             mimeType?: string;
             name?: string;
+            sourceConversationId?: string;
             sourceMessageId?: string;
             /** Format: int64 */
             sourceRevision?: number;
@@ -4355,6 +4821,13 @@ export interface components {
             status: "pending" | "in_progress" | "completed";
             text: string;
         };
+        ConversationPromptSuggestionRequest: {
+            turnId: string;
+        };
+        ConversationPromptSuggestionResponse: {
+            prompt: string;
+            turnId: string;
+        };
         ConversationRateLimitsPayload: {
             planLabel?: string;
             /** Format: int64 */
@@ -4411,6 +4884,7 @@ export interface components {
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
+            supportsExcerpts?: boolean;
             threadState?: components["schemas"]["ConversationThreadStatePayload"];
             title?: string;
             turns: components["schemas"]["ConversationTurnResponse"][];
@@ -4476,6 +4950,15 @@ export interface components {
             rrule?: string;
             timezone: string;
         };
+        CreateConversationSideChatRequest: {
+            forceNew?: boolean;
+            idempotencyKey: string;
+            label?: string;
+            reference?: components["schemas"]["ConversationExcerptReferenceRequest"];
+        };
+        CreateConversationSideChatResponse: {
+            side: components["schemas"]["SideConversation"];
+        };
         CreateReportRequest: {
             message?: string;
             note?: string;
@@ -4540,6 +5023,10 @@ export interface components {
             orchestratorId?: string;
             workerId: string;
         };
+        DesktopArtifactLocationResponse: {
+            artifactDir: string;
+            sessionId: string;
+        };
         DesktopWorkspaceLocationResponse: {
             sessionId: string;
             workspacePath: string;
@@ -4582,6 +5069,14 @@ export interface components {
             harness: string;
             mode: string;
             reviewId: string;
+        };
+        DomainSideReference: {
+            conversationId: string;
+            messageId: string;
+            /** Format: int64 */
+            revision: number;
+            selection: string;
+            sourceRole: string;
         };
         EditConversationMessageRequest: {
             clientMessageId?: string;
@@ -4692,6 +5187,9 @@ export interface components {
             remoteUrl?: string;
             repoPath: string;
         };
+        HarnessDefault: {
+            disabledModels?: string[];
+        };
         IdentityResponse: {
             apiVersion: number;
             hostId: string;
@@ -4787,6 +5285,7 @@ export interface components {
             runs: components["schemas"]["ReviewRun"][];
         };
         KillSessionResponse: {
+            artifactsDeleted?: boolean;
             cleanupPending?: boolean;
             freed?: boolean;
             ok: boolean;
@@ -5000,6 +5499,7 @@ export interface components {
             hostId: string;
             keepAwake: components["schemas"]["ControllersKeepAwakeStatus"];
             loopbackOnly: boolean;
+            noPublicTunnel: boolean;
             password: string;
             port: number;
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];
@@ -5417,6 +5917,13 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        SendSideQuestionRequest: {
+            attachments?: components["schemas"]["ConversationImageContentRequest"][];
+            clientMessageId: string;
+            references?: components["schemas"]["ConversationExcerptReferenceRequest"][];
+            resources?: components["schemas"]["ConversationResourceContentRequest"][];
+            text: string;
+        };
         SessionActivityResponse: {
             current?: components["schemas"]["SessionStepResponse"];
             recent: components["schemas"]["SessionStepResponse"][];
@@ -5784,6 +6291,9 @@ export interface components {
             cloudOffering: boolean;
             /** @enum {string} */
             defaultSessionMode: "chat" | "tui";
+            harnessDefaults?: {
+                [key: string]: components["schemas"]["HarnessDefault"];
+            };
             localEnabled: boolean;
             trackerIntakeEnabled: boolean;
         };
@@ -5798,6 +6308,178 @@ export interface components {
             sessionId?: string;
             title: string;
             workingDir: string;
+        };
+        SideActivity: {
+            /** Format: date-time */
+            createdAt: string;
+            decisions?: components["schemas"]["SideDecision"][];
+            detail?: unknown;
+            id: string;
+            input?: components["schemas"]["SideInput"];
+            kind: string;
+            requestId?: string;
+            sideId: string;
+            status: string;
+            summary: string;
+            text?: string;
+            turnId: string;
+        };
+        SideChatLaunchClaimRequest: {
+            appRunId: string;
+        };
+        SideChatLaunchState: {
+            appRunId: string;
+            numbers?: {
+                [key: string]: number;
+            };
+            sides: components["schemas"]["SideRecoveryRecord"][];
+        };
+        SideChatListResponse: {
+            sides: components["schemas"]["SideConversation"][];
+        };
+        SideChatSnapshotResponse: {
+            snapshot: components["schemas"]["SideSnapshot"];
+        };
+        SideContent: {
+            data?: string;
+            mimeType?: string;
+            name?: string;
+            text?: string;
+            type: string;
+            uri?: string;
+        };
+        SideConversation: {
+            anchorTurnId?: string;
+            cleanupPending?: boolean;
+            contextMode: string;
+            /** Format: date-time */
+            createdAt: string;
+            effort?: string;
+            errorMessage?: string;
+            hasWork: boolean;
+            id: string;
+            label: string;
+            mainConversationId: string;
+            manualLabel?: boolean;
+            model?: string;
+            recreateRequired?: boolean;
+            selectedText?: string;
+            sessionId: string;
+            sourceMessageId?: string;
+            /** Format: int64 */
+            sourceRevision?: number;
+            state: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SideDecision: {
+            id: string;
+            kind: string;
+            label: string;
+        };
+        SideDraftRequest: {
+            contentJson: string;
+        };
+        SideDraftResponse: {
+            contentJson: string;
+        };
+        SideInput: {
+            message: string;
+            mode: string;
+            schema?: {
+                [key: string]: unknown;
+            };
+            url?: string;
+        };
+        SideLabelRequest: {
+            label: string;
+        };
+        SideMessage: {
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            /** Format: int64 */
+            revision: number;
+            role: string;
+            /** Format: int64 */
+            sequence: number;
+            sideId: string;
+            streaming: boolean;
+            text: string;
+            turnId: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SideQuestionResponse: {
+            turn: components["schemas"]["SideTurn"];
+        };
+        SideRecoveryRecord: {
+            activities: components["schemas"]["SideActivity"][];
+            activityProviderIds?: {
+                [key: string]: string;
+            };
+            boundaryState?: string;
+            boundaryTurnId?: string;
+            cleanupOnly?: boolean;
+            createKey: string;
+            decisionData?: {
+                [key: string]: string[];
+            };
+            draft: string;
+            generation: string;
+            harness: string;
+            hostStopped?: boolean;
+            launchConfig: unknown;
+            messageProviderIds?: {
+                [key: string]: string;
+            };
+            messages: components["schemas"]["SideMessage"][];
+            nativeAnchorId: string;
+            policyVersion: number;
+            providerForkId: string;
+            providerHostId: string;
+            referenceContext: string;
+            referencePending: boolean;
+            seedHistory: string;
+            side: components["schemas"]["SideConversation"];
+            sourceProviderId: string;
+            turns: components["schemas"]["SideRecoveryTurn"][];
+        };
+        SideRecoveryTurn: {
+            content?: components["schemas"]["SideContent"][];
+            dispatchAttempt?: number;
+            providerTurnId?: string;
+            referenceContexts: string[];
+            turn: components["schemas"]["SideTurn"];
+        };
+        SideSettingsRequest: {
+            effort: string;
+            model: string;
+        };
+        SideSnapshot: {
+            activities: components["schemas"]["SideActivity"][];
+            hasMore: boolean;
+            messages: components["schemas"]["SideMessage"][];
+            side: components["schemas"]["SideConversation"];
+            turns: components["schemas"]["SideTurn"][];
+        };
+        SideTurn: {
+            clientMessageId: string;
+            /** Format: date-time */
+            completedAt?: null | string;
+            /** Format: date-time */
+            createdAt: string;
+            errorMessage?: string;
+            id: string;
+            referenceContext?: string;
+            references?: components["schemas"]["DomainSideReference"][];
+            retryOfTurnId?: string;
+            selectionText?: string;
+            sideId: string;
+            /** Format: date-time */
+            startedAt?: null | string;
+            state: string;
+            text: string;
         };
         SpawnOrchestratorRequest: {
             /** @enum {string} */
@@ -5830,6 +6512,8 @@ export interface components {
             projectId?: string;
             prompt?: string;
             /** @enum {string} */
+            requestedOutput?: "artifact";
+            /** @enum {string} */
             trackerProvider?: "github" | "gitlab";
         };
         SpawnSessionResponse: {
@@ -5852,13 +6536,15 @@ export interface components {
             terminalInput?: string;
         };
         StartAgentInstallRequest: {
-            /** @description Server-issued installation method id. Omit to use the recommended viable method. */
+            /** @description For updates, the available version explicitly approved by the user. The update must reach it. It is installed only when it lies between the installed version and the latest release AO found; otherwise that latest release is installed. A version at or below the installed one, or one sent with another operation, is rejected with INVALID_UPDATE_VERSION. */
+            expectedVersion?: string;
+            /** @description Server-issued installation method id. Omit to use the recommended viable method for an install or reinstall, and the method that owns the installed copy for an update. */
             method?: string;
             /**
              * @description Requested operation. Defaults to install for older clients.
              * @enum {string}
              */
-            operation?: "install" | "reinstall";
+            operation?: "install" | "reinstall" | "update";
         };
         StartCodexAccountSwitchRequest: {
             /** @deprecated */
@@ -6327,6 +7013,9 @@ export interface components {
         UpdateChatHibernationRequest: {
             enabled: null | boolean;
         };
+        UpdateHarnessDefaultRequest: {
+            disabledModels: null | string[];
+        };
         UpdateProjectSettingsInput: {
             config: components["schemas"]["ProjectConfig"];
             displayName: string;
@@ -6531,6 +7220,12 @@ export interface components {
             summary: components["schemas"]["WorkspaceSummary"];
             truncated: boolean;
             workspaceVersion: string;
+        };
+        WorkspacePathResolutionResponse: {
+            /** @enum {string} */
+            kind: "workspace" | "artifact" | "outside";
+            path: string;
+            sessionId: string;
         };
         WorkspaceRepo: {
             gitStatus?: string;
@@ -6756,9 +7451,61 @@ export interface operations {
             };
         };
     };
+    logoutAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartAgentAuthResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getAgentModels: {
         parameters: {
             query?: {
+                /** @description Return catalog facts without reading session history for model recency. Cached catalogs are served while discovery refreshes in the background. */
+                catalogOnly?: boolean;
                 /** @description Optional project identifier used as the model-catalog cache scope. */
                 projectId?: string;
             };
@@ -6821,6 +7568,8 @@ export interface operations {
     refreshAgentModels: {
         parameters: {
             query?: {
+                /** @description Refresh the Harness Settings browsing catalog without session-history enrichment; FX includes all connections in a separate cache. */
+                catalogOnly?: boolean;
                 /** @description Optional project identifier used as the model-catalog cache scope. */
                 projectId?: string;
                 /** @description When true, compare executable and config metadata before running discovery. */
@@ -6901,6 +7650,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProbeAgentResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentUpdateAdvisory: {
+        parameters: {
+            query?: {
+                /** @description Re-probe the installed binary, ownership and latest release instead of reusing cached advisory evidence. */
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentUpdateAdvisory"];
                 };
             };
             /** @description Bad Request */
@@ -8621,6 +9423,56 @@ export interface operations {
             };
             /** @description Request Entity Too Large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getDesktopSessionArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesktopArtifactLocationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12448,6 +13300,59 @@ export interface operations {
             };
         };
     };
+    deleteSessionArtifactFile: {
+        parameters: {
+            query?: {
+                /** @description Artifact-directory-relative file path, as listed in the session's artifactFiles. */
+                path?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getSessionArtifactFile: {
         parameters: {
             query?: {
@@ -13522,6 +14427,87 @@ export interface operations {
             };
         };
     };
+    suggestSessionConversationPrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationPromptSuggestionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationPromptSuggestionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     reorderQueuedSessionConversationTurns: {
         parameters: {
             query?: never;
@@ -13655,6 +14641,692 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionSideChats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideChatListResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createSessionConversationSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConversationSideChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateConversationSideChatResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionSideChat: {
+        parameters: {
+            query?: {
+                /** @description Read side turns older than this RFC3339 timestamp. */
+                before?: string;
+                limit?: null | number;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideChatSnapshotResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    deleteSessionSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resolveSessionSideChatApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+                /** @description Provider approval request identifier. Zero is a legitimate value. */
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveConversationApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    compactSessionSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactConversationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionSideChatDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideDraftResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putSessionSideChatDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamSessionSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resolveSessionSideChatInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+                /** @description Provider approval request identifier. Zero is a legitimate value. */
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveConversationInputRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    interruptSessionSideQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    renameSessionSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideLabelRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    sendSessionSideChatQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendSideQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideQuestionResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    recoverSessionSideChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateSessionSideChatSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    editSessionQueuedSideQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendSideQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelSessionSideQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    retrySessionSideQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Independent side chat identifier. */
+                sideId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14665,7 +16337,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ControllersKillSessionRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -17604,6 +19280,68 @@ export interface operations {
             };
         };
     };
+    resolveSessionWorkspacePath: {
+        parameters: {
+            query: {
+                /** @description Absolute or workspace-relative file path to classify. */
+                path: string;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacePathResolutionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     searchSessionWorkspaceFiles: {
         parameters: {
             query: {
@@ -17913,6 +19651,69 @@ export interface operations {
             };
         };
     };
+    updateHarnessDefault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateHarnessDefaultRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     updateSessionInterface: {
         parameters: {
             query?: never;
@@ -18173,6 +19974,128 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    claimSideChatLaunch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideChatLaunchClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    retireSideChatLaunch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideChatLaunchClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    exportSideChatLaunch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideChatLaunchState"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    recoverSideChatLaunch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SideChatLaunchState"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

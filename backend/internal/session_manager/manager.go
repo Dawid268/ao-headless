@@ -54,6 +54,9 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrArtifactOutputUnavailable rejects an artifact-output spawn when the
+	// daemon has no data dir to hold the session's artifact directory.
+	ErrArtifactOutputUnavailable = errors.New("session: artifact output requires an artifact directory")
 	// ErrHarnessInstallActive prevents launch while the harness executable is replaced.
 	ErrHarnessInstallActive = errors.New("session: harness install active")
 	// ErrUnsupportedModel means the requested model is not supported by the
@@ -125,6 +128,9 @@ var (
 	// older terminal generation and the currently visible TUI has not confirmed
 	// that it resumed the same provider conversation yet.
 	ErrNativeConversationUnverified = errors.New("session: native conversation id is not confirmed for the current terminal launch")
+	// ErrInterfaceWorkspaceUnavailable means the session's start failed before
+	// its workspace existed, so no controller can run there until it restarts.
+	ErrInterfaceWorkspaceUnavailable = errors.New("session: workspace was never set up")
 	// ErrInterfaceAlreadySelected makes a stale/double switch request an explicit
 	// conflict instead of leaking a generic 500 after the first switch commits.
 	ErrInterfaceAlreadySelected = errors.New("session: requested interface is already selected")
@@ -579,6 +585,14 @@ func (m *Manager) SetHarnessUseGate(gate HarnessUseGate) {
 	m.harnessUseGate = gate
 }
 
+// TryBeginHarnessUse exposes the late-bound installer interlock to launchers
+// built alongside the manager, such as reviewers. Without an installer it
+// always succeeds.
+func (m *Manager) TryBeginHarnessUse(harness domain.AgentHarness) (func(), bool) {
+	release, err := m.beginHarnessUse(harness)
+	return release, err == nil
+}
+
 func (m *Manager) beginHarnessUse(harness domain.AgentHarness) (func(), error) {
 	if m.harnessUseGate == nil {
 		return func() {}, nil
@@ -915,6 +929,9 @@ func New(d Deps) *Manager {
 // materialization fails the still-seed row is deleted outright; a later failure
 // parks the row as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+	if cfg.RequestedOutput == domain.RequestedOutputArtifact && m.artifactDir("") == "" {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", ErrArtifactOutputUnavailable)
+	}
 	if cfg.ClientRequestID != "" {
 		existing, found, err := m.store.GetSessionByClientRequestID(ctx, cfg.ClientRequestID)
 		if err != nil {
@@ -1033,8 +1050,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			cfg.AgentConfigResolved = true
 		}
 	}
-	if mode == domain.SessionModeTUI && cfg.Harness == domain.HarnessClaudeCode {
-		resolved, err := m.resolveAgentConfig(ctx, cfg, project.Config)
+	if mode == domain.SessionModeTUI && (cfg.Harness == domain.HarnessClaudeCode || cfg.Harness == domain.HarnessCodex) {
+		resolved, err := m.resolveTUIAgentConfig(ctx, cfg, project.Config, agentConfig)
 		if err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 		}
@@ -1222,6 +1239,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			branch:            branch,
 			prompt:            appendAttachmentReferences(prompt, spawnAttachmentRefs(cfg.Attachments)),
 			systemPrompt:      systemPrompt,
+			systemPromptFile:  systemPromptFile,
 			promptBytes:       promptBytes,
 			systemPromptBytes: systemPromptBytes,
 			preparation:       prep,
@@ -1304,6 +1322,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			workspaceProject: workspaceProject,
 			prompt:           prompt,
 			systemPrompt:     systemPrompt,
+			systemPromptFile: systemPromptFile,
 		})
 		if err != nil {
 			return domain.SessionRecord{}, 0, 0, err
@@ -1513,6 +1532,23 @@ func replayClientRequest(rec domain.SessionRecord, hash string) (domain.SessionR
 		return domain.SessionRecord{}, ErrClientRequestIncomplete
 	}
 	return rec, nil
+}
+
+// resolveTUIAgentConfig validates a terminal launch against the model
+// catalog. Claude Code requires it. The Codex CLI validates its own model and
+// effort, so for Codex the catalog only refines the launch: when it is
+// unavailable, stale, lacks a custom model or lists other efforts, the session
+// launches with the unvalidated config, as it would without a catalog.
+func (m *Manager) resolveTUIAgentConfig(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectConfig, unvalidated ports.AgentConfig) (ports.AgentConfig, error) {
+	resolved, err := m.resolveAgentConfig(ctx, cfg, project)
+	// Only the spawn's own cancellation stops the launch; a catalog lookup's
+	// internal timeout is one more way the catalog can be unavailable.
+	if err == nil || cfg.Harness != domain.HarnessCodex || ctx.Err() != nil {
+		return resolved, err
+	}
+	m.logger.Warn("spawn: Codex model catalog could not validate the launch; leaving it to the CLI",
+		"model", unvalidated.Model, "effort", unvalidated.Effort, "error", err)
+	return unvalidated, nil
 }
 
 func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectConfig) (ports.AgentConfig, error) {
@@ -2249,17 +2285,8 @@ func resolvedModelForMetadata(harness domain.AgentHarness, effective, adapter po
 // static catalog. Dynamic catalogs and direct-entry agents defer authoritative
 // model validation to the selected agent at launch time.
 func validateSpawnModel(harness domain.AgentHarness, model string) error {
-	if strings.TrimSpace(model) == "" {
+	if modelcatalog.Accepts(string(harness), model) {
 		return nil
-	}
-	catalog := modelcatalog.Base(string(harness))
-	if catalog.AllowCustom || len(catalog.Models) == 0 {
-		return nil
-	}
-	for _, item := range catalog.Models {
-		if strings.EqualFold(item.ID, model) {
-			return nil
-		}
 	}
 	return fmt.Errorf("model %q is not supported by harness %q", model, harness)
 }
@@ -2457,10 +2484,15 @@ func (m *Manager) kill(ctx context.Context, id domain.SessionID, backgroundClean
 	}
 
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
-		if errors.Is(err, errAgentOperationInProgress) {
-			err = ErrSwitchInProgress
+		if !errors.Is(err, errAgentOperationInProgress) {
+			return KillResult{}, fmt.Errorf("kill %s: %w", id, err)
 		}
-		return KillResult{}, fmt.Errorf("kill %s: %w", id, err)
+		// Only a switch parked on an unconfirmed source restore yields: nothing
+		// is running for it, and Kill is the way out. A switch still executing
+		// keeps the session busy.
+		if !m.sourceRestoreQuarantined(ctx, id) || !m.claimRetainedAgentSwitchForKill(id) {
+			return KillResult{}, fmt.Errorf("kill %s: %w", id, ErrSwitchInProgress)
+		}
 	}
 	releaseOperation := func() { m.endAgentOperation(id, agentOperationKill) }
 	defer func() {
@@ -2520,6 +2552,9 @@ func (m *Manager) kill(ctx context.Context, id domain.SessionID, backgroundClean
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return KillResult{}, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
+	}
+	if err := m.settleSourceRestoreQuarantineOnKill(ctx, rec); err != nil {
+		return KillResult{}, fmt.Errorf("kill %s: agent switch: %w", id, err)
 	}
 	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
 		return KillResult{}, fmt.Errorf("kill %s: reviewer: %w", id, err)
@@ -3259,7 +3294,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	}
 	// Recompute standing instructions, then reapply the durable finalized inbound
 	// handoff for this exact native conversation when one exists.
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.ID, false)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.ID, rec.RequestedOutput, false)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
@@ -5210,6 +5245,7 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
 		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Harness, cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
+		RequestedOutput:   cfg.RequestedOutput,
 		OutputType:        domain.SessionOutputNone,
 		AutoReviewEnabled: projectConfig.AutoReview,
 		AutoInjectReview:  true,
@@ -5416,7 +5452,7 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 // empty input box rather than receiving an auto-generated kickoff turn.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig, sessionID domain.SessionID) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
-	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID, sessionID, domain.NormalizeSessionMode(cfg.RequestedMode) == domain.SessionModeChat)
+	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID, sessionID, cfg.RequestedOutput, domain.NormalizeSessionMode(cfg.RequestedMode) == domain.SessionModeChat)
 	if err != nil {
 		return "", "", err
 	}
@@ -5429,7 +5465,8 @@ func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig, se
 // that is active now, not the one from its original spawn.
 // buildSystemPrompt assembles the standing instructions. chat says whether the
 // agent runs as a chat session, the only mode with the html tools and ao render.
-func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID, sessionID domain.SessionID, chat bool) (string, error) {
+// requestedOutput is the deliverable requested at spawn.
+func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID, sessionID domain.SessionID, requestedOutput domain.RequestedOutput, chat bool) (string, error) {
 	project, err := m.loadProject(ctx, projectID)
 	if err != nil {
 		return "", err
@@ -5486,6 +5523,9 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	}
 	if artifactPrompt := strings.TrimSpace(m.artifactPrompt(sessionID, chat)); artifactPrompt != "" {
 		cfg.AdditionalSections = append(cfg.AdditionalSections, artifactPrompt)
+	}
+	if kind == domain.KindWorker && requestedOutput == domain.RequestedOutputArtifact {
+		cfg.AdditionalSections = append(cfg.AdditionalSections, artifactOutputPrompt)
 	}
 	return buildSystemPromptText(cfg), nil
 }
@@ -5653,6 +5693,12 @@ func (m *Manager) artifactPrompt(id domain.SessionID, chat bool) string {
 		"Routine test logs, command output, scratch notes, and intermediate diagnostics are working material, not deliverables. Keep them out of report attachments unless requested or needed to explain an actionable failure. Prefer one consolidated deliverable over many diagnostic files. " +
 		"This directory is local storage. Saving a file here or attaching its reference to an AO report does not authorize external publishing; follow the user's publishing scope."
 }
+
+// artifactOutputPrompt is added for a session spawned with the artifact output
+// kind.
+const artifactOutputPrompt = "## Artifact Output\n\n" +
+	"The user's request in this session is for an artifact. Write the finished deliverable as a file in the session artifact directory: HTML for visual work such as pages, dashboards, and diagrams; Markdown for documents. " +
+	"Do not open a pull request, and do not commit the deliverable to the git workspace. If the request is unclear, ask the user what the artifact should contain before writing it."
 
 func (m *Manager) cleanupSystemPromptDir(id domain.SessionID) {
 	dir := m.systemPromptDir(id)

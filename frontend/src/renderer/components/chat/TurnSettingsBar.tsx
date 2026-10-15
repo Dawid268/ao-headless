@@ -33,7 +33,7 @@ import {
 import { fallbackEffort, useApplyEffortDefault } from "../../lib/effort";
 import { cn } from "../../lib/utils";
 import { effortDisplayLabel, EffortMenuItems, EffortPicker, formatEffortLabel } from "../settings/EffortPicker";
-import { agentModelDisplayLabel, isDefaultPlaceholderLabel, splitClaudeModels } from "../../lib/agent-model-choices";
+import { agentModelDisplayLabel, claudeChoiceModel, isDefaultPlaceholderLabel, splitClaudeModels } from "../../lib/agent-model-choices";
 import { Switch } from "../ui/switch";
 import { ModelMenuChoices } from "./ModelMenuChoices";
 import type {
@@ -356,19 +356,11 @@ export function TurnSettingsBar({
 
 /**
  * The provider's model option offers family aliases ("opus") and bare ids. The new-task
- * picker names them by version, so the chat does too: an alias is the newest model of
- * its family in the catalog, and an id is its catalog entry.
+ * picker names them by version, so the chat does too.
  */
 function claudeChoiceLabels(catalog: { id: string; displayName: string }[]) {
-	if (catalog.length === 0) return undefined;
-	const entries = catalog.map((model) => ({ id: model.id, label: model.displayName }));
-	const newest = splitClaudeModels(entries).current;
-	return (value: string): string | undefined => {
-		const id = value.replace(/\[.*?\]$/, "").toLowerCase();
-		const exact = entries.find((model) => model.id.toLowerCase() === id);
-		if (exact) return exact.label;
-		return newest.find((model) => model.id.toLowerCase().includes(`-${id}-`) || model.label.toLowerCase().startsWith(id))?.label;
-	};
+	const choiceModel = claudeChoiceModel(catalog.map((model) => ({ id: model.id, label: model.displayName })));
+	return choiceModel && ((value: string) => choiceModel(value)?.label);
 }
 
 function ModelEffortPicker({
@@ -419,6 +411,7 @@ function ModelEffortPicker({
 					showCaret={false}
 					disabled={disabled}
 					aria-label="Model and reasoning effort for the next turn"
+					data-shortcut-target="model-picker"
 					title={
 						reroute
 							? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}${
@@ -439,7 +432,7 @@ function ModelEffortPicker({
 						/>
 					) : null}
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" className={CHAT_MENU_CLASS}>
+			<OptionMenuContent align="start" className={CHAT_MENU_CLASS} onCloseAutoFocus={restoreComposerFocus}>
 				<OptionMenuSub>
 					<OptionMenuSubTrigger label="Model" value={modelLabel} />
 					{/* Scroll on an inner strip: the surface utility caps height but wheel
@@ -563,12 +556,13 @@ function ClubbedConfigPicker({
 					showCaret={false}
 					disabled={disabled}
 					aria-label="Model and reasoning effort for the next turn"
+					data-shortcut-target="model-picker"
 					title="Model and reasoning effort for the next turn"
 					className={TRIGGER_CLASS}
 				>
 					<span className="min-w-0 max-w-[38ch] truncate">{groupLabel}</span>
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" className={CHAT_MENU_CLASS}>
+			<OptionMenuContent align="start" className={CHAT_MENU_CLASS} onCloseAutoFocus={restoreComposerFocus}>
 				{modelOptions.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} scrollable groupClaude={groupClaude} />
 				))}
@@ -662,6 +656,18 @@ function PlanModeToggle({
 	);
 }
 
+// ⌘⇧M opens the model menu from the composer, so closing it (Esc or a choice)
+// hands focus back to the composer instead of leaving it on the trigger.
+function restoreComposerFocus(event: Event) {
+	const trigger = document.querySelector<HTMLElement>("[data-shortcut-target='model-picker'][data-shortcut-opened]");
+	if (!trigger) return;
+	delete trigger.dataset.shortcutOpened;
+	const composer = document.querySelector<HTMLElement>('[aria-label="Message the agent"]');
+	if (!composer || composer.getAttribute("aria-disabled") === "true") return;
+	event.preventDefault();
+	composer.focus();
+}
+
 function ConfigToggle({
 	option,
 	onChange,
@@ -696,16 +702,20 @@ function MenuToggle({
 }) {
 	return (
 		<OptionMenuItem
-			onSelect={(event) => event.preventDefault()}
+			// Keep the menu open so several toggles can be flipped, and make Enter on
+			// the focused row do what clicking its switch does.
+			onSelect={(event) => {
+				event.preventDefault();
+				onCheckedChange(!checked);
+			}}
 			className="justify-between gap-4 px-3 py-2 text-xs"
 		>
 			<span>{label}</span>
 			<Switch
 				aria-label={label}
 				checked={checked}
-				onPointerDown={(event) => event.stopPropagation()}
-				onClick={(event) => event.stopPropagation()}
-				onCheckedChange={onCheckedChange}
+				// Presentational: the row owns the toggle so a click or Enter fires once.
+				tabIndex={-1}
 			/>
 		</OptionMenuItem>
 	);

@@ -1,3 +1,7 @@
+import { createPortal } from "react-dom";
+import { useIndependentSideChats } from "./IndependentSideChats";
+import type { ChatDraftExcerptReference } from "../../lib/chat-drafts";
+import { useSideChatsAvailable } from "../../lib/side-chats";
 /**
  * The central surface for a chat-mode session.
  *
@@ -8,7 +12,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -20,6 +24,7 @@ import { useObservedAgentSwitchLifecycle } from "../../hooks/useObservedAgentSwi
 import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../../hooks/useAgentSwitchVisibility";
 import { useQuery } from "@tanstack/react-query";
 import { agentModelsQueryOptions } from "../../hooks/useAgentModelsQuery";
+import { useOfferedModels } from "../../hooks/useOfferedModels";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
 	useConversation,
@@ -31,8 +36,10 @@ import {
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
 import { useAgentSwitchProviderCatalogs } from "../../hooks/useAgentSwitchProviderCatalogs";
+import { useConversationPromptSuggestion } from "../../hooks/useConversationPromptSuggestion";
 import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
+import { claudeChoiceModel } from "../../lib/agent-model-choices";
 import { isWebLink, isWorkspaceHtmlLink } from "../../lib/external-link-policy";
 import { sessionUiKey } from "../../lib/hosts";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
@@ -92,6 +99,7 @@ function firstBrowserLink(text: string, workspacePaths: string[]): string | unde
 }
 
 export const SessionChatSurface = memo(function SessionChatSurface({
+	sideChatContainer,
 	session,
 	hostId,
 	assetBaseUrl,
@@ -134,6 +142,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	arriving,
 	onConversationWorkChange,
 }: {
+	sideChatContainer?: HTMLDivElement | null;
 	session: WorkspaceSession;
 	/** Owning daemon for a remote session; omitted for the local daemon. */
 	hostId?: string;
@@ -213,6 +222,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 		pendingAcceptedTurnId,
 	} = commands;
 	const conversationWorkKnown = Boolean(snapshot);
+	const [sideWork, setSideWork] = useState(false);
 	const acceptedLocalTurnObserved = Boolean(
 		pendingAcceptedTurnId && snapshot?.turns.some((turn) => turn.id === pendingAcceptedTurnId),
 	);
@@ -245,8 +255,8 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	}, [acknowledgeLocalEcho, localEchos, snapshot]);
 	useEffect(() => {
 		if (!conversationWorkKnown) return;
-		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
-	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
+		onConversationWorkChange?.({ controllerBusy: controllerBusy || sideWork, hasRunningTurn: hasRunningTurn || sideWork, queuedTurnCount });
+	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount, sideWork]);
 	const targetChatControllerReady =
 		snapshot?.harness === session.provider &&
 		(snapshot.controller?.state === "ready" || snapshot.controller?.state === "busy");
@@ -365,7 +375,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	// Claude's live list is family aliases; the new-task picker's catalog carries the versions.
 	const isClaude = snapshot?.harness === "claude-code";
 	const claudeCatalog = useQuery({ ...agentModelsQueryOptions("claude-code", "", hostId), enabled: isClaude }).data;
-	const models = useMemo(() => {
+	const catalogModels = useMemo(() => {
 		if (!isClaude || !claudeCatalog?.models.length) return controllerModels;
 		return claudeCatalog.models
 			.filter((model) => model.id.toLowerCase() !== "default")
@@ -375,6 +385,39 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				default: Boolean(model.isDefault),
 			}));
 	}, [isClaude, claudeCatalog, controllerModels]);
+	// A provider's own model option (ACP config) replaces the native list above,
+	// so the same setting narrows its choices; other options pass through as is.
+	const providerModelOption = configOptions.options?.find(
+		(option) => option.type === "select" && (option.category === "model" || option.id === "model"),
+	);
+	const providerModelChoices = useMemo(
+		() => providerModelOption?.choices.map((choice) => ({ id: choice.value })),
+		[providerModelOption],
+	);
+	// Resolve current Claude aliases before filtering so their labels cannot move
+	// to an older enabled model when the current concrete entry is switched off.
+	const resolveClaudeChoice = useMemo(
+		() => isClaude && claudeCatalog ? claudeChoiceModel(claudeCatalog.models) : undefined,
+		[isClaude, claudeCatalog],
+	);
+	const currentModels = [snapshot?.settings?.model, providerModelOption?.currentValue];
+	const { models } = useOfferedModels(snapshot?.harness, catalogModels, {
+		hostId,
+		keep: [...currentModels, ...currentModels.map((id) => id ? resolveClaudeChoice?.(id)?.id : undefined)],
+	});
+	// Claude's choices are family aliases ("sonnet"); Settings names catalog ids.
+	const claudeChoiceID = useMemo(
+		() => resolveClaudeChoice && ((choice: { id: string }) => resolveClaudeChoice(choice.id)?.id ?? choice.id),
+		[resolveClaudeChoice],
+	);
+	const { models: offeredProviderModels } = useOfferedModels(snapshot?.harness, providerModelChoices, { hostId, keep: [providerModelOption?.currentValue], modelID: claudeChoiceID });
+	const offeredConfigOptions = useMemo(() => {
+		if (!providerModelOption) return configOptions.options;
+		const offered = new Set(offeredProviderModels.map((choice) => choice.id));
+		return configOptions.options?.map((option) => option === providerModelOption
+			? { ...option, choices: option.choices.filter((choice) => offered.has(choice.value)) }
+			: option);
+	}, [configOptions.options, offeredProviderModels, providerModelOption]);
 	const { skills } = useConversationSkills(
 		session.id,
 		Boolean(controllerCatalogsEnabled && catalogsEnabled && snapshot),
@@ -382,7 +425,39 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	);
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot), hostId);
 	const stageAttachments = useStageAttachments(session.id, hostId);
-	const openLinkInBrowser = useSessionBrowserLink(session, onOpenLinkInBrowser, paths);
+	const [annotationNavigationRequest, setAnnotationNavigationRequest] = useState<{ id: string; text: string; messageId?: string; revision?: number }>();
+	const sideEnabled = useSideChatsAvailable(session, hostId) && !unavailable;
+	const sideCreationEnabled = sideEnabled && Boolean(snapshot && can(snapshot, "resume"));
+	const openSideInspector = () => {
+		const ui = useUiStore.getState();
+		ui.setInspectorView(uiSessionId, "sideChat");
+		ui.setInspectorOpen(uiSessionId, true);
+	};
+	const sideChats = useIndependentSideChats(
+		session.id, models, skills, stageAttachments, Boolean(snapshot && can(snapshot, "images")), sideEnabled,
+		(annotation) => {
+			onSelectChat?.();
+			setAnnotationNavigationRequest({ ...annotation, id: crypto.randomUUID() });
+		},
+		() => useUiStore.getState().setInspectorOpen(uiSessionId, false),
+		sideCreationEnabled,
+	);
+	useEffect(() => { if (sideChatContainer) sideChats.show(); }, [sideChatContainer]);
+	useEffect(() => setSideWork(sideChats.sides.some((side) => side.hasWork)), [sideChats.sides]);
+	const attachToSide = async (excerpt: ChatDraftExcerptReference) => {
+		openSideInspector();
+		if (sideChats.activeId) {
+			sideChats.addReference(sideChats.activeId, excerpt);
+			sideChats.show(sideChats.activeId);
+		} else {
+			await sideChats.create(excerpt);
+		}
+	};
+
+	const openLinkInBrowser = useSessionBrowserLink(session, onOpenLinkInBrowser, paths, onOpenFile);
+	// Links opened on the user's behalf stay quiet about a file the session does
+	// not own; only a click earns the explanation in the file pane.
+	const autoOpenLinkInBrowser = useSessionBrowserLink(session, onOpenLinkInBrowser, paths);
 	const openSessionLink = useSessionLinkNavigation(hostId);
 	const conversationLinkBaselines = useRef(new Map<string, ConversationLinkBaseline>());
 	useEffect(() => {
@@ -435,11 +510,11 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 			if (url) {
 				autoOpenedLinkSessions.add(uiSessionId);
 				pendingCompleted.delete(item.id);
-				openLinkInBrowser(url);
+				autoOpenLinkInBrowser(url);
 				break;
 			}
 		}
-	}, [isLoading, openLinkInBrowser, paths, snapshot, uiSessionId]);
+	}, [autoOpenLinkInBrowser, isLoading, paths, snapshot, uiSessionId]);
 	const observedSuccessfulSwitch = Boolean(
 		agentSwitch &&
 			observedSettledSwitchId === agentSwitch.id &&
@@ -460,6 +535,15 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
+	const promptSuggestion = useConversationPromptSuggestion(snapshot, Boolean(
+		targetChatControllerReady && !controllerBusy && !localEchos.length &&
+		!commands.rollbackPending && !commands.editMessagePending && !commands.activateBranchPending && !commands.compacting &&
+		!session.isTerminated && session.provisionState !== "failed" && session.provisionState !== "provisioning" &&
+		!isLoading && !error && !refreshError && !unavailable &&
+		!agentSwitching && !switchLocksChat && !handoffDialogOpen &&
+		!controllerTransitioning && !agentResuming && !newWorkDisabled && !arriving &&
+		!workspaceFileActive && !workspaceActiveTabKey && !reviewerTarget && !reviewerChatSelected && !shellTarget,
+	), hostId);
 	const renderShellFallback = Boolean(shellTarget && session);
 	// A switch from the terminal shows the chat before the daemon has a
 	// conversation to read. The starting snapshot stands in for the whole
@@ -540,12 +624,16 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	return (
 		<div className="relative h-full min-h-0">
 			{refreshError ? <p role="alert" className="px-4 py-2 text-xs text-destructive">{refreshError}</p> : null}
+			{sideChatContainer ? createPortal(sideChats.panel, sideChatContainer) : null}
 			<ChatWorkspace
+				onAddToSideChat={sideEnabled && (sideChats.activeId || sideCreationEnabled) ? attachToSide : undefined}
+				annotationNavigationRequest={annotationNavigationRequest}
 				key={uiSessionId}
 				uiSessionId={uiSessionId}
 				assetBaseUrl={assetBaseUrl}
 				remoteHostId={hostId}
 				snapshot={renderSnapshot}
+				promptSuggestion={promptSuggestion}
 				agentInputDisabled={switchLocksChat || handoffDialogOpen}
 				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}
@@ -585,8 +673,22 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				onLoadOlder={loadOlder}
 				busy={commands.busy}
 				excerptsEnabled
-				onSend={(text, attachments, clientMessageId, excerpts) =>
-					commands.send({
+				onSend={async (text, attachments, clientMessageId, excerpts) => {
+					// Only claim /btw and /side where side chats can open. Elsewhere the
+					// text goes to the agent as typed (it may be the harness's own skill),
+					// so a failed side launch can never strand the main draft.
+					const btw = sideCreationEnabled ? /^\/(?:btw|side)(?:\s+|$)/i.exec(text) : null;
+					if (btw) {
+						openSideInspector();
+						const side = await sideChats.create(undefined, true, clientMessageId);
+						const question = text.slice(btw[0].length).trim();
+						if (question || excerpts?.length || attachments?.length) {
+							// Retain the main draft if handing the request to the side fails.
+							await sideChats.send(side.id, question, attachments, excerpts, true, clientMessageId);
+						}
+						return;
+					}
+					return commands.send({
 						text,
 						attachments,
 						clientMessageId,
@@ -596,7 +698,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 							revision: excerpt.revision,
 							text: excerpt.text,
 						})),
-					})}
+					}); }}
 				commandError={commands.error}
 				onDecide={commands.resolve}
 				onResolveInput={commands.resolveInput}
@@ -617,7 +719,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				rememberPermissionsPending={projectPermissions.pending}
 				rememberPermissionsError={projectPermissions.error}
 				rememberedPermissionMode={projectPermissions.savedMode}
-				configOptions={configOptions.options}
+				configOptions={offeredConfigOptions}
 				onChooseConfigOption={configOptions.setOption}
 				configOptionPending={configOptions.pending || commands.choosingSettings}
 				configOptionError={controllerCatalogsEnabled ? configOptions.error : undefined}
@@ -636,7 +738,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				onActivateBranch={commands.activateBranch}
 				activateBranchPending={commands.activateBranchPending}
 				activateBranchError={commands.activateBranchError}
-				skills={skills}
+				skills={sideCreationEnabled ? [...(["btw", "side"].map((name) => ({ name, displayName: name, description: "Open a new side chat", source: "AO" }))), ...skills.filter((skill) => skill.name !== "btw" && skill.name !== "side")] : skills}
 				filePaths={paths}
 				filePathsTruncated={truncated}
 				localEchos={localEchos}

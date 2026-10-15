@@ -32,6 +32,12 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultHarnessUpdateInterval is how often the daemon re-checks installed
+	// harnesses for updates after its startup check. A full pass probes each
+	// harness CLI, so it runs a few times a day rather than continuously.
+	DefaultHarnessUpdateInterval = 6 * time.Hour
+	// MinHarnessUpdateInterval is the shortest AO_HARNESS_UPDATE_INTERVAL accepted.
+	MinHarnessUpdateInterval = time.Hour
 	// DefaultAgent is the compatibility value used when AO_AGENT is unset. The
 	// daemon validates it at startup, but worker/orchestrator spawns resolve from
 	// explicit requests or project role config instead of falling back to it.
@@ -39,10 +45,6 @@ const (
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
-	// ClientElevenX is the AO_CLIENT value entitled to the cloud offering. It is
-	// the single place the identity is spelled out; gating logic must compare
-	// against this constant, never a string literal.
-	ClientElevenX = "eleven_x"
 
 	// defaultCloudControlPlaneURL is the control plane a build talks to when no
 	// override is set. Production, now that the hosted offering is live;
@@ -149,6 +151,14 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// HarnessUpdateChecks lets the daemon compare installed harnesses with their
+	// release sources over the network. AO_HARNESS_UPDATE_CHECKS=off disables
+	// it for offline or policy-restricted machines.
+	HarnessUpdateChecks bool
+	// HarnessUpdateInterval is how often the daemon re-checks installed
+	// harnesses after its startup check. AO_HARNESS_UPDATE_INTERVAL overrides
+	// it; values below MinHarnessUpdateInterval are rejected.
+	HarnessUpdateInterval time.Duration
 	// StartupWorkingDirectory is the daemon process cwd before startup
 	// normalizes it. The desktop uses this to identify dev daemons after the
 	// process cwd is moved to the stable data dir.
@@ -159,13 +169,14 @@ type Config struct {
 	// TrackerIntake gates the issue-intake observer daemon-wide
 	// (AO_TRACKER_INTAKE).
 	TrackerIntake bool
-	// Client identifies which client this deployment serves (AO_CLIENT). Empty
-	// means no client identity, which keeps client-gated offerings off.
+	// Client identifies which client this deployment serves (AO_CLIENT). It is
+	// reported to clients through the settings API and gates nothing in the
+	// daemon: the cloud offering (B2B/B2C, providers, billing) is decided per
+	// organization by the cloud control plane.
 	Client string
 	// CloudOffering reports whether the cloud offering flag is switched on
-	// (AO_CLOUD_OFFERING). The flag alone does not surface cloud in clients:
-	// the settings service also requires the entitled client (ClientElevenX)
-	// and a configured control plane.
+	// (AO_CLOUD_OFFERING). It forces the cloud gate on regardless of the user's
+	// toggle; the settings service still requires a configured control plane.
 	CloudOffering bool
 	// LocalOffering reports whether the local offering is available
 	// (AO_LOCAL_OFFERING). It defaults to true; only an explicit false/0
@@ -205,7 +216,7 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
 //	AO_GITLAB_ALLOWED_HOSTS    comma-separated self-managed GitLab hosts (each may include :port)
 //	AO_GITLAB_HOST_TOKENS      host=token,host=token per-host token overrides
-//	AO_CLIENT                  client identity for offering gates (trimmed, default empty)
+//	AO_CLIENT                  client identity reported to clients (trimmed, default empty)
 //	AO_CLOUD_OFFERING          cloud offering flag off|on (default off)
 //	AO_LOCAL_OFFERING          local offering off|on (default on)
 //	AO_CLOUD_CONTROL_PLANE_URL cloud control plane base URL (trimmed, must be http(s))
@@ -223,7 +234,9 @@ func Load() (Config, error) {
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
 		},
-		LocalOffering: true,
+		LocalOffering:         true,
+		HarnessUpdateChecks:   true,
+		HarnessUpdateInterval: DefaultHarnessUpdateInterval,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -285,6 +298,23 @@ func Load() (Config, error) {
 		cfg.AllowedOrigins = origins
 	}
 
+	if raw, present := os.LookupEnv("AO_HARNESS_UPDATE_CHECKS"); present && strings.TrimSpace(raw) != "" {
+		v, err := parseToggleEnv("AO_HARNESS_UPDATE_CHECKS", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.HarnessUpdateChecks = v
+	}
+	if raw, present := os.LookupEnv("AO_HARNESS_UPDATE_INTERVAL"); present && strings.TrimSpace(raw) != "" {
+		d, err := parsePositiveDuration("AO_HARNESS_UPDATE_INTERVAL", strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, err
+		}
+		if d < MinHarnessUpdateInterval {
+			return Config{}, fmt.Errorf("invalid AO_HARNESS_UPDATE_INTERVAL %q: must be at least %s", raw, MinHarnessUpdateInterval)
+		}
+		cfg.HarnessUpdateInterval = d
+	}
 	if raw, present := os.LookupEnv("AO_TELEMETRY_EVENTS"); present && strings.TrimSpace(raw) != "" {
 		v, err := parseToggleEnv("AO_TELEMETRY_EVENTS", raw)
 		if err != nil {
