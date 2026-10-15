@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useProviderSwitchCommand } from "../hooks/useConversation";
 import { agentLabel } from "../lib/agent-options";
+import { listsModelVariants } from "../lib/model-variants";
 import { apiErrorMessage } from "../lib/api-client";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession } from "../types/workspace";
@@ -44,7 +45,10 @@ export function TerminalSessionMenu({
 	if (!switchAction && switchControl) return <div className="inline-flex shrink-0 items-center">{switchControl}</div>;
 	const switchNow = () => {
 		if (!pending) return;
-		const { harness: targetHarness, model, effort, fastMode, ultracode, autoCompactWindow } = pending;
+		const { harness: targetHarness, model, fastMode, ultracode, autoCompactWindow } = pending;
+		// The effort the picker shows is the one the agent starts with, not the agent's
+		// own configured default. A Cursor id already carries its effort.
+		const effort = pending.effort ?? (listsModelVariants(targetHarness) ? undefined : pending.shownEffort);
 		void providerSwitch.mutateAsync({ targetHarness, model, effort, fastMode, ultracode, autoCompactWindow })
 			.then(() => { setPending(undefined); setOpen(false); })
 			.catch((error) => showGlobalToast("Agent switch failed", apiErrorMessage(error), "error"));
@@ -55,7 +59,8 @@ export function TerminalSessionMenu({
 		<div className="mt-1 box-border flex h-10 shrink-0 items-center border-t border-border px-1.5 pt-1">
 			<div role="status" className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-border bg-interactive-active/50 pl-2 pr-1 text-xs text-foreground">
 				<ProviderMark provider={pending.harness} className="size-3.5" />
-				<span className="min-w-0 flex-1 truncate">{target}</span>
+				{/* The mark names the agent, so the model alone fits beside Switch. */}
+				<span className="min-w-0 flex-1 truncate" title={target}>{pending.modelLabel ?? agentLabel(pending.harness)}</span>
 				<button
 					type="button"
 					disabled={blocked || providerSwitch.isPending}

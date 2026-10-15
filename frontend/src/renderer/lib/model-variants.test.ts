@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseModelVariants, findModelVariant, groupModelsByVendor, pickModelVariant } from "./model-variants";
+import { collapseModelVariants, findModelVariant, groupModelsByVendor, pickModelVariant, readableModelLabel } from "./model-variants";
 
 // Shapes taken from a real Cursor catalog.
 const catalog = [
@@ -74,5 +74,9 @@ describe("collapseModelVariants", () => {
 			["claude-sonnet-5-5", "Anthropic"],
 			["gpt-5.5", "OpenAI"],
 		]);
+	});
+
+	it("names a routed model by its last part", () => {
+		expect(readableModelLabel("openrouter/anthropic/claude-haiku-4.5")).toBe("Claude Haiku 4.5");
 	});
 });

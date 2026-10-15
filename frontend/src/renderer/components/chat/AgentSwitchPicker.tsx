@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import { agentModelsQueryOptions, type AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
 import { useAgentManagementMenu } from "../../hooks/useAgentManagementMenu";
 import { useAgentReadinessQuery } from "../../hooks/useAgentReadinessQuery";
-import { agentModelDisplayLabel } from "../../lib/agent-model-choices";
+import { agentModelDisplayLabel, splitClaudeModels } from "../../lib/agent-model-choices";
 import { agentLabel } from "../../lib/agent-options";
 import { isLaunchableAgent } from "../../lib/agent-select-options";
 import { CHAT_SWITCH_TARGETS, TERMINAL_SWITCH_TARGETS } from "../../lib/agent-switch-targets";
@@ -199,12 +199,15 @@ export function AgentModelPicker({
 	// Only agents that can run are offered, as in New Task; the rest are set up
 	// from Manage agents. Unknown readiness stays selectable: the daemon checks
 	// the target before it touches the running agent.
+	// A terminal's own agent is left out: its model is changed there with /model.
+	// Names are AO's own, so the list and model search agree.
 	const agents = useMemo(() => [
-		{ id: currentHarness, label: agentLabel(currentHarness) },
+		...(terminal ? [] : [{ id: currentHarness, label: agentLabel(currentHarness) }]),
 		...(terminal ? TERMINAL_SWITCH_TARGETS : CHAT_SWITCH_TARGETS).flatMap((id) => {
 			if (id === currentHarness) return [];
 			const agent = readiness?.find((candidate) => candidate.id === id);
-			return agent && !isLaunchableAgent(agent) ? [] : [{ id: id as string, label: agent?.label ?? agentLabel(id) }];
+			const label = agentLabel(id) !== id ? agentLabel(id) : agent?.label ?? id;
+			return agent && !isLaunchableAgent(agent) ? [] : [{ id: id as string, label }];
 		}),
 	], [currentHarness, readiness, terminal]);
 	const management = useAgentManagementMenu(undefined, hostId);
@@ -383,7 +386,7 @@ export function AgentModelPicker({
 									<OptionMenuSub>
 										<OptionMenuSubTrigger label="Model" value={modelValue} />
 										<OptionMenuSubContent scrollable className={SUB_CLASS}>
-											<ModelRows source={source} harness={shownHarness} />
+											<ModelRows source={shownHarness === "claude-code" ? { ...source, models: claudeOrder(source.models) } : source} harness={shownHarness} />
 										</OptionMenuSubContent>
 									</OptionMenuSub>
 								) : null}
@@ -473,6 +476,11 @@ function otherAgentSource(
 			group: modelGroupLabel(model.provider, harness),
 			hint: model.isDefault ? "default" : undefined,
 		}));
+	// Two routes to one model read the same once shortened; their router tells them apart.
+	const shared = new Set(listed.filter((entry, index) => listed.findIndex((other) => other.label === entry.label) !== index).map((entry) => entry.label));
+	for (const entry of listed) {
+		if (entry.id.includes("/") && shared.has(entry.label)) entry.label = `${entry.label} (${entry.id.slice(0, entry.id.indexOf("/"))})`;
+	}
 	if (listsModelVariants(harness)) {
 		return variantSource(listed, pending?.model, agentLabel(harness), (variant, modelLabel) => onPick({
 			harness, model: variant.id, modelLabel, shownEffort: variant.effort, fast: variant.fast, thinking: variant.thinking,
@@ -522,6 +530,12 @@ function otherAgentSource(
 		fast: offersFast ? fastOn : undefined,
 		onToggleFast: (fast) => onPick({ ...keep, effort: pending?.effort, ultracode: pending?.ultracode, fastMode: fast || undefined }),
 	};
+}
+
+/** Claude's models as New Task lists them: the newest of each family first, then the older ones. */
+function claudeOrder<T extends { id: string; label: string }>(models: T[]): T[] {
+	const { current, other } = splitClaudeModels(models);
+	return [...current, ...other];
 }
 
 /** One agent's model list, with search on a long one and a star on each row. */

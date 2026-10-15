@@ -3233,7 +3233,12 @@ export function Timeline({
 	const timelineItems = useStableList(
 		[
 			...items.filter(
-				(item) => !(item.kind === "message" && item.role === "user" && item.turnId && backgroundQueuedTurnIds.has(item.turnId)),
+				(item) => !(item.kind === "message" && item.role === "user" && (
+					(item.turnId && backgroundQueuedTurnIds.has(item.turnId)) ||
+					// A terminal switch hands the note to the agent as its first prompt, so a
+					// conversation read back from the terminal carries it. It is not the user's.
+					item.text.trimStart().startsWith("<ao-handoff-request")
+				)),
 			),
 			...localItems,
 		],

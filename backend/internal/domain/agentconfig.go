@@ -45,6 +45,9 @@ type AgentConfig struct {
 type AgentLaunchOptions struct {
 	// FastMode starts the agent on its faster tier (Codex).
 	FastMode bool `json:"fastMode,omitempty"`
+	// FastModeOff starts Codex on its standard tier even where its config or the
+	// model would pick the faster one, as a switch whose picker showed it off asks.
+	FastModeOff bool `json:"fastModeOff,omitempty"`
 	// Ultracode starts Claude Code with Ultracode on.
 	Ultracode bool `json:"ultracode,omitempty"`
 	// AutoCompactWindow is where Claude Code compacts on its own: "200k" or "1m".

@@ -168,6 +168,8 @@ const GROUP_NAMES: Record<string, string> = { openai: "OpenAI", xai: "xAI", deep
  * becomes "GPT-5.3 Codex Spark". A label that is already written out is kept.
  */
 export function readableModelLabel(label: string): string {
+	// A routed id ("openrouter/anthropic/claude-haiku-4.5") is named by its last part.
+	label = label.slice(label.lastIndexOf("/") + 1);
 	if (!label || /[A-Z\s]/.test(label)) return label;
 	const words: string[] = [];
 	for (const part of label.split("-")) {

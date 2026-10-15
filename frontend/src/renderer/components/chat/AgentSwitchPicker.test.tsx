@@ -129,5 +129,8 @@ describe("AgentModelPicker", () => {
 		await user.click(screen.getByRole("button", { name: "Agent running in this terminal" }));
 		expect(screen.getByRole("menuitem", { name: /Agent/ })).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: /Model/ })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("menuitem", { name: /Agent/ }));
+		expect(await screen.findByRole("menuitemradio", { name: "Codex" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitemradio", { name: "Claude Code" })).not.toBeInTheDocument();
 	});
 });

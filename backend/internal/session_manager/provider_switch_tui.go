@@ -133,7 +133,11 @@ func (m *Manager) SwitchTUIProvider(ctx context.Context, id domain.SessionID, re
 		return restoreSource(err, "could not publish target provider ownership")
 	}
 	if launchStore != nil {
-		targetLaunch := domain.AgentLaunchOptions{FastMode: request.FastMode, Ultracode: request.Ultracode, AutoCompactWindow: request.AutoCompactWindow}
+		// The picker shows Codex's fast mode off unless it was turned on, so that is how it starts.
+		targetLaunch := domain.AgentLaunchOptions{
+			FastMode: request.FastMode, FastModeOff: !request.FastMode && target == domain.HarnessCodex,
+			Ultracode: request.Ultracode, AutoCompactWindow: request.AutoCompactWindow,
+		}
 		if err := launchStore.SetSessionLaunchOptions(ctx, id, targetLaunch); err != nil {
 			return restoreSource(err, "could not save the target's launch options")
 		}
@@ -150,7 +154,38 @@ func (m *Manager) SwitchTUIProvider(ctx context.Context, id domain.SessionID, re
 		m.destroySpawnRuntimeAfterFailure(context.WithoutCancel(ctx), runtimeHandle(started.Session.Metadata))
 		return restoreSource(err, "target provider did not stay running")
 	}
+	m.adoptTUISwitchSettings(context.WithoutCancel(ctx), id, request)
 	return nil
+}
+
+// tuiSwitchSettingsStore is the part of a store that keeps the chat's saved
+// settings. It is optional, as for a session that has never had a chat.
+type tuiSwitchSettingsStore interface {
+	ConversationForSession(context.Context, domain.SessionID) (domain.ConversationRecord, error)
+	SetConversationSettings(context.Context, string, domain.ConversationSettings, time.Time) error
+}
+
+// adoptTUISwitchSettings gives the chat the target's model and effort. The saved
+// ones belong to the outgoing agent, and the chat would start the target on a
+// model it does not have.
+func (m *Manager) adoptTUISwitchSettings(ctx context.Context, id domain.SessionID, request domain.ProviderSwitchRequest) {
+	store, ok := m.store.(tuiSwitchSettingsStore)
+	if !ok {
+		return
+	}
+	conversation, err := store.ConversationForSession(ctx, id)
+	if err != nil {
+		return
+	}
+	settings := conversation.Settings
+	settings.Model, settings.ReasoningEffort = request.Model, request.Effort
+	settings.AutoCompactWindow = ""
+	if request.TargetHarness == domain.HarnessClaudeCode {
+		settings.AutoCompactWindow = request.AutoCompactWindow
+	}
+	if err := store.SetConversationSettings(ctx, conversation.ID, settings, m.clock()); err != nil {
+		m.logger.Warn("adopt terminal switch settings", "session", id, "error", err)
+	}
 }
 
 // How long a freshly started target is watched before the switch is reported
