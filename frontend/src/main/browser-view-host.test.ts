@@ -295,8 +295,10 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const shellFocus = vi.fn();
 	const shellSend = vi.fn((channel: string, payload?: unknown) => sent.push({ channel, payload }));
 	const mainContentView = { addChildView: vi.fn(), removeChildView: vi.fn() };
+	const isWindowVisible = vi.fn(() => true);
 	const host = createBrowserViewHost({
 		mainWindow: {
+			isVisible: isWindowVisible,
 			contentView: mainContentView,
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
 			webContents: {
@@ -383,6 +385,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		invoke,
 		invokeFromTab,
 		mainContentView,
+		isWindowVisible,
 		rendererFrame,
 		send,
 		sent,
@@ -453,6 +456,27 @@ describe("browser live stream", () => {
 
 		expect(view.setVisible).toHaveBeenCalled();
 		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+	});
+
+	it("captures an app-hidden window without capturing an idle visible desktop", async () => {
+		vi.useFakeTimers();
+		try {
+			const { debuggerSendCommand, emit, host, invoke, isWindowVisible, setCurrentURL } = setupHost();
+			const { viewId } = await invoke("browser:ensure", "sess-1");
+			setCurrentURL("https://example.com/");
+			emit("browser:setBounds", 1, { viewId, revision: 1, rect: panelRect, visible: true });
+			await host.startLiveStream("sess-1", 7, liveSink());
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(debuggerSendCommand).not.toHaveBeenCalledWith("Page.captureScreenshot", expect.anything());
+			isWindowVisible.mockReturnValue(false);
+			await vi.advanceTimersByTimeAsync(500);
+			expect(debuggerSendCommand).toHaveBeenCalledWith("Page.captureScreenshot", expect.objectContaining({ captureBeyondViewport: true }));
+			debuggerSendCommand.mockClear();
+			isWindowVisible.mockReturnValue(true);
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(debuggerSendCommand).not.toHaveBeenCalledWith("Page.captureScreenshot", expect.anything());
+			await host.stopLiveStream("sess-1", 7);
+		} finally { vi.useRealTimers(); }
 	});
 
 	it("gives a parked streamed page the viewport the desktop last showed", async () => {

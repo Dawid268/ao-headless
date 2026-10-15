@@ -431,6 +431,7 @@ type BrowserWindowLike = {
   isDestroyed?: () => boolean;
   isFocused?: () => boolean;
   isMinimized?: () => boolean;
+  isVisible?: () => boolean;
 };
 
 type ShellLike = {
@@ -3372,7 +3373,7 @@ export function createBrowserViewHost(
 			},
 			(code, message) => live.sink.error(code, message),
 			() => liveViewport(session),
-			() => !session.visible || options.mainWindow.isMinimized?.() === true,
+			() => !session.visible || options.mainWindow.isMinimized?.() === true || options.mainWindow.isVisible?.() === false,
 		);
 		live.screencast = cast;
 		live.tabId = entry.tabId;
