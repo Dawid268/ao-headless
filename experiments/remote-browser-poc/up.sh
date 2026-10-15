@@ -14,7 +14,9 @@ if [ "$free_mb" -lt 500 ]; then echo "refusing to build: only ${free_mb} MB free
 # agent-browser names it as Node does (x64).
 arch=$(docker version -f '{{.Server.Arch}}')
 target=linux-${arch/amd64/x64}
-GOWORK=off GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o dist/rbhost ./host
+# The service lives in the cloud module. GOWORK=off: outside the workspace the
+# build needs only the modules rbhost imports, not the backend's.
+(cd ../../cloud && GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o ../experiments/remote-browser-poc/dist/rbhost ./cmd/rbhost)
 # agent-browser is the build AO ships: the version, release URL and sha256 pins come
 # from the desktop's fetch script. A file that already has the pinned hash is kept.
 # ponytail: sed reads that script's layout and fails loudly if it changes; move the

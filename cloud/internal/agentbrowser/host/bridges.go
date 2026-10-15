@@ -1,4 +1,4 @@
-package main
+package host
 
 import (
 	"context"
@@ -453,7 +453,7 @@ type downloads struct {
 	names map[string]string // guid -> suggested name
 }
 
-const downloadDir = "/tmp/rb-downloads"
+var downloadDir string // set by Main
 
 func (h *host) startDownloads(ctx context.Context) {
 	h.dl = &downloads{dir: downloadDir, names: map[string]string{}}

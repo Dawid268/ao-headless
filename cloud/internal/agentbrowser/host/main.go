@@ -1,8 +1,9 @@
-// Command host is the agent's browser on a remote host. It runs next to the
+// Package host is the agent's browser on a remote host. It runs next to the
 // agent: it owns one headless Chromium, lets the agent drive it through
 // agent-browser on loopback CDP (POST /agent), and streams it to the desktop
 // (/v/cdp and /ws/cdp, a CDP screencast), which shows its pages as tabs.
-package main
+// Main runs it as its own process.
+package host
 
 import (
 	"context"
@@ -231,21 +232,35 @@ func (c *control) owner() string {
 	return "none"
 }
 
-func main() {
-	addr := flag.String("addr", ":8080", "listen address for viewers")
-	token := flag.String("token", os.Getenv("RB_TOKEN"), "shared secret for every route")
-	chrome := flag.String("chrome", "/usr/bin/chromium", "Chromium binary")
-	ab := flag.String("ab", "/usr/local/bin/agent-browser", "agent-browser binary")
-	cdpPort := flag.Int("cdp-port", 9222, "loopback CDP port")
-	dsf := flag.Float64("dsf", 2, "Chromium device scale factor; headless screencast ignores emulated DPR, so 2 is needed for Retina-sharp frames (1x viewers get frames scaled down)")
-	flag.Parse()
+// dataDir (-data) holds the service's files; profileDir is Chromium's profile
+// in it. Main sets both.
+var dataDir, profileDir string
+
+// Main runs the browser service with args, its command-line flags without the
+// program name. It never returns: the service ends by exiting the process.
+func Main(args []string) {
+	fs := flag.NewFlagSet("rbhost", flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "listen address for viewers")
+	token := fs.String("token", os.Getenv("RB_TOKEN"), "shared secret for every route")
+	chrome := fs.String("chrome", "/usr/bin/chromium", "Chromium binary")
+	ab := fs.String("ab", "/usr/local/bin/agent-browser", "agent-browser binary")
+	cdpPort := fs.Int("cdp-port", 9222, "loopback CDP port")
+	dsf := fs.Float64("dsf", 2, "Chromium device scale factor; headless screencast ignores emulated DPR, so 2 is needed for Retina-sharp frames (1x viewers get frames scaled down)")
+	data := fs.String("data", "/tmp", "directory for the Chromium profile, downloads, uploads and agent-browser's files")
+	_ = fs.Parse(args)
 	if len(*token) < 16 {
 		log.Fatal("-token (or RB_TOKEN) must be at least 16 characters")
 	}
-	// A restarted container keeps /tmp: stale profile locks would stop Chromium.
+	dataDir = *data
+	profileDir = filepath.Join(dataDir, "rb-profile")
+	tabsFile = filepath.Join(profileDir, "rb-tabs.json")
+	downloadDir = filepath.Join(dataDir, "rb-downloads")
+	uploadRoot = filepath.Join(dataDir, "rb-upload")
+	agentDir = filepath.Join(dataDir, "rb-agent")
+	// A restarted container keeps -data: stale profile locks would stop Chromium.
 	// The profile itself stays, so logins survive a restart.
-	for _, p := range []string{"/tmp/rb-profile/SingletonLock", "/tmp/rb-profile/SingletonSocket", "/tmp/rb-profile/SingletonCookie"} {
-		_ = os.RemoveAll(p)
+	for _, p := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		_ = os.RemoveAll(filepath.Join(profileDir, p))
 	}
 	ctx := context.Background()
 	h := &host{token: *token, abPath: *ab, cdpPort: *cdpPort,
@@ -353,7 +368,7 @@ func launchChrome(ctx context.Context, bin string, port int, dsf float64) (strin
 	// "HeadlessChrome" user agent as a bot (Google serves a degraded page), so
 	// the browser reports the Chrome it is.
 	args := []string{
-		"--headless=new", "--user-data-dir=/tmp/rb-profile", "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run",
+		"--headless=new", "--user-data-dir=" + profileDir, "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run",
 		"--no-default-browser-check", "--mute-audio", "--window-size=1280,800", "--user-agent=" + chromeUserAgent(bin), "about:blank",
 		// Fullscreen resizes the window to the screen, 800x600 by default in
 		// headless: the stream then showed a shrunken page. A screen the
@@ -412,7 +427,7 @@ func launchChromeArgs(ctx context.Context, bin string, port int, args []string) 
 	cmd.Env = chromeEnv()
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if os.Getenv("RB_CHROME_LOG") != "" {
-		if f, err := os.Create(fmt.Sprintf("/tmp/chrome-%d.log", port)); err == nil {
+		if f, err := os.Create(filepath.Join(dataDir, fmt.Sprintf("chrome-%d.log", port))); err == nil {
 			cmd.Stdout, cmd.Stderr = f, f
 		}
 	}
@@ -635,7 +650,7 @@ func (h *host) agentTab() string {
 	return h.newestTab()
 }
 
-const uploadRoot = "/tmp/rb-upload"
+var uploadRoot string // set by Main
 
 var uploadDir = regexp.MustCompile(`^[a-z0-9]{8,40}$`)
 
@@ -651,7 +666,7 @@ func uploadPath(dir, name string) (string, bool) {
 // handleUpload stores one file the person picked or dropped. Files stream
 // over HTTP, not inline on the viewer socket: no base64, no size cap (a 50 MB
 // file used to overrun the socket's read limit and drop the connection).
-// ponytail: uploads stay in /tmp until the sandbox goes; delete after setFileInputFiles if disk matters.
+// ponytail: uploads stay in -data until the sandbox goes; delete after setFileInputFiles if disk matters.
 func (h *host) handleUpload(w http.ResponseWriter, r *http.Request) {
 	p, ok := uploadPath(r.URL.Query().Get("dir"), r.URL.Query().Get("name"))
 	if !ok {
@@ -704,7 +719,7 @@ func (h *host) broadcastTabs(newTab string) {
 }
 
 // tabsFile lists the open tabs' URLs, so a restarted Chromium can reopen them.
-const tabsFile = "/tmp/rb-profile/rb-tabs.json"
+var tabsFile string // set by Main
 
 // stopping is set on shutdown: Chromium exiting is then expected, and the
 // tabs it closes on the way out stay saved.
@@ -777,10 +792,10 @@ func (h *host) runAgent(ctx context.Context, args []string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// agentDir is agent-browser's working directory (a var for tests). The
+// agentDir is agent-browser's working directory (set by Main). The
 // agent's relative paths (an upload, a screenshot to save) are to its own
 // directory, and to this one here: files travel between the two.
-var agentDir = "/tmp/rb-agent"
+var agentDir string
 
 // savesFile are the agent-browser commands that save a file at a path they are given.
 var savesFile = []string{"screenshot", "pdf", "download", "record", "trace", "profiler", "network", "state"}
