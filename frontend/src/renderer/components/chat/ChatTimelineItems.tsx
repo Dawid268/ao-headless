@@ -353,7 +353,7 @@ function handoffModelName(harness: string, model: string, models: Array<{ id: st
 }
 
 /** One side of a handoff: the agent's mark, then its model by name when one was recorded. */
-function HandoffSide({ harness, model, effort, bright }: { harness: string; model?: string; effort?: string; bright?: boolean }) {
+function HandoffSide({ harness, model, effort, compactWindow, bright }: { harness: string; model?: string; effort?: string; compactWindow?: string; bright?: boolean }) {
 	const { t } = useTranslation();
 	// The marker stores the model id. Its name comes from the agent's catalog.
 	const catalog = useQuery({ ...agentModelsQueryOptions(harness, ""), enabled: Boolean(model) }).data;
@@ -363,6 +363,7 @@ function HandoffSide({ harness, model, effort, bright }: { harness: string; mode
 			<ProviderMark provider={harness} />
 			<span className="truncate">{name.replace(/\s*\b1M\b/g, "")}</span>
 			{effort ? <span className="shrink-0 text-muted-foreground">{formatEffortLabel(effort, t)}</span> : null}
+			{compactWindow ? <span className="shrink-0 text-muted-foreground" title="Compacts on its own at this size">· {compactWindow.toUpperCase()}</span> : null}
 		</span>
 	);
 }
@@ -379,7 +380,7 @@ export function ProviderSwitchMarker({ activity }: { activity: ConversationActiv
 				<>
 					<HandoffSide harness={detail.sourceHarness} model={detail.sourceModel} />
 					<ArrowRight aria-hidden="true" className="size-3 shrink-0" />
-					<HandoffSide harness={detail.targetHarness} model={detail.targetModel} effort={detail.targetEffort} bright />
+					<HandoffSide harness={detail.targetHarness} model={detail.targetModel} effort={detail.targetEffort} compactWindow={detail.targetAutoCompactWindow} bright />
 				</>
 			) : null}
 			<span aria-hidden="true" className="h-px min-w-4 flex-1 bg-border" />

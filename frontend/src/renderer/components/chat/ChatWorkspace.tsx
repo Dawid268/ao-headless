@@ -1325,6 +1325,8 @@ function ChatWorkspaceContent({
 		[snapshot.items, turn],
 	);
 	const stableSettings = useStableValue(snapshot.settings);
+	// Claude Code compacts at the window picked for it, well before its model's full context.
+	const compactsAt = snapshot.harness === "claude-code" ? snapshot.settings?.autoCompactWindow : undefined;
 	const stableUsage = useStableValue(snapshot.usage);
 	const stableModelReroute = useStableValue(snapshot.modelReroute);
 	const stablePendingApproval = useStableValue(pendingApproval);
@@ -1334,7 +1336,7 @@ function ChatWorkspaceContent({
 			settingsReady && (onChooseSettings || onChooseConfigOption) ? (
 				<TurnSettingsBar
 					agentSwitch={agentSwitch}
-					beforePicker={agentSwitch ? <ContextMeter usage={stableUsage} /> : undefined}
+					beforePicker={agentSwitch ? <ContextMeter usage={stableUsage} compactsAt={compactsAt} /> : undefined}
 					afterPermissions={composerAction}
 					models={models ?? []}
 					settings={stableSettings}
@@ -1390,6 +1392,7 @@ function ChatWorkspaceContent({
 			turn,
 			stableModelReroute,
 			stableSettings,
+			compactsAt,
 		],
 	);
 	const composerApproval = useMemo(
@@ -1803,7 +1806,7 @@ function ChatWorkspaceContent({
 										onQueuedRetainedAttachmentsChange={changeQueuedRetainedAttachments}
 										onInterrupt={turn && !newWorkDisabled ? stableInterrupt : undefined}
 										commandError={queueDraftError ?? (queueEdit && !queueEdit.clientMessageId && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId) ? "chat.draft.queueMissing" : commandError)}
-										settings={<>{agentSwitch ? null : <>{composerAction}<ContextMeter usage={snapshot.usage} /></>}{composerSettings}</>}
+										settings={<>{agentSwitch ? null : <>{composerAction}<ContextMeter usage={snapshot.usage} compactsAt={compactsAt} /></>}{composerSettings}</>}
 										addMenuItems={agentSwitch ? (
 											<ComposerModeItems
 												configOptions={configOptions ?? []}

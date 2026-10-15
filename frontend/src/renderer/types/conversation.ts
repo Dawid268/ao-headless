@@ -447,6 +447,8 @@ export interface SystemEventDetail {
 	sourceModel?: string;
 	targetModel?: string;
 	targetEffort?: string;
+	/** The Claude Code compaction window the target started with, such as "200k". */
+	targetAutoCompactWindow?: string;
 	/** render */
 	render?: RenderRef;
 	/** artifact */

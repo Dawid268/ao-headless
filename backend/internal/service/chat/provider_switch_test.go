@@ -36,6 +36,11 @@ func TestProviderSwitchPublishesApproximateBranch(t *testing.T) {
 		t.Fatalf("record terminal response: %v", err)
 	}
 
+	if source, err := h.st.ConversationForSession(ctx, testSession); err != nil {
+		t.Fatalf("read conversation: %v", err)
+	} else if err := h.st.RecordUsage(ctx, source.ID, domain.ConversationUsage{ContextUsed: 26956, ContextWindow: 475000}); err != nil {
+		t.Fatalf("record source usage: %v", err)
+	}
 	before, err := h.st.ConversationForSession(ctx, testSession)
 	if err != nil {
 		t.Fatalf("read conversation before the switch: %v", err)
@@ -58,6 +63,9 @@ func TestProviderSwitchPublishesApproximateBranch(t *testing.T) {
 	}
 	targetConfig := driver.startConfigs[len(driver.startConfigs)-1]
 	driver.mu.Unlock()
+	if after, err := h.st.ConversationForSession(ctx, testSession); err != nil || after.Usage != nil && after.Usage.ContextWindow != 0 {
+		t.Fatalf("usage after the switch = %+v, %v; want the source's reading cleared", after.Usage, err)
+	}
 	if got := targetConfig.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != "1000000" {
 		t.Fatalf("target compaction window = %q, want the switch's 1m", got)
 	}

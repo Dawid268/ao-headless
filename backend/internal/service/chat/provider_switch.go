@@ -29,7 +29,9 @@ type providerSwitchActivityDetail struct {
 	SourceModel  string `json:"sourceModel,omitempty"`
 	TargetModel  string `json:"targetModel,omitempty"`
 	TargetEffort string `json:"targetEffort,omitempty"`
-	BranchID     string `json:"branchId"`
+	// TargetAutoCompactWindow is the Claude Code compaction window the target started with.
+	TargetAutoCompactWindow string `json:"targetAutoCompactWindow,omitempty"`
+	BranchID                string `json:"branchId"`
 }
 
 // SwitchProvider performs an idle-only Chat-to-Chat handoff. It retains the
@@ -153,6 +155,7 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 			Event: "provider_switch", SourceHarness: source.harness,
 			TargetHarness: request.TargetHarness, BranchID: started.ProviderBoundary.ID,
 			SourceModel: sourceModel, TargetModel: request.Model, TargetEffort: request.Effort,
+			TargetAutoCompactWindow: targetCfg.ProviderSwitch.AutoCompactWindow,
 		})
 		switchActivity := domain.ConversationActivity{
 			ID: started.ProviderBoundary.ID + ":provider-switch", Kind: domain.ActivityKindSystem,
@@ -174,6 +177,11 @@ func (s *Service) SwitchProvider(ctx context.Context, id domain.SessionID, reque
 		}}, nil
 	}
 
+	// The context reading belongs to the outgoing agent's model. The target starts
+	// without one, or the meter would show it until the target reports its own.
+	if err := s.store.RecordUsage(operationCtx, conversation.ID, domain.ConversationUsage{}); err != nil {
+		s.log.Warn("clear source usage before provider switch", "session", id, "error", err)
+	}
 	target, err := s.startLocked(operationCtx, targetCfg)
 	if err != nil {
 		if restoreErr := s.restoreClosedSourceController(operationCtx, id, source, activeBranch, startCfg, sourceDriver); restoreErr != nil {
