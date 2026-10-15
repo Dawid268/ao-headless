@@ -354,6 +354,15 @@ describe("mobile Chat API boundaries", () => {
 		expect(mobileReachablePreviewURL("file:///tmp/demo.html", "ao.test")).toBeUndefined();
 	});
 
+	it("loads artifact previews through the authenticated configured host, including TLS tunnels", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(response({ entry: "pages/test page.html", source: "artifact", previewUrl: "http://ao-preview-artifact.obzg6ztjnrss2my.localhost:3002/pages/test%20page.html" }));
+		expect(await getPreview({ ...cfg, host: "ao.example.com", httpPort: "443", secure: true }, "w-1")).toEqual({
+			entry: "pages/test page.html",
+			url: "https://ao.example.com:443/api/v1/sessions/w-1/preview/artifacts/pages/test%20page.html",
+			authenticated: true,
+		});
+	});
+
 	it("does not invent an app preview when the session has no selection", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(response({ sessionId: "w-1" }));
 		expect(await getPreview(cfg, "w-1")).toBeNull();

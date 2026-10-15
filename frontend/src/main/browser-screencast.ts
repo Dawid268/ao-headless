@@ -82,7 +82,9 @@ export class BrowserScreencast {
 	// window is minimized. Request a clipped paint without unhiding the view,
 	// with at most one screenshot in flight.
 	private async captureHiddenFrame(): Promise<void> {
-		if (this.stopped || this.fallbackPending || Date.now() - this.lastFrameAt < this.fallbackDelay) return;
+		// Visible surfaces already publish on repaint. Capturing a scaled clip
+		// there can disturb Chromium's on-screen compositor after idle periods.
+		if (this.stopped || !this.needsHiddenPaint() || this.fallbackPending || Date.now() - this.lastFrameAt < this.fallbackDelay) return;
 		this.fallbackPending = true;
 		const inputGeneration = this.inputGeneration;
 		try {
@@ -91,12 +93,12 @@ export class BrowserScreencast {
 			const metrics = await this.debug.sendCommand("Page.getLayoutMetrics") as {
 				cssVisualViewport?: { pageX: number; pageY: number };
 			};
-			if (this.stopped) return;
+			if (this.stopped || !this.needsHiddenPaint()) return;
 			const x = metrics?.cssVisualViewport?.pageX ?? 0;
 			const y = metrics?.cssVisualViewport?.pageY ?? 0;
 			const result = await this.debug.sendCommand("Page.captureScreenshot", {
 				format: "jpeg", quality: 70, fromSurface: true,
-				captureBeyondViewport: this.needsHiddenPaint(),
+				captureBeyondViewport: true,
 				clip: { x, y, width, height, scale },
 			}) as { data?: string };
 			if (!this.stopped && typeof result?.data === "string") {

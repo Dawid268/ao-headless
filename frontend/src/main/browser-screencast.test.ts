@@ -102,14 +102,41 @@ describe("BrowserScreencast", () => {
 		await cast.stop();
 	});
 
-	it("uses an ordinary viewport capture while the desktop surface is visible", async () => {
+	it("cancels a pending hidden capture when the desktop becomes visible", async () => {
 		vi.useFakeTimers();
 		try {
-			const sendCommand = vi.fn(async () => undefined);
-			const cast = new BrowserScreencast({ on: vi.fn(), off: vi.fn(), sendCommand }, vi.fn(), vi.fn(), () => ({ width: 800, height: 600 }), () => false);
+			let hidden = true;
+			let finishMetrics: ((value: unknown) => void) | undefined;
+			const sendCommand = vi.fn(async (method: string) => method === "Page.getLayoutMetrics"
+				? new Promise((resolve) => { finishMetrics = resolve; }) : undefined);
+			const cast = new BrowserScreencast({ on: vi.fn(), off: vi.fn(), sendCommand }, vi.fn(), vi.fn(), () => ({ width: 800, height: 600 }), () => hidden);
 			await cast.start();
 			await vi.advanceTimersByTimeAsync(500);
-			expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", expect.objectContaining({ captureBeyondViewport: false }));
+			hidden = false;
+			finishMetrics?.({});
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(sendCommand).not.toHaveBeenCalledWith("Page.captureScreenshot", expect.anything());
+			await cast.stop();
+		} finally { vi.useRealTimers(); }
+	});
+
+	it("leaves visible static pages untouched and resumes fallback only while hidden", async () => {
+		vi.useFakeTimers();
+		try {
+			let hidden = false;
+			const sendCommand = vi.fn(async () => undefined);
+			const cast = new BrowserScreencast({ on: vi.fn(), off: vi.fn(), sendCommand }, vi.fn(), vi.fn(), () => ({ width: 800, height: 600 }), () => hidden);
+			await cast.start();
+			await vi.advanceTimersByTimeAsync(30000);
+			expect(sendCommand).not.toHaveBeenCalledWith("Page.getLayoutMetrics");
+			expect(sendCommand).not.toHaveBeenCalledWith("Page.captureScreenshot", expect.anything());
+			hidden = true;
+			await vi.advanceTimersByTimeAsync(500);
+			expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", expect.objectContaining({ captureBeyondViewport: true }));
+			sendCommand.mockClear();
+			hidden = false;
+			await vi.advanceTimersByTimeAsync(30000);
+			expect(sendCommand).not.toHaveBeenCalledWith("Page.captureScreenshot", expect.anything());
 			await cast.stop();
 		} finally { vi.useRealTimers(); }
 	});

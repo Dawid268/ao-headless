@@ -2312,6 +2312,48 @@ func TestSessionsAPI_PreviewHonorsSelectionInsteadOfRepositoryIndex(t *testing.T
 	}
 }
 
+func TestSessionsAPI_PreviewArtifactOriginUsesArtifactFiles(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace, artifacts := t.TempDir(), t.TempDir()
+	for root, text := range map[string]string{workspace: "workspace", artifacts: "artifact"} {
+		for _, file := range []string{"index.html", "style.css", "test page (1).html", "__ao_artifacts__/index.html"} {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, file), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	selected, err := previewutil.ArtifactFileURL("http://127.0.0.1:3002", "ao-1", "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace, ArtifactDir: artifacts, PreviewURL: selected}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var result controllers.SessionPreviewResponse
+	mustJSON(t, body, &result)
+	if result.Source != "artifact" || result.Entry != "index.html" {
+		t.Fatalf("preview=%+v", result)
+	}
+	for _, file := range []string{"index.html", "style.css", "test%20page%20%281%29.html"} {
+		body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview/artifacts/"+file, "")
+		if status != http.StatusOK || string(body) != "artifact" {
+			t.Fatalf("%s: status=%d body=%s", file, status, body)
+		}
+	}
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview/artifacts/../outside.html", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("traversal: status=%d body=%s", status, body)
+	}
+}
+
 func TestSessionsAPI_PreviewRejectsSessionIDTooLongForHostname(t *testing.T) {
 	svc := newFakeSessionService()
 	id := domain.SessionID(strings.Repeat("x", 143))

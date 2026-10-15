@@ -772,6 +772,7 @@ type SessionPreviewResponse struct {
 	SessionID  domain.SessionID `json:"sessionId"`
 	PreviewURL string           `json:"previewUrl,omitempty"`
 	Entry      string           `json:"entry,omitempty"`
+	Source     string           `json:"source,omitempty" enum:"workspace,artifact" description:"Root containing the selected static entry; omitted for external app URLs."`
 }
 
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.

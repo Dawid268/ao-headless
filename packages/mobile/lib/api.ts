@@ -545,7 +545,10 @@ export async function getPreview(cfg: ServerConfig, id: string): Promise<{ entry
 	const data = await res.json();
 	const entry = typeof data?.entry === "string" ? data.entry.trim() : "";
 	if (entry) {
-		const url = `${httpBase(cfg)}${previewFilePath(id, entry)}`;
+		const path = data?.source === "artifact"
+			? `${API}/sessions/${encodeURIComponent(id)}/preview/artifacts/${entry.split("/").map(encodeURIComponent).join("/")}`
+			: previewFilePath(id, entry);
+		const url = `${httpBase(cfg)}${path}`;
 		return { entry, url, authenticated: true };
 	}
 	const external = mobileReachablePreviewURL(typeof data?.previewUrl === "string" ? data.previewUrl : undefined, cfg.host);

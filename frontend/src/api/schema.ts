@@ -2620,6 +2620,23 @@ export interface paths {
         patch: operations["patchSessionPreviewApp"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/preview/artifacts/*": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve a selected static browser preview file from the session artifact directory */
+        get: operations["getSessionPreviewArtifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/preview/files/*": {
         parameters: {
             query?: never;
@@ -5589,6 +5606,11 @@ export interface components {
             entry?: string;
             previewUrl?: string;
             sessionId: string;
+            /**
+             * @description Root containing the selected static entry; omitted for external app URLs.
+             * @enum {string}
+             */
+            source?: "workspace" | "artifact";
         };
         SessionProvisionStep: {
             /** Format: date-time */
@@ -16158,6 +16180,56 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionPreviewArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

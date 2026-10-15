@@ -7830,6 +7830,46 @@ paths:
       summary: Send a request to the running session-owned application preview
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/preview/artifacts/*:
+    get:
+      operationId: getSessionPreviewArtifact
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Serve a selected static browser preview file from the session artifact
+        directory
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/preview/files/*:
     get:
       operationId: getSessionPreviewFile
@@ -16069,6 +16109,13 @@ components:
         previewUrl:
           type: string
         sessionId:
+          type: string
+        source:
+          description: Root containing the selected static entry; omitted for external
+            app URLs.
+          enum:
+          - workspace
+          - artifact
           type: string
       required:
       - sessionId
