@@ -1358,6 +1358,36 @@ func TestResolveDefaultBranchKeepsSlashBranchOnOriginWithoutMatchingRemote(t *te
 	}
 }
 
+func TestResolveDefaultBranchUsesCheckedOutBranchWhenConfiguredBranchAndRemoteAreMissing(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	run(t, git, "init", "-b", "main", repo)
+	runGit(t, git, repo, "config", "user.email", "ao@example.com")
+	runGit(t, git, repo, "config", "user.name", "Ao Agents")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	runGit(t, git, repo, "add", "README.md")
+	runGit(t, git, repo, "commit", "-m", "seed")
+
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	target, err := ws.ResolveDefaultBranch(context.Background(), repo, "dev")
+	if err != nil {
+		t.Fatalf("resolve default branch: %v", err)
+	}
+	want := ports.WorkspaceDefaultBranch{Branch: "main", BaseRef: "refs/heads/main"}
+	if target != want {
+		t.Fatalf("target = %#v, want %#v", target, want)
+	}
+	if err := ws.FetchDefaultBranch(context.Background(), repo, target); err != nil {
+		t.Fatalf("fetch checked-out fallback: %v", err)
+	}
+}
+
 func TestResolveDefaultBranchFallsBackToLocalHeadWhenExplicitBranchHasNoRemoteTrackingRef(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()

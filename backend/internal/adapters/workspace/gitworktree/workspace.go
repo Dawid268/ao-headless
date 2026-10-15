@@ -222,11 +222,40 @@ func (w *Workspace) ResolveDefaultBranch(ctx context.Context, repoPath, configur
 			}, nil
 		}
 	}
+	// A seeded transfer drops .git and re-inits on main, while the project
+	// config can still say "dev". Inventing refs/remotes/origin/dev then makes
+	// worktree add fail when that remote was never created. Use the branch
+	// that is actually checked out.
+	remotePresent, err := w.remoteExists(ctx, repo, remote)
+	if err != nil {
+		return ports.WorkspaceDefaultBranch{}, err
+	}
+	if !remotePresent {
+		if headRef, ok := w.checkedOutBranchRef(ctx, repo); ok {
+			return ports.WorkspaceDefaultBranch{
+				Remote:  "",
+				Branch:  strings.TrimPrefix(headRef, "refs/heads/"),
+				BaseRef: headRef,
+			}, nil
+		}
+	}
 	return ports.WorkspaceDefaultBranch{
 		Remote:  remote,
 		Branch:  branch,
 		BaseRef: remoteRef,
 	}, nil
+}
+
+func (w *Workspace) checkedOutBranchRef(ctx context.Context, repo string) (string, bool) {
+	out, err := w.run(ctx, w.binary, "-C", repo, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return "", false
+	}
+	ref := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		return "", false
+	}
+	return ref, true
 }
 
 // FetchDefaultBranch refreshes the exact target returned by
@@ -236,6 +265,15 @@ func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, tar
 	if err != nil {
 		return fmt.Errorf("gitworktree: repo path: %w", err)
 	}
+	if strings.HasPrefix(target.BaseRef, "refs/heads/") {
+		exists, err := w.refExists(ctx, repo, target.BaseRef)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+	}
 	if strings.TrimSpace(target.Remote) == "" {
 		return errors.New("gitworktree: remote is required")
 	}
@@ -243,10 +281,6 @@ func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, tar
 		return errors.New("gitworktree: branch is required")
 	}
 	wantRef := "refs/remotes/" + target.Remote + "/" + target.Branch
-	localRef := "refs/heads/" + target.Branch
-	if target.BaseRef == localRef {
-		return nil
-	}
 	if target.BaseRef != wantRef {
 		return fmt.Errorf("gitworktree: invalid default branch target %q (want %q)", target.BaseRef, wantRef)
 	}
