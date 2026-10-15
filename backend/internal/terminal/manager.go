@@ -78,6 +78,7 @@ type Manager struct {
 	inputMu      sync.Mutex
 	inputBlocked map[string]int
 	lastInputAt  map[string]time.Time
+	lastTypedAt  map[string]time.Time // writes that carry text, see typesText
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -142,6 +143,7 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 		shared:       map[string]*sharedTerm{},
 		inputBlocked: map[string]int{},
 		lastInputAt:  map[string]time.Time{},
+		lastTypedAt:  map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -171,18 +173,49 @@ func (m *Manager) BeginInputDrain(terminalID string) (lastInputAt time.Time, rel
 	}
 }
 
-// TerminalOnScreen reports whether a client is showing the terminal. A client
-// without a grid keeps it parked off screen: it attached without one, or gave
-// it up with a 0x0 resize when its pane or window was hidden.
-func (m *Manager) TerminalOnScreen(terminalID string) bool {
-	m.sharedMu.Lock()
-	defer m.sharedMu.Unlock()
-	s := m.shared[terminalID]
-	if s == nil {
-		return false
+// LastTypedAt is when the terminal last accepted input that carries text, zero
+// if none since the daemon started. What the terminal sends by itself, such as
+// a focus or theme report, and keys that only move or edit do not count.
+func (m *Manager) LastTypedAt(terminalID string) time.Time {
+	m.inputMu.Lock()
+	defer m.inputMu.Unlock()
+	return m.lastTypedAt[terminalID]
+}
+
+// typesText reports input with a character outside escape sequences: text
+// typed or pasted, which bracketed paste sends between two sequences.
+func typesText(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != 0x1b {
+			if raw[i] >= 0x20 && raw[i] != 0x7f {
+				return true
+			}
+			continue
+		}
+		i++
+		if i >= len(raw) {
+			break
+		}
+		switch raw[i] {
+		case '[': // parameters and intermediates, then one final byte
+			for i+1 < len(raw) && raw[i+1] >= 0x20 && raw[i+1] <= 0x3f {
+				i++
+			}
+			i++
+		case ']', 'P', '_', '^': // a string, ended by BEL or ESC \
+			for i+1 < len(raw) && raw[i+1] != 0x07 && raw[i+1] != 0x1b {
+				i++
+			}
+			if i+1 < len(raw) && raw[i+1] == 0x07 {
+				i++
+			} else if i+2 < len(raw) && raw[i+2] == '\\' {
+				i += 2
+			}
+		case 'O': // one more byte
+			i++
+		}
 	}
-	cols, rows := largestGrid(s.members)
-	return cols > 0 && rows > 0
+	return false
 }
 
 func (m *Manager) writeInput(terminalID string, a *attachment, raw []byte, release func()) {
@@ -193,6 +226,9 @@ func (m *Manager) writeInput(terminalID string, a *attachment, raw []byte, relea
 		return
 	}
 	m.lastInputAt[terminalID] = time.Now()
+	if typesText(raw) {
+		m.lastTypedAt[terminalID] = m.lastInputAt[terminalID]
+	}
 	_ = a.writeLeased(raw, release)
 }
 

@@ -792,7 +792,7 @@ func (g *transitionInputGate) BeginInputDrain(terminalID string) (time.Time, fun
 	return g.lastInputAt, func() { once.Do(func() { g.released <- terminalID }) }
 }
 
-func (*transitionInputGate) TerminalOnScreen(string) bool { return false }
+func (g *transitionInputGate) LastTypedAt(string) time.Time { return g.lastInputAt }
 
 type blockingTransitionInputGate struct {
 	acquired chan string
@@ -805,7 +805,7 @@ func (g *blockingTransitionInputGate) BeginInputDrain(terminalID string) (time.T
 	return time.Time{}, func() {}
 }
 
-func (*blockingTransitionInputGate) TerminalOnScreen(string) bool { return false }
+func (*blockingTransitionInputGate) LastTypedAt(string) time.Time { return time.Time{} }
 
 func TestTUIIdleAfterInputRequiresANewerIdleFact(t *testing.T) {
 	inputAt := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)

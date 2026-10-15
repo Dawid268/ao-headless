@@ -1112,6 +1112,8 @@
 	"providerAccounts.replacementPrimary": "Replacement default account",
 	"providerAccounts.chooseAccount": "Choose an account",
 	"providerAccounts.loginComplete": "Account signed in. Its saved sessions can use it again.",
+	"providerAccounts.loginCompleteFirst": "Account signed in. Sessions that use this computer's own sign-in move to it when they are idle.",
+	"providerAccounts.loginCompleteNew": "Account signed in.",
 	"providerAccounts.loginFailed": "Sign-in failed. Please sign in again.",
 	"providerAccounts.loginStatusFailed": "Unable to check sign-in",
 	"providerAccounts.noAccountsAvailable": "No signed-in accounts",

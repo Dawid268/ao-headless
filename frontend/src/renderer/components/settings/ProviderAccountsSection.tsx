@@ -21,7 +21,8 @@ const METHODS = [
 	{ id: "import", icon: FileUp, name: "providerAccounts.importMethod", hint: "providerAccounts.importMethodHint" },
 ] as const;
 // The one sign-in attempt, kept in the query cache so it survives leaving settings, and polled while it waits.
-function useProviderLogin(onSettled: (login: ProviderLogin, unreachable: boolean) => void) {
+// A sign-in again names its account from the start; a new account gets its id when it completes.
+function useProviderLogin(onSettled: (login: ProviderLogin, unreachable: boolean, again: boolean) => void) {
 	const cache = useQueryClient();
 	const login = useQuery<ProviderLogin | null>({ queryKey: loginKey, queryFn: skipToken }).data ?? null;
 	const waiting = login?.status === "waiting";
@@ -38,7 +39,7 @@ function useProviderLogin(onSettled: (login: ProviderLogin, unreachable: boolean
 		const next = poll.error && login ? { ...login, status: "failed" as const } : poll.data;
 		if (!waiting || !next || next.status === "waiting") return;
 		cache.setQueryData(loginKey, next);
-		if (next.status !== "cancelled") onSettled(next, Boolean(poll.error && poll.error.code !== "PROVIDER_LOGIN_NOT_FOUND"));
+		if (next.status !== "cancelled") onSettled(next, Boolean(poll.error && poll.error.code !== "PROVIDER_LOGIN_NOT_FOUND"), Boolean(login?.accountId));
 	}, [poll.data, poll.error]);
 	// A browser sign-in opens the provider's page at once; its link stays in the panel for another browser.
 	const start = async (body: ProviderLoginRequest) => {
@@ -60,9 +61,12 @@ function useAccountsPage() {
 	const [message, setMessage] = useState("");
 	// After the default changes, the sessions still on the old default can follow.
 	const [moveOffer, setMoveOffer] = useState<{ fromId: string; toId: string } | null>(null);
-	const signIn = useProviderLogin((login, unreachable) => {
+	const signIn = useProviderLogin((login, unreachable, again) => {
 		setAdding(null);
-		setMessage(t(login.status === "complete" ? "providerAccounts.loginComplete" : unreachable ? "providerAccounts.loginStatusFailed" : "providerAccounts.loginFailed"));
+		// A provider's first account is its default, so the sessions on this computer's own sign-in move to it.
+		const first = !accounts.some((other) => other.provider === login.provider && other.id !== login.accountId);
+		const done = again ? "providerAccounts.loginComplete" : first ? "providerAccounts.loginCompleteFirst" : "providerAccounts.loginCompleteNew";
+		setMessage(t(login.status === "complete" ? done : unreachable ? "providerAccounts.loginStatusFailed" : "providerAccounts.loginFailed"));
 		if (login.status !== "complete") return;
 		if (login.accountId) setSelectedId(login.accountId);
 		void cache.invalidateQueries({ queryKey: providerAccountsKey });

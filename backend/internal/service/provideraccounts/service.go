@@ -62,11 +62,12 @@ func New(store ports.ProviderAccountStore, helper ports.AccountHelper, newID fun
 // OnChange sets what is called when the accounts a provider can use change.
 func (s *Service) OnChange(fn func()) { s.changed = fn }
 
-// Run keeps the helper and the accounts current until ctx ends; migrate reports the sessions left to move.
+// Run keeps the helper and the accounts current until ctx ends; migrate moves
+// sessions that predate Account Manager onto their accounts.
 func (s *Service) Run(ctx context.Context, log *slog.Logger, migrate func(context.Context) (int, error)) {
 	ticker := time.NewTicker(s.tick)
 	defer ticker.Stop()
-	for n, left, failing := 0, 1, false; ; n++ {
+	for n, failing := 0, false; ; n++ {
 		err := s.Sync(ctx)
 		if err != nil && !failing && ctx.Err() == nil {
 			log.Warn("managed account helper requires attention", "error", err)
@@ -79,11 +80,10 @@ func (s *Service) Run(ctx context.Context, log *slog.Logger, migrate func(contex
 				log.Warn("moving sessions off an account that reached its limit", "error", err)
 			}
 		}
-		// 20 seconds after start, then every 30, while sessions remain.
-		if !failing && migrate != nil && left > 0 && n%3 == 2 {
-			if left, err = migrate(ctx); err != nil && ctx.Err() == nil {
+		// 20 seconds after start, then every 30: a sign-in can give sessions an account to move onto.
+		if !failing && migrate != nil && n%3 == 2 {
+			if _, err = migrate(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("moving sessions onto Account Manager", "error", err)
-				left = 1
 			}
 		}
 		select {
@@ -818,6 +818,12 @@ func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.P
 	}
 	// After usage: a refused usage request makes the helper re-check that sign-in.
 	s.check(ctx, st, refresh)
+	owned := map[string]bool{} // sessions whose own agent has a route
+	for _, r := range st.Routes {
+		if !strings.Contains(string(r.SessionID), "/") {
+			owned[string(r.SessionID)] = true
+		}
+	}
 	views := make([]domain.ProviderAccountView, 0, len(st.Accounts))
 	for _, a := range st.Accounts {
 		view := domain.ProviderAccountView{ID: a.ID, Provider: a.Provider, DisplayName: a.DisplayName, Email: a.Email, Kind: a.Kind,
@@ -838,8 +844,10 @@ func (s *Service) Accounts(ctx context.Context, usage, refresh bool) ([]domain.P
 			if r.AccountID != a.ID {
 				continue
 			}
-			session, _, _ := strings.Cut(string(r.SessionID), "/") // a session's route for another provider
-			if !slices.Contains(view.Sessions, session) {
+			// A route for another provider (id/provider) lists its session only once the
+			// session's own agent has a route: work it runs, such as a side chat, does not.
+			session, _, other := strings.Cut(string(r.SessionID), "/")
+			if (!other || owned[session]) && !slices.Contains(view.Sessions, session) {
 				view.Sessions = append(view.Sessions, session)
 			}
 			if hash, err := s.ticketHash(r.SessionID, r.Provider); err == nil && byHash[hash] > 0 {

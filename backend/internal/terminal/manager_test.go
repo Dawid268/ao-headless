@@ -103,140 +103,6 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 	})
 }
 
-func TestTerminalIsOnScreenOnlyWhileAClientShowsItWithAGrid(t *testing.T) {
-	src := &fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{newFakePTY()}}}
-	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
-	defer mgr.Close()
-	conn := newFakeConn()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go mgr.Serve(ctx, conn)
-
-	// A parked pane attaches without a grid.
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
-	recv(t, conn, chTerminal, msgOpened, time.Second)
-	if mgr.TerminalOnScreen("t1") || mgr.TerminalOnScreen("t2") {
-		t.Fatal("a terminal no client shows is on screen")
-	}
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Rows: 30, Cols: 100}
-	eventually(t, time.Second, func() bool { return mgr.TerminalOnScreen("t1") })
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
-	eventually(t, time.Second, func() bool { return !mgr.TerminalOnScreen("t1") })
-}
-
-// settle waits until the connection's read loop has handled every frame sent
-// before it, so a test can assert that an earlier frame changed nothing.
-func settle(t *testing.T, c *fakeConn) {
-	t.Helper()
-	c.in <- clientMsg{Ch: chSystem, Type: msgPing}
-	recv(t, c, chSystem, msgPong, time.Second)
-}
-
-// A client whose pane goes behind another tab (or whose window is hidden) gives
-// its grid up with a 0x0 resize and stays attached. With every client parked the
-// terminal is off screen and the PTY keeps the last real size, so showing it
-// again at that size re-signals nothing.
-func TestTerminalLeavesTheScreenWhileItsOnlyClientHasGivenUpItsGrid(t *testing.T) {
-	pty := newFakePTY()
-	src := &fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}
-	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
-	defer mgr.Close()
-	conn := newFakeConn()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go mgr.Serve(ctx, conn)
-
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Rows: 40, Cols: 120}
-	recv(t, conn, chTerminal, msgOpened, time.Second)
-	eventually(t, time.Second, func() bool { return len(pty.resizeCalls()) == 1 })
-	if !mgr.TerminalOnScreen("t1") {
-		t.Fatal("a terminal a client shows is off screen")
-	}
-
-	for range 3 { // rapid tab switching
-		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize}
-		settle(t, conn)
-		if mgr.TerminalOnScreen("t1") {
-			t.Fatal("a terminal whose only client is parked is on screen")
-		}
-		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Rows: 40, Cols: 120}
-		settle(t, conn)
-		if !mgr.TerminalOnScreen("t1") {
-			t.Fatal("a terminal shown again is off screen")
-		}
-	}
-	if rs := pty.resizeCalls(); len(rs) != 1 || rs[0] != [2]uint16{40, 120} {
-		t.Fatalf("PTY resizes across hide and show = %v, want only the first 40x120", rs)
-	}
-
-	// The parked terminal still streams output and is still attached.
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize}
-	pty.push([]byte("while hidden"))
-	if m := recv(t, conn, chTerminal, msgData, time.Second); m.Data != base64.StdEncoding.EncodeToString([]byte("while hidden")) {
-		t.Fatalf("output while parked = %q", m.Data)
-	}
-
-	// A pane that changed size while hidden is resized once when it is shown.
-	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Rows: 50, Cols: 140}
-	eventually(t, time.Second, func() bool {
-		rs := pty.resizeCalls()
-		return len(rs) == 2 && rs[1] == [2]uint16{50, 140}
-	})
-}
-
-// A parked member stops driving the shared grid: the client still showing the
-// terminal takes it over, the terminal stays on screen, and the parked client
-// drives the grid again as soon as it is shown.
-func TestParkedClientNoLongerDrivesTheSharedGrid(t *testing.T) {
-	p1, p2 := newFakePTY(), newFakePTY()
-	src := &fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{p1, p2}}}
-	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
-	defer mgr.Close()
-	desktop, phone := newFakeConn(), newFakeConn()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go mgr.Serve(ctx, desktop)
-	go mgr.Serve(ctx, phone)
-
-	desktop.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Cols: 120, Rows: 40}
-	recv(t, desktop, chTerminal, msgResize, time.Second)
-	phone.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Cols: 55, Rows: 48, Role: roleSecondary}
-	if r := recv(t, phone, chTerminal, msgResize, time.Second); r.Cols != 120 || r.Rows != 40 {
-		t.Fatalf("phone follows grid = %dx%d, want the desktop's 120x40", r.Cols, r.Rows)
-	}
-
-	// The desktop hides the terminal: the phone, still showing it, drives the grid.
-	desktop.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize}
-	if r := recv(t, phone, chTerminal, msgResize, time.Second); r.Cols != 55 || r.Rows != 48 {
-		t.Fatalf("grid with the desktop parked = %dx%d, want the phone's 55x48", r.Cols, r.Rows)
-	}
-	if !mgr.TerminalOnScreen("t1") {
-		t.Fatal("a terminal the phone still shows is off screen")
-	}
-
-	// The phone hides it too: nobody shows it, and the PTY keeps its last size.
-	phone.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize}
-	settle(t, phone)
-	if mgr.TerminalOnScreen("t1") {
-		t.Fatal("a terminal every client has parked is on screen")
-	}
-	for _, p := range []*fakePTY{p1, p2} {
-		eventually(t, time.Second, func() bool { // either attach may still be starting
-			rs := p.resizeCalls()
-			return len(rs) > 0 && rs[len(rs)-1] == [2]uint16{48, 55}
-		})
-	}
-
-	// The desktop shows it again and drives the grid again.
-	desktop.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Cols: 120, Rows: 40}
-	if r := recv(t, phone, chTerminal, msgResize, time.Second); r.Cols != 120 || r.Rows != 40 {
-		t.Fatalf("grid once the desktop is shown = %dx%d, want 120x40", r.Cols, r.Rows)
-	}
-	if !mgr.TerminalOnScreen("t1") {
-		t.Fatal("a terminal the desktop shows again is off screen")
-	}
-}
-
 type fixedSessionInputLease bool
 
 func (l fixedSessionInputLease) AcquireSessionInput(domain.SessionID) (func(), bool) {
@@ -902,5 +768,28 @@ func TestLargestGridFallsBackToSecondaryWhenNoPrimaryHasASize(t *testing.T) {
 	members[parkedDesktop].cols, members[parkedDesktop].rows = 151, 38
 	if cols, rows := largestGrid(members); cols != 151 || rows != 38 {
 		t.Fatalf("largestGrid once the desktop measures = %dx%d, want 151x38", cols, rows)
+	}
+}
+
+func TestOnlyInputThatCarriesTextCountsAsTyped(t *testing.T) {
+	for input, typed := range map[string]bool{
+		"a":                                true,
+		"é":                                true,
+		"\x1b[200~pasted\x1b[201~":         true, // bracketed paste
+		"\r":                               false,
+		"\x7f":                             false, // backspace
+		"\x03":                             false, // Ctrl+C
+		"\x1b[A":                           false, // arrow
+		"\x1bOA":                           false, // arrow, application mode
+		"\x1b[I":                           false, // focus report
+		"\x1b[?997;1n":                     false, // theme report
+		"\x1b[<0;10;5M":                    false, // mouse report
+		"\x1b]11;rgb:0000/0000/0000\x1b\\": false, // colour reply, ended by ESC \
+		"\x1b]11;rgb:0000/0000/0000\x07":   false, // colour reply, ended by BEL
+		"\x1b[I\x1b]11;rgb:0/0/0\x07x":     true,
+	} {
+		if got := typesText([]byte(input)); got != typed {
+			t.Errorf("typesText(%q) = %v, want %v", input, got, typed)
+		}
 	}
 }

@@ -203,27 +203,27 @@ func TestALegacyChatWhoseStartFailedIsStartedAgainAtTheNextCheck(t *testing.T) {
 	}
 }
 
-// screenGate is the terminal mux: which terminals a client shows, and the
-// order in which keystrokes were closed and reopened.
-type screenGate struct {
-	onScreen map[string]bool
-	events   *[]string
-	onDrain  func()
+// keyGate is the terminal mux: when text was last typed, and the order in
+// which keystrokes were closed and reopened.
+type keyGate struct {
+	lastTyped time.Time
+	events    *[]string
+	onDrain   func()
 }
 
-func (g *screenGate) TerminalOnScreen(id string) bool { return g.onScreen[id] }
+func (g *keyGate) LastTypedAt(string) time.Time { return g.lastTyped }
 
-func (g *screenGate) BeginInputDrain(string) (time.Time, func()) {
+func (g *keyGate) BeginInputDrain(string) (time.Time, func()) {
 	*g.events = append(*g.events, "keystrokes closed")
 	if g.onDrain != nil {
 		g.onDrain()
 	}
-	return time.Time{}, func() { *g.events = append(*g.events, "keystrokes open") }
+	return g.lastTyped, func() { *g.events = append(*g.events, "keystrokes open") }
 }
 
 // newLegacyTerminalManager has one running Codex terminal, "mer-1", that
-// predates Account Manager, and no client showing it.
-func newLegacyTerminalManager(t *testing.T) (*Manager, *fakeStore, *fakeRuntime, *accountRoutingFake, *screenGate) {
+// predates Account Manager, with nothing typed in it.
+func newLegacyTerminalManager(t *testing.T) (*Manager, *fakeStore, *fakeRuntime, *accountRoutingFake, *keyGate) {
 	t.Helper()
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	m, st, _ := newExitedResumeManager(t, rt, supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}})
@@ -231,7 +231,7 @@ func newLegacyTerminalManager(t *testing.T) (*Manager, *fakeStore, *fakeRuntime,
 	rec.Activity.State = domain.ActivityIdle
 	st.sessions["mer-1"] = rec
 	accounts := &accountRoutingFake{env: managedLaunch}
-	gate := &screenGate{onScreen: map[string]bool{}, events: &[]string{}}
+	gate := &keyGate{events: &[]string{}}
 	rt.onDestroy = func(int, ports.RuntimeHandle) { *gate.events = append(*gate.events, "agent exited") }
 	m.accounts, m.interfaceTransition.idleSettle = accounts, time.Millisecond
 	m.SetTerminalInputGate(gate)
@@ -247,7 +247,7 @@ func turnEnded(t *testing.T, m *Manager, rec domain.SessionRecord) {
 	}
 }
 
-func TestAnIdleLegacyTerminalOffScreenIsAdoptedExitedAndResumed(t *testing.T) {
+func TestAnIdleQuietLegacyTerminalIsAdoptedExitedAndResumed(t *testing.T) {
 	m, st, rt, accounts, gate := newLegacyTerminalManager(t)
 	rt.onDestroy = func(int, ports.RuntimeHandle) {
 		if _, admitted := m.AcquireSessionInput("mer-1"); admitted || !accounts.has["mer-1"] {
@@ -267,6 +267,11 @@ func TestAnIdleLegacyTerminalOffScreenIsAdoptedExitedAndResumed(t *testing.T) {
 	if want := []string{"keystrokes closed", "agent exited", "keystrokes open"}; !reflect.DeepEqual(*gate.events, want) {
 		t.Fatalf("events=%v want %v", *gate.events, want)
 	}
+	// The resumed agent is reported idle, as it was, so it does not show "No signal" until its next turn.
+	signals := m.lcm.(*fakeLCM).signals
+	if last := signals[len(signals)-1]; last.State != domain.ActivityIdle || last.LaunchID != "launch-new" {
+		t.Fatalf("last signal=%+v, want idle for the new launch", last)
+	}
 	// It has its account now: later checks and turns leave it running.
 	turnEnded(t, m, got)
 	if remaining, err = m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || rt.destroyed != 1 {
@@ -275,15 +280,26 @@ func TestAnIdleLegacyTerminalOffScreenIsAdoptedExitedAndResumed(t *testing.T) {
 }
 
 func TestALegacyTerminalIsLeftRunningUntilItCanBeMoved(t *testing.T) {
-	for name, hold := range map[string]func(*fakeStore, *screenGate, bool){
-		"working": func(st *fakeStore, _ *screenGate, held bool) {
+	ended := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC) // when the turn ends, in each case
+	for name, hold := range map[string]func(*fakeStore, *keyGate, bool){
+		"working": func(st *fakeStore, _ *keyGate, held bool) {
 			rec := st.sessions["mer-1"]
 			rec.Activity.State = map[bool]domain.ActivityState{true: domain.ActivityActive, false: domain.ActivityIdle}[held]
 			st.sessions["mer-1"] = rec
 		},
-		"on screen": func(_ *fakeStore, gate *screenGate, held bool) { gate.onScreen["tmux-mer-1"] = held },
+		// A key since the turn ended, long ago: text typed and not sent, which a restart would lose.
+		"unsent text": func(_ *fakeStore, gate *keyGate, held bool) {
+			gate.lastTyped = ended.Add(map[bool]time.Duration{true: time.Second, false: -time.Minute}[held])
+		},
+		// A key typed after the first reading lands before input closes.
+		"key before input closed": func(_ *fakeStore, gate *keyGate, held bool) {
+			gate.lastTyped, gate.onDrain = time.Time{}, nil
+			if held {
+				gate.onDrain = func() { gate.lastTyped = ended.Add(110 * time.Second) }
+			}
+		},
 		// A prompt accepted just before input closed starts its turn before the second reading.
-		"turn starting": func(st *fakeStore, gate *screenGate, held bool) {
+		"turn starting": func(st *fakeStore, gate *keyGate, held bool) {
 			gate.onDrain = nil
 			if held {
 				gate.onDrain = func() {
@@ -295,8 +311,11 @@ func TestALegacyTerminalIsLeftRunningUntilItCanBeMoved(t *testing.T) {
 		},
 	} {
 		m, st, rt, accounts, gate := newLegacyTerminalManager(t)
+		now := ended
+		m.clock = func() time.Time { return now }
 		hold(st, gate, true)
 		turnEnded(t, m, st.sessions["mer-1"])
+		now = ended.Add(2 * time.Minute)
 		remaining, err := m.MigrateLegacySessions(context.Background())
 		if err != nil || remaining != 1 || rt.destroyed != 0 || len(accounts.adopted) != 0 {
 			t.Fatalf("%s: remaining=%d err=%v destroyed=%d adopted=%v", name, remaining, err, rt.destroyed, accounts.adopted)
@@ -307,6 +326,32 @@ func TestALegacyTerminalIsLeftRunningUntilItCanBeMoved(t *testing.T) {
 		st.sessions["mer-1"] = rec
 		if remaining, err = m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || rt.created != 1 {
 			t.Fatalf("%s, once free: remaining=%d err=%v created=%d", name, remaining, err, rt.created)
+		}
+	}
+}
+
+func TestATerminalIsQuietWithNoKeyFor30SecondsAndNoneSinceItsTurnEnded(t *testing.T) {
+	m, _, _, _, _ := newLegacyTerminalManager(t)
+	rec, key := domain.SessionRecord{ID: "mer-1"}, time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	for _, row := range []struct {
+		name            string
+		lastTyped       time.Time
+		ended, sinceKey time.Duration // after the key; ended 0 means no turn ended in this daemon's life
+		quiet           bool
+	}{
+		{name: "nothing typed since the daemon started", sinceKey: time.Second, quiet: true},
+		{name: "prompt sent, its turn ended, 30 s since the key", lastTyped: key, ended: 5 * time.Second, sinceKey: 30 * time.Second, quiet: true},
+		{name: "prompt sent, its turn ended, 20 s since the key", lastTyped: key, ended: 5 * time.Second, sinceKey: 20 * time.Second},
+		{name: "typed after the turn ended", lastTyped: key, ended: -5 * time.Second, sinceKey: 5 * time.Minute},
+		{name: "typed with no turn ended since", lastTyped: key, sinceKey: 5 * time.Minute},
+	} {
+		m.legacyTurnEnded.Delete(rec.ID)
+		if row.ended != 0 {
+			m.legacyTurnEnded.Store(rec.ID, key.Add(row.ended))
+		}
+		m.clock = func() time.Time { return key.Add(row.sinceKey) }
+		if got := m.terminalQuiet(rec, row.lastTyped); got != row.quiet {
+			t.Errorf("%s: quiet=%v, want %v", row.name, got, row.quiet)
 		}
 	}
 }
@@ -449,18 +494,30 @@ func TestNoMoreThanFourLegacySessionsAreMovedAtOnce(t *testing.T) {
 }
 
 // With no default account a restart would put the session back on the
-// computer's own setup, so nothing is stopped and nothing is tried again.
-func TestALegacySessionIsNotRestartedWhenThereIsNoDefaultToMoveOnto(t *testing.T) {
+// computer's own setup, so nothing is stopped. The first sign-in gives the
+// provider a default, and the next check moves its sessions, also those
+// started after the first listing.
+func TestALegacySessionWaitsForADefaultAndMovesOnceOneIsAdded(t *testing.T) {
 	t.Run("chat", func(t *testing.T) {
 		accounts := &accountRoutingFake{noDefault: true}
-		launcher := &restartingLauncher{recordingLauncher: &recordingLauncher{}, accounts: accounts, running: map[domain.SessionID]bool{"quiet": true}}
+		launcher := &restartingLauncher{recordingLauncher: &recordingLauncher{}, accounts: accounts, running: map[domain.SessionID]bool{"quiet": true, "later": true}}
 		m, st, _ := newChatManager(launcher)
 		launcher.store, m.accounts = st, accounts
+		m.legacySlots = semaphore.NewWeighted(1) // these fakes are not safe to restart side by side
 		rec := legacyChat("quiet")
 		rec.Activity.State = domain.ActivityIdle
 		st.sessions["quiet"] = rec
-		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || len(launcher.restarts) != 0 {
-			t.Fatalf("remaining=%d err=%v restarts=%v", remaining, err, launcher.restarts)
+		for range 2 {
+			if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || len(launcher.restarts) != 0 {
+				t.Fatalf("remaining=%d err=%v restarts=%v", remaining, err, launcher.restarts)
+			}
+		}
+		later := legacyChat("later")
+		later.Activity.State = domain.ActivityIdle
+		st.sessions["later"] = later
+		accounts.noDefault = false
+		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || len(launcher.restarts) != 2 {
+			t.Fatalf("after the sign-in: remaining=%d err=%v restarts=%v", remaining, err, launcher.restarts)
 		}
 	})
 	t.Run("terminal", func(t *testing.T) {
@@ -468,6 +525,10 @@ func TestALegacySessionIsNotRestartedWhenThereIsNoDefaultToMoveOnto(t *testing.T
 		accounts.noDefault = true
 		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || rt.destroyed != 0 || rt.created != 0 {
 			t.Fatalf("remaining=%d err=%v destroyed=%d created=%d", remaining, err, rt.destroyed, rt.created)
+		}
+		accounts.noDefault = false
+		if remaining, err := m.MigrateLegacySessions(context.Background()); err != nil || remaining != 0 || rt.created != 1 {
+			t.Fatalf("after the sign-in: remaining=%d err=%v created=%d", remaining, err, rt.created)
 		}
 	})
 }

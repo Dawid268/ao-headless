@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,19 +93,24 @@ func legacyCandidate(rec domain.SessionRecord) bool {
 
 // MigrateLegacySessions restarts, four at a time, the idle sessions that still run
 // without an account, and reports how many keep running without one. They are
-// listed once: no session is created without an account after that, and only the
-// account loop calls this. A chat that is asleep or stopped is adopted when it
-// next starts and is not listed.
+// listed again whenever the providers with a default account change, so a
+// sign-in moves the sessions of a provider that had none, however old they are.
+// Only the account loop calls this. A chat that is asleep or stopped is adopted
+// when it next starts and is not listed.
 func (m *Manager) MigrateLegacySessions(ctx context.Context) (int, error) {
 	if m.accounts == nil {
 		return 0, nil
 	}
-	if m.legacyLeft == nil {
+	defaults, err := m.legacyDefaults(ctx)
+	if err != nil {
+		return len(m.legacyLeft), err
+	}
+	if m.legacyLeft == nil || defaults != m.legacyListedFor {
 		sessions, err := m.store.ListAllSessions(ctx)
 		if err != nil {
 			return 0, err
 		}
-		m.legacyLeft = []domain.SessionID{}
+		m.legacyLeft, m.legacyListedFor = []domain.SessionID{}, defaults
 		for _, rec := range sessions {
 			if !legacyCandidate(rec) {
 				continue
@@ -135,11 +141,27 @@ func (m *Manager) MigrateLegacySessions(ctx context.Context) (int, error) {
 	return len(kept), errors.Join(failures...)
 }
 
+// legacyDefaults names the harnesses whose provider has a default account to move onto.
+func (m *Manager) legacyDefaults(ctx context.Context) (string, error) {
+	var with []string
+	for _, harness := range domain.AccountHarnesses {
+		ready, err := m.accounts.HasDefault(ctx, harness)
+		if err != nil {
+			return "", err
+		}
+		if ready {
+			with = append(with, string(harness))
+		}
+	}
+	return strings.Join(with, " "), nil
+}
+
 // SessionTurnEnded moves such a session as its turn ends, ahead of the next check.
 func (m *Manager) SessionTurnEnded(rec domain.SessionRecord) {
 	if m.accounts == nil || !legacyCandidate(rec) || m.beginAgentSwitchAttempt() != nil {
 		return
 	}
+	ended := m.clock()
 	go func() {
 		defer m.agentSwitchWorkers.Done()
 		ctx, cancel := context.WithTimeout(m.backgroundContext, 2*time.Minute)
@@ -147,14 +169,17 @@ func (m *Manager) SessionTurnEnded(rec domain.SessionRecord) {
 		if managed, err := m.sessionManaged(ctx, rec.ID); err != nil || managed {
 			return
 		}
-		if _, err := m.moveLegacySession(ctx, rec.ID); err != nil {
+		m.legacyTurnEnded.Store(rec.ID, ended)
+		if left, err := m.moveLegacySession(ctx, rec.ID); err != nil {
 			m.logger.Warn("moving a session onto Account Manager", "session", rec.ID, "error", err)
+		} else if left {
+			m.logger.Info("session not moved onto its account at its turn end", "session", rec.ID)
 		}
 	}()
 }
 
 // moveLegacySession restarts one session onto an account if it runs without one and
-// is idle now, a terminal also off screen. It reports whether it is still to be moved.
+// is idle now, a terminal also quiet. It reports whether it is still to be moved.
 func (m *Manager) moveLegacySession(ctx context.Context, id domain.SessionID) (bool, error) {
 	if _, moving := m.legacyMoving.LoadOrStore(id, struct{}{}); moving {
 		return true, nil
@@ -213,18 +238,53 @@ func (m *Manager) moveLegacySession(ctx context.Context, id domain.SessionID) (b
 		return !managed, err
 	}
 	if rec.Activity.State != domain.ActivityIdle || rec.Metadata.RuntimeLaunchID == "" ||
-		rec.Metadata.AgentSessionID == "" || m.terminalOnScreen(rec) {
+		rec.Metadata.AgentSessionID == "" || !m.terminalQuiet(rec, m.terminalLastTyped(rec)) {
 		return true, nil
 	}
 	if _, release := m.beginTerminalInputDrain(rec); release != nil {
 		defer release() // keystrokes stay closed until the agent has resumed
 	}
+	if !m.terminalQuiet(rec, m.terminalLastTyped(rec)) { // text landed before input closed
+		return true, nil
+	}
 	exit := func(ctx context.Context, _ domain.SessionID) (bool, error) { return m.exitLegacyTerminal(ctx, rec) }
 	if exited, err := m.stopLegacySession(ctx, id, exit); err != nil || !exited {
 		return true, err
 	}
-	_, err = m.ResumeAgentWithMode(ctx, id)
-	return err != nil, err
+	if _, err = m.ResumeAgentWithMode(ctx, id); err != nil {
+		return true, err
+	}
+	m.legacyTurnEnded.Delete(id)
+	return false, m.reportResumedIdle(ctx, id)
+}
+
+// legacyQuietFor is how long a terminal goes without typed text before it is moved.
+const legacyQuietFor = 30 * time.Second
+
+// terminalQuiet reports a terminal nobody is typing in: no text typed for
+// legacyQuietFor and none since its last turn ended, so no unsent text is lost.
+// Text with no turn ended after it, in this daemon's life, counts as unsent.
+func (m *Manager) terminalQuiet(rec domain.SessionRecord, lastTyped time.Time) bool {
+	if lastTyped.IsZero() {
+		return true
+	}
+	ended, _ := m.legacyTurnEnded.Load(rec.ID)
+	endedAt, _ := ended.(time.Time)
+	return m.clock().Sub(lastTyped) >= legacyQuietFor && lastTyped.Before(endedAt)
+}
+
+// reportResumedIdle reports the resumed agent idle, as it was before the move, so
+// the terminal does not show "No signal" until its next turn. Its keystrokes are
+// still closed, so no turn can have started.
+func (m *Manager) reportResumedIdle(ctx context.Context, id domain.SessionID) error {
+	rec, err := m.getRecord(ctx, id)
+	if err != nil || rec.Activity.State != domain.ActivityIdle {
+		return err
+	}
+	return m.lcm.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Timestamp: m.clock(),
+		Event: "account-move", LaunchID: strings.TrimSpace(rec.Metadata.RuntimeLaunchID),
+	})
 }
 
 // exitLegacyTerminal gives a terminal its account and exits its agent, unless a
@@ -258,10 +318,15 @@ func (m *Manager) exitLegacyTerminal(ctx context.Context, rec domain.SessionReco
 	return true, nil
 }
 
-func (m *Manager) terminalOnScreen(rec domain.SessionRecord) bool {
+// terminalLastTyped is when text was last typed in the terminal.
+func (m *Manager) terminalLastTyped(rec domain.SessionRecord) time.Time {
 	m.terminalInputGateMu.Lock()
-	defer m.terminalInputGateMu.Unlock()
-	return m.terminalInputGate != nil && m.terminalInputGate.TerminalOnScreen(rec.Metadata.RuntimeHandleID)
+	gate := m.terminalInputGate
+	m.terminalInputGateMu.Unlock()
+	if gate == nil {
+		return time.Time{}
+	}
+	return gate.LastTypedAt(runtimeHandle(rec.Metadata).ID)
 }
 
 // stopLegacySession runs stop while nothing else may operate on the session.

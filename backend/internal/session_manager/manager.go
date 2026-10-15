@@ -298,8 +298,9 @@ type TerminalInputGate interface {
 	// barrier to avoid trusting an idle hook which predates already-buffered PTY
 	// input.
 	BeginInputDrain(terminalID string) (lastInputAt time.Time, release func())
-	// TerminalOnScreen reports whether a client is showing the terminal.
-	TerminalOnScreen(terminalID string) bool
+	// LastTypedAt is the time of the newest accepted write that carried text,
+	// without blocking any: what the terminal reports by itself does not count.
+	LastTypedAt(terminalID string) time.Time
 }
 
 // ReviewerTerminator tears down a worker's reviewer pane when the worker leaves
@@ -546,10 +547,12 @@ type Manager struct {
 
 	terminalInputGateMu sync.Mutex
 	terminalInputGate   TerminalInputGate
-	// Moves onto Account Manager: free slots, sessions in flight, sessions stopped and not yet started.
-	legacySlots                *semaphore.Weighted
-	legacyMoving, legacyExited sync.Map
-	legacyLeft                 []domain.SessionID // nil until they are listed
+	// Moves onto Account Manager: free slots, sessions in flight, sessions stopped and not yet started,
+	// and when each session's last turn ended.
+	legacySlots                                 *semaphore.Weighted
+	legacyMoving, legacyExited, legacyTurnEnded sync.Map
+	legacyLeft                                  []domain.SessionID // nil until they are listed
+	legacyListedFor                             string             // the providers with a default account when they were
 
 	reviewersMu sync.Mutex
 	reviewers   ReviewerTerminator

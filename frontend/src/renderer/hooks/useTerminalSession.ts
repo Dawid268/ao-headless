@@ -1008,19 +1008,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		connect();
 	}, [daemonReady, connect]);
 
-	// Tell the daemon nobody is looking at this terminal. A 0×0 grid is the mux's
-	// "attached without claiming a size": the daemon stops counting this client
-	// as showing the terminal and leaves the PTY at its size unless another
-	// client shows it. Forgetting the published grid makes the next visible sync
-	// send the real one again. The cloud mux has no such frame, so it is skipped.
-	const parkOffScreen = useCallback(() => {
-		const r = runtime.current;
-		r.needsVisibleSizeSync = true;
-		if (!r.mux || !r.handle || !r.lastPublishedGrid || sessionRef.current?.cloud) return;
-		r.mux.resize(r.handle, 0, 0);
-		r.lastPublishedGrid = null;
-	}, []);
-
 	// A parked cache entry keeps parsing output, but it must be inert as a PTY
 	// client. A hidden local refit cannot be forwarded. useLayoutEffect runs
 	// before the cache's activation preparation, so the first visible frame
@@ -1028,19 +1015,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// longer changes.
 	const isVisible = options.isVisible !== false;
 	useLayoutEffect(() => {
-		if (!isVisible) parkOffScreen();
-	}, [isVisible, parkOffScreen]);
-
-	// A hidden or minimised window takes its active pane off screen as well.
-	useEffect(() => {
-		const onWindowVisibility = () => {
-			const terminal = runtime.current.terminal;
-			if (document.visibilityState === "hidden") parkOffScreen();
-			else if (terminal?.hasMeasuredGrid) syncVisibleSize(terminal.cols, terminal.rows);
-		};
-		document.addEventListener("visibilitychange", onWindowVisibility);
-		return () => document.removeEventListener("visibilitychange", onWindowVisibility);
-	}, [parkOffScreen, syncVisibleSize]);
+		if (isVisible) return;
+		runtime.current.needsVisibleSizeSync = true;
+	}, [isVisible]);
 
 	useEffect(() => {
 		const r = runtime.current;

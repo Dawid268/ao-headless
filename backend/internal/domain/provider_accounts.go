@@ -13,6 +13,9 @@ func AccountProvider(h AgentHarness) string {
 	return map[AgentHarness]string{HarnessCodex: "codex", HarnessClaudeCode: "claude"}[h]
 }
 
+// AccountHarnesses are the harnesses AccountProvider names a provider for.
+var AccountHarnesses = []AgentHarness{HarnessClaudeCode, HarnessCodex}
+
 // ProviderAccount is one saved account. CredentialRef and AuthID name its
 // sign-in inside the account helper and never leave the daemon; both are empty
 // once the account is signed out.

@@ -497,6 +497,26 @@ describe("a sign-in that is waiting", () => {
 		expect(cache.getQueryData(loginCacheKey)).toMatchObject({ status: "complete", accountId: "c" });
 		await waitFor(() => expect(mock.get.mock.calls.filter(([path]) => path === LIST).length).toBeGreaterThan(reads));
 	});
+	it.each([
+		["a provider's first account", 1, "claude", "c", "Account signed in. Sessions that use this computer's own sign-in move to it when they are idle."],
+		["another account of a provider", 0, "codex", "z", "Account signed in."],
+	])("says what the sign-in of %s changes", async (_, index, provider, accountId, message) => {
+		loginStart = { data: waitingLogin({ provider }) };
+		loginStatus = { data: waitingLogin({ provider, status: "complete", accountId }) };
+		const user = await start();
+		await user.click(addButtons()[index]);
+		await user.click(screen.getByRole("button", { name: "Browser" }));
+		await waitFor(() => expect(screen.getByRole("status").textContent).toBe(message));
+	});
+	it("says that an account signed in again serves its sessions again", async () => {
+		inventory.accounts[1] = { ...bob, signedIn: false };
+		loginStart = { data: waitingLogin({ accountId: "b" }) };
+		loginStatus = { data: waitingLogin({ status: "complete", accountId: "b" }) };
+		const user = await start();
+		await open(user, bob);
+		await user.click(within(detail()).getByRole("button", { name: "Sign in again" }));
+		await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Account signed in. Its saved sessions can use it again."));
+	});
 	it("keeps the attempt while its state cannot be read, and says so when the provider reports failure", async () => {
 		loginStatus = { error: { message: "AO is reconnecting" } };
 		const user = userEvent.setup();

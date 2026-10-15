@@ -214,20 +214,25 @@ func TestSyncSweepsSignInsNoAccountNames(t *testing.T) {
 	}
 }
 
-func TestRunSyncsReadsAndMovesOldChatsUntilNoneAreLeft(t *testing.T) {
+// The moves keep being checked after none are left: a later sign-in can give
+// sessions that predate Account Manager a default account to move onto.
+func TestRunSyncsReadsAndKeepsMovingOldSessions(t *testing.T) {
 	h := setup(t)
 	h.svc.tick = time.Millisecond
 	h.signIn("codex", "native@example.com")
 	ctx, stop := context.WithCancel(h.ctx)
-	// One failed pass, then two chats left, one, none.
-	answers, calls := []int{0, 2, 1, 0}, make(chan int, 16)
+	// One failed pass, then two chats left, one, none, and the checks go on.
+	answers, calls := []int{0, 2, 1, 0, 0, 0}, make(chan int, 64)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		pass := 0
 		h.svc.Run(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) (int, error) {
 			pass++
-			calls <- pass
+			select { // never block the loop once the test has stopped reading
+			case calls <- pass:
+			default:
+			}
 			if pass == 1 {
 				return 0, errInjected
 			}
@@ -238,15 +243,11 @@ func TestRunSyncsReadsAndMovesOldChatsUntilNoneAreLeft(t *testing.T) {
 		select {
 		case <-calls:
 		case <-time.After(5 * time.Second):
-			t.Fatal("the migration stopped being called before it reported none left")
+			t.Fatal("the migration stopped being called")
 		}
 	}
-	time.Sleep(30 * time.Millisecond)
 	stop()
 	<-done
-	if len(calls) != 0 {
-		t.Fatalf("the migration was called %d more times after it reported none left", len(calls))
-	}
 	state := h.store.get()
 	if len(state.Accounts) != 1 || h.helper.applies < 2 || len(h.helper.usageFor) == 0 || h.helper.heldCalls == 0 {
 		t.Fatalf("accounts=%d pushes=%d usage reads=%d listings=%d", len(state.Accounts), h.helper.applies, len(h.helper.usageFor), h.helper.heldCalls)

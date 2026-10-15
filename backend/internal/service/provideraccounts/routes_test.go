@@ -122,3 +122,20 @@ func TestAReviewerOnAnotherProviderGetsAnAccountOfItsOwn(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// A side chat of a session that still runs on the computer's own sign-in goes
+// through an account, but does not put the session on it; moving its own agent does.
+func TestASideChatDoesNotPutASessionWithoutAnAccountOnOne(t *testing.T) {
+	h := setup(t)
+	claude := h.signIn("claude", "max@example.com")
+	if env := h.launch("old", domain.HarnessClaudeCode, true); len(env) == 0 {
+		t.Fatal("the side chat got no account")
+	}
+	if got := h.view(claude).Sessions; len(got) != 0 {
+		t.Fatalf("the account lists %v", got)
+	}
+	h.launch("old", domain.HarnessClaudeCode, false)
+	if got := h.view(claude).Sessions; !reflect.DeepEqual(got, []string{"old"}) {
+		t.Fatalf("after its own agent moved, the account lists %v", got)
+	}
+}
