@@ -28,22 +28,14 @@ On push to `main` / `feat/capacity-admission-remote` (paths under `backend/` or
 `deploy/headless/Dockerfile` and pushes:
 
 ```text
-ghcr.io/dawid268/ao-headless:sha-<short>
-ghcr.io/dawid268/ao-headless:main          # only from main
-ghcr.io/dawid268/ao-headless:feat-capacity-admission-remote  # branch tag
+ghcr.io/dawid268/ao-headless:latest     # rolling — what stack.yml uses
+ghcr.io/dawid268/ao-headless:sha-<short>  # pinned rollback
 ```
 
 **Portainer** needs a registry credential for `ghcr.io` (PAT with
 `read:packages`, or a fine-grained token that can pull that package). Link the
 package to the repo and grant the Portainer pull identity access if the package
 is private.
-
-Manual one-off (optional):
-
-```bash
-docker build -f deploy/headless/Dockerfile -t ghcr.io/dawid268/ao-headless:main .
-docker push ghcr.io/dawid268/ao-headless:main
-```
 
 ## 2. Create Swarm stack in Portainer
 
@@ -55,27 +47,28 @@ volume with `/var/lib/ao-headless:/ao-data` after `mkdir -p /var/lib/ao-headless
 
 1. Portainer → **Stacks** → **Add stack** (Swarm / endpoint id=1).
 2. Name: `ao-headless` (or similar; **do not** reuse names of existing stacks).
-3. Paste [`stack.yml`](./stack.yml).
-4. Environment variables:
+3. Git: `https://github.com/Dawid268/ao-headless.git`, ref
+   `refs/heads/feat/capacity-admission-remote`, compose
+   `deploy/headless/stack.yml` — **or** Web editor paste of that file.
+4. Environment variables (no `AO_IMAGE` — image is hardcoded `:latest`):
 
 | Key | Example |
 |-----|---------|
 | `AO_DOMAIN` | `ao.subscribeit.pl` |
-| `AO_IMAGE` | `ghcr.io/dawid268/ao-headless:sha-….` (pinned) or `:main` |
 | `TZ` | `Europe/Warsaw` |
 
-**Deploy flow:** Actions publishes image → Portainer stack env `AO_IMAGE` →
-Update stack with **re-pull image**. Do not build on the VPS.
+**Deploy flow:** Actions publishes `:latest` → Portainer **Update the stack** with
+**Re-pull image and redeploy**. Do not build on the VPS. Optionally enable
+GitOps polling on the stack so compose + image refresh without editing env.
 
-5. Deploy with **re-pull image** when updating tags.
-6. Wait 1–2 minutes for Traefik router registration (404 briefly is normal).
+5. Wait 1–2 minutes for Traefik router registration (404 briefly is normal).
 
 ### Checklist right after DNS
 
 ```text
 1. dig +short AO_DOMAIN          → 57.129.41.248
-2. Build/push AO_IMAGE (or use existing GHCR tag Portainer can pull)
-3. Deploy stack with AO_DOMAIN + AO_IMAGE
+2. Wait for Actions → :latest on GHCR (or workflow_dispatch)
+3. Deploy stack with AO_DOMAIN + TZ only
 4. curl -sS https://AO_DOMAIN/api/v1/identity   → JSON hostId
 5. Logs → Password
 6. Local AO → Remote hosts → https://AO_DOMAIN + password

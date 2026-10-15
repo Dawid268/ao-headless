@@ -1,5 +1,5 @@
 # Build and publish the headless AO daemon image to GHCR.
-# Portainer Swarm stack pulls: ghcr.io/<owner>/ao-headless:<tag>
+# Portainer stack uses :latest (rolling). Sha tags remain for rollback.
 name: AO headless image
 
 on:
@@ -40,12 +40,15 @@ jobs:
           echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "extra_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref_name }}" == main ]]; then
-            echo "extra_tag=main" >> "$GITHUB_OUTPUT"
+            echo "push_latest=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_name }}" == main || "${{ github.ref_name }}" == feat/capacity-admission-remote ]]; then
+            # Rolling tag Portainer pulls — no AO_IMAGE env needed in stack.yml.
+            echo "extra_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "push_latest=true" >> "$GITHUB_OUTPUT"
           else
-            # Branch builds stay pullable without overwriting :main
             safe="$(echo '${{ github.ref_name }}' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
             echo "extra_tag=${safe}" >> "$GITHUB_OUTPUT"
+            echo "push_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/setup-buildx-action@v3
@@ -74,7 +77,9 @@ jobs:
             echo "### Published"
             echo "- \`${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}\`"
             echo "- \`${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.extra_tag }}\`"
-            echo ""
-            echo "Portainer env: \`AO_IMAGE=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}\`"
+            if [[ "${{ steps.meta.outputs.push_latest }}" == "true" ]]; then
+              echo ""
+              echo "Portainer stack image is fixed to \`:latest\` — Update stack with **re-pull image** (no AO_IMAGE env)."
+            fi
             echo "Pair URL: \`https://ao.subscribeit.pl\`"
           } >> "$GITHUB_STEP_SUMMARY"

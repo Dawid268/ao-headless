@@ -2,8 +2,10 @@
 #
 # Portainer env (required):
 #   AO_DOMAIN=ao.subscribeit.pl
-#   AO_IMAGE=ghcr.io/dawid268/ao-headless:sha-b13c30f
 #   TZ=Europe/Warsaw
+#
+# Image is rolling :latest from Actions (Dawid268/ao-headless). No AO_IMAGE env.
+# After each CI publish: Update stack with **re-pull image** (or enable GitOps).
 #
 # Swarm/Portainer only supports plain ${VAR} substitution — no ${VAR:-default}.
 # Do NOT publish host ports 80/443. Network traefik-public must already exist.
@@ -11,7 +13,7 @@ version: "3.8"
 
 services:
   ao:
-    image: ${AO_IMAGE}
+    image: ghcr.io/dawid268/ao-headless:latest
     environment:
       TZ: ${TZ}
       AO_DATA_DIR: /ao-data
