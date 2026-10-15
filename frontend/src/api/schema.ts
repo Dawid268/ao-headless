@@ -5554,8 +5554,6 @@ export interface components {
             };
         };
         RestoreArtifactVersionRequest: {
-            /** @description Hex SHA-256 of the file content the restore was requested against. */
-            expectedFileFingerprint: string;
             /** @description Artifact-directory-relative file path, as listed in the session's artifactFiles. */
             path: string;
             /**

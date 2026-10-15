@@ -33,6 +33,7 @@ type ArtifactVersionService interface {
 	RecordSave(ctx context.Context, sess domain.SessionRecord, relPath string) error
 	RecordRestore(ctx context.Context, sess domain.SessionRecord, relPath string, from int64) error
 	Sync(ctx context.Context, sess domain.SessionRecord, relPath string) error
+	Snapshot(ctx context.Context, sess domain.SessionRecord, relPath string) error
 }
 
 func artifactVersionSummary(v domain.SessionArtifactVersion) ArtifactVersionSummary {
@@ -167,11 +168,6 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	expected := strings.TrimSpace(in.ExpectedFileFingerprint)
-	if expected == "" {
-		envelope.WriteError(w, r, apierr.Invalid("ARTIFACT_FILE_FINGERPRINT_REQUIRED", "expectedFileFingerprint is required", nil))
-		return
-	}
 	sess, clean, ok := c.listedArtifactPath(w, r, in.Path)
 	if !ok {
 		return
@@ -184,7 +180,9 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	if err := c.writeArtifactSnapshotted(r.Context(), sess.SessionRecord, clean, expected, []byte(content)); err != nil {
+	// No fingerprint check: the user chose the content to write, and the content
+	// it replaces is recorded as a version first, so nothing is lost.
+	if err := c.writeArtifactSnapshotted(r.Context(), sess.SessionRecord, clean, "", []byte(content)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeArtifactFileNotFound(w, r)
 			return
@@ -203,13 +201,19 @@ func (c *SessionsController) restoreArtifactVersion(w http.ResponseWriter, r *ht
 // writeArtifactSnapshotted replaces a listed artifact file the way a save does.
 // Under the edit lock it first records any content the observer has not
 // versioned yet, so the write never destroys the only copy of an agent edit,
-// and it releases the lock before the caller records the save.
+// and it releases the lock before the caller records the save. An empty
+// expected skips the fingerprint check and records the current content without
+// waiting for it to settle, which is what a restore wants.
 func (c *SessionsController) writeArtifactSnapshotted(ctx context.Context, sess domain.SessionRecord, relPath, expected string, content []byte) error {
 	artifactEditMu.Lock()
 	defer artifactEditMu.Unlock()
 	if c.ArtifactVersions != nil {
-		if err := c.ArtifactVersions.Sync(ctx, sess, relPath); err != nil {
-			slog.Default().Debug("artifact versions: sync before save failed", "session", sess.ID, "path", relPath, "err", err)
+		keep := c.ArtifactVersions.Sync
+		if expected == "" {
+			keep = c.ArtifactVersions.Snapshot
+		}
+		if err := keep(ctx, sess, relPath); err != nil {
+			slog.Default().Debug("artifact versions: keeping the current content before a write failed", "session", sess.ID, "path", relPath, "err", err)
 		}
 	}
 	return writeArtifactFile(sess.Metadata.ArtifactDir, relPath, expected, content)

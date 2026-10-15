@@ -270,7 +270,7 @@ func writeArtifactFile(dir, relPath, expected string, content []byte) error {
 	if err != nil {
 		return fmt.Errorf("read artifact file: %w", err)
 	}
-	if artifactFingerprint(current) != expected {
+	if expected != "" && artifactFingerprint(current) != expected {
 		return apierr.Conflict("ARTIFACT_FILE_STALE", "File changed while it was being edited", map[string]any{"fileFingerprint": artifactFingerprint(current)})
 	}
 	if bytes.Equal(current, content) {

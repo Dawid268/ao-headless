@@ -48,17 +48,15 @@ export function useArtifactVersion({ hostId, path, sessionId, version }: { hostI
 export function useRestoreArtifactVersion({ hostId, path, rawUrl, sessionId }: { hostId?: string; path: string; rawUrl?: string; sessionId: string }) {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async ({ expectedFileFingerprint, version }: { expectedFileFingerprint: string; version: number }) => {
+		mutationFn: async ({ version }: { version: number }) => {
 			const { data, error } = await clientForSessionHost(hostId).POST("/api/v1/sessions/{sessionId}/artifact-versions/restore", {
 				params: { path: { sessionId } },
-				body: { expectedFileFingerprint, path, version },
+				body: { path, version },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to restore this version"));
 			if (!data) throw new Error("Unable to restore this version");
 			return data;
 		},
-		// A refused restore usually means the file moved on; reload it so a retry carries its new fingerprint.
-		onError: () => queryClient.invalidateQueries({ queryKey: sessionArtifactFileQueryOptions(sessionId, path, rawUrl).queryKey }),
 		onSuccess: async () => {
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: sessionArtifactFileQueryOptions(sessionId, path, rawUrl).queryKey }),

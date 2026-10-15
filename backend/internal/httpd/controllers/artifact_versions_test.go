@@ -66,6 +66,10 @@ func (f *fakeArtifactVersions) Sync(_ context.Context, _ domain.SessionRecord, r
 	return nil
 }
 
+func (f *fakeArtifactVersions) Snapshot(ctx context.Context, sess domain.SessionRecord, relPath string) error {
+	return f.Sync(ctx, sess, relPath)
+}
+
 func (f *fakeArtifactVersions) RecordRestore(ctx context.Context, sess domain.SessionRecord, relPath string, from int64) error {
 	if err := f.RecordSave(ctx, sess, relPath); err != nil {
 		return err
@@ -172,16 +176,12 @@ func TestArtifactVersionRestoreWritesTheFileAndRecordsAUserVersion(t *testing.T)
 	srv, fake, dir := artifactVersionServer(t)
 	restore := srv.URL + "/api/v1/sessions/ao-1/artifact-versions/restore"
 
-	// A restore against a stale fingerprint is refused and leaves the file be.
-	status, _ := artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1, "expectedFileFingerprint": artifactSHA("something else")})
-	if status != http.StatusConflict {
-		t.Fatalf("stale restore: status = %d, want 409", status)
+	// The file moved on since the viewer last read it. A restore does not care,
+	// and keeps what it replaces as a version.
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("edited meanwhile"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "plan.md")); string(data) != "v2 agent" {
-		t.Fatalf("file after a refused restore = %q", data)
-	}
-
-	status, body := artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1, "expectedFileFingerprint": artifactSHA("v2 agent")})
+	status, body := artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1})
 	if status != http.StatusOK {
 		t.Fatalf("restore: status=%d body=%s", status, body)
 	}
@@ -189,11 +189,15 @@ func TestArtifactVersionRestoreWritesTheFileAndRecordsAUserVersion(t *testing.T)
 		t.Fatalf("file after restore = %q, want v1 agent", data)
 	}
 	last := fake.versions[len(fake.versions)-1]
-	if len(fake.versions) != 3 || last.Version != 3 || last.Source != domain.ArtifactVersionSourceUser || last.RestoredFrom != 1 {
-		t.Fatalf("versions = %+v, want a third, user-written one that restored version 1", fake.versions)
+	kept := fake.versions[len(fake.versions)-2]
+	if len(fake.versions) != 4 || fake.blobs[kept.SHA256] != "edited meanwhile" || kept.Source != domain.ArtifactVersionSourceAgent {
+		t.Fatalf("versions = %+v, want the replaced content kept as a version", fake.versions)
+	}
+	if last.Version != 4 || last.Source != domain.ArtifactVersionSourceUser || last.RestoredFrom != 1 {
+		t.Fatalf("versions = %+v, want a last, user-written one that restored version 1", fake.versions)
 	}
 
-	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 7, "expectedFileFingerprint": artifactSHA("v1 agent")})
+	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 7})
 	if status != http.StatusNotFound {
 		t.Fatalf("unknown version: status = %d, want 404", status)
 	}
@@ -240,7 +244,6 @@ func TestArtifactVersionReadAndRestoreRefuseUnreadableVersions(t *testing.T) {
 	srv, fake, dir := artifactVersionServer(t)
 	base := srv.URL + "/api/v1/sessions/ao-1/artifact-versions"
 	restore := base + "/restore"
-	live := artifactSHA("v2 agent")
 	fake.add("\xff\xfe not text", domain.ArtifactVersionSourceAgent) // version 3
 	lostBlob := fake.versions[0].SHA256
 	delete(fake.blobs, lostBlob) // version 1's content is gone
@@ -249,7 +252,7 @@ func TestArtifactVersionReadAndRestoreRefuseUnreadableVersions(t *testing.T) {
 	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_BINARY" {
 		t.Errorf("read binary: status=%d body=%s, want 400 ARTIFACT_FILE_BINARY", status, body)
 	}
-	status, body = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 3, "expectedFileFingerprint": live})
+	status, body = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 3})
 	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_BINARY" {
 		t.Errorf("restore binary: status=%d body=%s, want 400 ARTIFACT_FILE_BINARY", status, body)
 	}
@@ -257,13 +260,9 @@ func TestArtifactVersionReadAndRestoreRefuseUnreadableVersions(t *testing.T) {
 	if status != http.StatusNotFound || artifactErrorCode(t, body) != "ARTIFACT_VERSION_NOT_FOUND" {
 		t.Errorf("read lost blob: status=%d body=%s, want 404 ARTIFACT_VERSION_NOT_FOUND", status, body)
 	}
-	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1, "expectedFileFingerprint": live})
+	status, _ = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 1})
 	if status != http.StatusNotFound {
 		t.Errorf("restore lost blob: status=%d, want 404", status)
-	}
-	status, body = artifactVersionCall(t, http.MethodPost, restore, map[string]any{"path": "plan.md", "version": 2})
-	if status != http.StatusBadRequest || artifactErrorCode(t, body) != "ARTIFACT_FILE_FINGERPRINT_REQUIRED" {
-		t.Errorf("restore without fingerprint: status=%d body=%s, want 400 ARTIFACT_FILE_FINGERPRINT_REQUIRED", status, body)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "plan.md")); string(data) != "v2 agent" {
 		t.Fatalf("file after refused restores = %q, want unchanged", data)

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronLeft, Copy, FileText, FolderOpen, Globe, Maximize2, Minimize2, SquareTerminal, Trash2 } from "lucide-react";
 import type { OpenArtifactsTargetId } from "../../shared/editor-handoff";
@@ -291,9 +291,11 @@ function ArtifactViewerBody({
 	sessionId: string;
 	toolbarHost: HTMLElement | null;
 }) {
-	const live = useQuery(sessionArtifactFileQueryOptions(sessionId, artifact.path, artifact.rawUrl));
 	const restore = useRestoreArtifactVersion({ hostId, path: artifact.path, rawUrl: artifact.rawUrl, sessionId });
 	const previewing = previewVersion !== null;
+	// An error from one version's restore does not belong to the next one looked at.
+	const resetRestore = restore.reset;
+	useEffect(() => resetRestore(), [previewVersion, resetRestore]);
 	const artifactOrigin = useMemo(() => {
 		try {
 			return artifact.rawUrl ? new URL(artifact.rawUrl).origin : undefined;
@@ -301,7 +303,6 @@ function ArtifactViewerBody({
 			return undefined;
 		}
 	}, [artifact.rawUrl]);
-	const fingerprint = live.data?.fileFingerprint;
 	return (
 		<div className="flex h-full min-h-0">
 			<div className="relative min-h-0 min-w-0 flex-1">
@@ -324,13 +325,10 @@ function ArtifactViewerBody({
 						hostId={hostId}
 						onBack={() => onPreviewVersion(null)}
 						onRestore={() => {
-							if (fingerprint && previewVersion !== null) {
-								restore.mutate({ expectedFileFingerprint: fingerprint, version: previewVersion }, { onSuccess: () => onPreviewVersion(null) });
-							}
+							if (previewVersion !== null) restore.mutate({ version: previewVersion }, { onSuccess: () => onPreviewVersion(null) });
 						}}
 						path={artifact.path}
 						restoreError={restore.isError ? restore.error.message : undefined}
-						canRestore={Boolean(fingerprint)}
 						restoring={restore.isPending}
 						sessionId={sessionId}
 						version={previewVersion}

@@ -203,7 +203,6 @@ export function ArtifactHistoryMenu({
  */
 export function ArtifactVersionPreview({
 	artifactOrigin,
-	canRestore,
 	hostId,
 	onBack,
 	onRestore,
@@ -214,8 +213,6 @@ export function ArtifactVersionPreview({
 	version,
 }: {
 	artifactOrigin?: string;
-	/** False until the live file's fingerprint is known, which a restore is checked against. */
-	canRestore: boolean;
 	hostId?: string;
 	onBack: () => void;
 	onRestore: () => void;
@@ -238,7 +235,7 @@ export function ArtifactVersionPreview({
 				<Button onClick={onBack} size="sm" type="button" variant="ghost">
 					{t("artifacts.history.backToCurrent")}
 				</Button>
-				<Button disabled={!query.data || !canRestore || restoring} onClick={onRestore} size="sm" type="button" variant="primary">
+				<Button disabled={!query.data || restoring} onClick={onRestore} size="sm" type="button" variant="primary">
 					{restoring ? <LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" /> : null}
 					{t(restoring ? "artifacts.history.restoring" : "artifacts.history.restore")}
 				</Button>

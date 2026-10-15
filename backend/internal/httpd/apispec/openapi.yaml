@@ -16030,9 +16030,6 @@ components:
       type: object
     RestoreArtifactVersionRequest:
       properties:
-        expectedFileFingerprint:
-          description: Hex SHA-256 of the file content the restore was requested against.
-          type: string
         path:
           description: Artifact-directory-relative file path, as listed in the session's
             artifactFiles.
@@ -16044,7 +16041,6 @@ components:
       required:
       - path
       - version
-      - expectedFileFingerprint
       type: object
     RestoreReviewResponse:
       properties:

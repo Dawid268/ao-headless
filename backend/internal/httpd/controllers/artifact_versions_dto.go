@@ -39,9 +39,8 @@ type ArtifactVersionResponse struct {
 }
 
 // RestoreArtifactVersionRequest rewrites an artifact file with an earlier
-// version's content.
+// version's content. The content it replaces is recorded as a version first.
 type RestoreArtifactVersionRequest struct {
-	Path                    string `json:"path" description:"Artifact-directory-relative file path, as listed in the session's artifactFiles."`
-	Version                 int64  `json:"version" description:"The version whose content becomes the file's content."`
-	ExpectedFileFingerprint string `json:"expectedFileFingerprint" description:"Hex SHA-256 of the file content the restore was requested against."`
+	Path    string `json:"path" description:"Artifact-directory-relative file path, as listed in the session's artifactFiles."`
+	Version int64  `json:"version" description:"The version whose content becomes the file's content."`
 }

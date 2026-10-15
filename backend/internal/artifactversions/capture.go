@@ -266,6 +266,14 @@ func (c *Capturer) Sync(ctx context.Context, sess domain.SessionRecord, relPath 
 	return c.recordNow(ctx, sess, relPath, writer{source: domain.ArtifactVersionSourceAgent, harness: sess.Harness}, SettleWindow)
 }
 
+// Snapshot records the current content of one artifact file as an agent version
+// when it differs from the latest version, with no settle window. A restore
+// calls it just before overwriting the file, so the content it replaces is
+// always kept.
+func (c *Capturer) Snapshot(ctx context.Context, sess domain.SessionRecord, relPath string) error {
+	return c.recordNow(ctx, sess, relPath, writer{source: domain.ArtifactVersionSourceAgent, harness: sess.Harness}, 0)
+}
+
 // recordNow snapshots one file under the capture lock. A file modified within
 // settle is left for a later call.
 func (c *Capturer) recordNow(ctx context.Context, sess domain.SessionRecord, relPath string, w writer, settle time.Duration) error {

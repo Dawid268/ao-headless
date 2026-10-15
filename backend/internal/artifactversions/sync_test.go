@@ -7,6 +7,23 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+func TestSnapshotRecordsAnEditStillInsideTheSettleWindow(t *testing.T) {
+	h := newHarness(t)
+	h.write("plan.md", "first")
+	h.tick()
+	h.tick()
+	h.write("plan.md", "second")
+	h.cap.now = func() time.Time { return h.mtime.Add(SettleWindow / 2) }
+
+	if err := h.cap.Snapshot(h.ctx, h.sess, "plan.md"); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	vs := h.versions("plan.md")
+	if len(vs) != 2 || vs[0].Source != domain.ArtifactVersionSourceAgent {
+		t.Fatalf("versions = %+v, want the fresh edit kept as a second, agent-written one", vs)
+	}
+}
+
 func TestSyncRecordsASettledEditWithoutWaitingForTheObserver(t *testing.T) {
 	h := newHarness(t)
 	h.write("plan.md", "first")

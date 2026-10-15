@@ -118,7 +118,7 @@ describe("ArtifactVersionPreview", () => {
 		versionMock.mockReturnValue({ data: { content: "the older text", createdAt: at(0) }, isPending: false, isError: false, dataUpdatedAt: 1 });
 		const onRestore = vi.fn();
 		const onBack = vi.fn();
-		render(<ArtifactVersionPreview canRestore onBack={onBack} onRestore={onRestore} path="notes.txt" restoring={false} sessionId="s1" version={2} {...props} />);
+		render(<ArtifactVersionPreview onBack={onBack} onRestore={onRestore} path="notes.txt" restoring={false} sessionId="s1" version={2} {...props} />);
 		return { onBack, onRestore };
 	}
 
@@ -129,11 +129,6 @@ describe("ArtifactVersionPreview", () => {
 		expect(onRestore).toHaveBeenCalledTimes(1);
 		await userEvent.click(screen.getByRole("button", { name: "Back to current" }));
 		expect(onBack).toHaveBeenCalledTimes(1);
-	});
-
-	it("keeps Restore off until the live file's fingerprint is known, and while one is running", () => {
-		renderPreview({ canRestore: false });
-		expect((screen.getByRole("button", { name: "Restore this version" }) as HTMLButtonElement).disabled).toBe(true);
 	});
 
 	it("says Restoring while a restore runs, and shows a refused one", () => {
