@@ -8,6 +8,7 @@ const ProviderSwitchMaxBootstrapChars = 32_000
 // admitted. The HTTP layer maps it to a status and an error code.
 type ProviderSwitchRefusalKind string
 
+// The reasons a switch is refused.
 const (
 	ProviderSwitchRefusalBusy               ProviderSwitchRefusalKind = "busy"
 	ProviderSwitchRefusalPendingInteraction ProviderSwitchRefusalKind = "pending_interaction"

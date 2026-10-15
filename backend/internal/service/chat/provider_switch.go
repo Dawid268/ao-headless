@@ -17,6 +17,7 @@ type TerminalProviderSwitcher interface {
 	SwitchTUIProvider(context.Context, domain.SessionID, domain.ProviderSwitchRequest) error
 }
 
+// SetTerminalProviderSwitcher gives the service the terminal side of a switch.
 func (s *Service) SetTerminalProviderSwitcher(switcher TerminalProviderSwitcher) {
 	s.terminalSwitcher = switcher
 }

@@ -202,12 +202,6 @@ const (
 	EnvBrowserRuntimeTokenStdin = "AO_BROWSER_RUNTIME_TOKEN_STDIN" //nolint:gosec // Environment variable name, not a credential.
 )
 
-// hookBinaryName is the executable name the workspace hook commands invoke:
-// every agent adapter installs a bare `ao hooks <agent> <event>`. The session
-// PATH pin (hookPATH) only works when the daemon's own executable carries this
-// name, since prepending its directory must change what `ao` resolves to.
-const hookBinaryName = "ao"
-
 type lifecycleRecorder interface {
 	PrepareLaunch(id domain.SessionID, launchID string) error
 	CancelLaunch(id domain.SessionID, launchID string)
@@ -4829,19 +4823,6 @@ func (m *Manager) confirmActive(ctx context.Context, guard *sessionguard.Guard, 
 }
 
 type confirmationStopCheck func(context.Context) (bool, error)
-
-// confirmActiveUnderMutation is the switch-safe form of confirmActive. Agent
-// switching deliberately closes the ordinary input lease, so a catch-up Enter
-// must bypass that gate while retaining stricter activity checks: only an idle
-// or waiting-input composer may receive it. Active and blocked targets are
-// suppressed at the write boundary so the retry cannot steer a running turn or
-// answer a permission dialog. stop is checked before waiting and immediately
-// before every Enter so a completed target acknowledgement always wins.
-func (m *Manager) confirmActiveUnderMutation(ctx context.Context, guard *sessionguard.Guard, id domain.SessionID, stop confirmationStopCheck) {
-	m.confirmActiveWithNudge(ctx, id, stop, func(nudgeCtx context.Context) (sessionguard.Outcome, error) {
-		return guard.CoordinationUnderMutation(nudgeCtx, id, "", m.harnessNudgeSafe, nil)
-	})
-}
 
 func (m *Manager) confirmActiveWithNudge(ctx context.Context, id domain.SessionID, stop confirmationStopCheck, nudge func(context.Context) (sessionguard.Outcome, error)) {
 	for attempt := 1; ; attempt++ {

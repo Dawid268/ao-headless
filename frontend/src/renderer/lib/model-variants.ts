@@ -56,7 +56,7 @@ function modelVendor(label: string): string {
 }
 
 /** Models grouped by vendor, each group where its first model was. */
-export function groupModelsByVendor<T extends { label: string; group?: string }>(models: T[]): T[] {
+export function groupModelsByVendor<T extends { label: string; group?: string }>(models: T[]): (T & { group: string })[] {
 	const grouped = models.map((model) => ({ ...model, group: model.group || modelVendor(model.label) }));
 	const order = [...new Set(grouped.map((model) => model.group))];
 	return grouped.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -144,23 +143,11 @@ func (r integrationChatRegistry) SupportsChat(harness domain.AgentHarness) bool 
 	return ok
 }
 
-type integrationClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
 type testAgentRegistry map[domain.AgentHarness]ports.Agent
 
 func (a testAgentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	agent, ok := a[harness]
 	return agent, ok
-}
-
-func (c *integrationClock) Next() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(time.Second)
-	return c.now
 }
 
 // harnessAgents resolves a fixed set of adapters by harness.

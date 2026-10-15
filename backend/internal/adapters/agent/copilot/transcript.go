@@ -112,7 +112,7 @@ func copilotTranscriptTail(path string) [][]byte {
 	if err != nil {
 		return nil
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return nil
