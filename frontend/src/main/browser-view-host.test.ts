@@ -3626,13 +3626,16 @@ describe("agent browser runtime", () => {
 		});
 
 		it("gives each agent page exactly one tab, however many viewers report", async () => {
-			const { agent, views, tabs } = await openAgent();
+			const { invoke, agent, views, viewId, tabs } = await openAgent();
 			agent.emitConsoleMessage(0, report({ tabs: both }));
 			agent.emitConsoleMessage(0, report({ tabs: both, loading: true }));
 			await settle();
+			// Shown, a2 loads its viewer, which reports too.
+			await invoke("browser:selectTab", { viewId, tabId: "a2" });
+			await settle();
 			views[2].webContents.emitConsoleMessage(0, report({ tabId: "R2", tabs: both }));
 			await settle();
-			expect(await tabs()).toMatchObject([{ id: "t1", active: true }, { id: "a1", remote: { tabId: "R1" } }, { id: "a2", active: false, remote: { tabId: "R2" } }]);
+			expect(await tabs()).toMatchObject([{ id: "t1" }, { id: "a1", remote: { tabId: "R1" } }, { id: "a2", active: true, remote: { tabId: "R2" } }]);
 			expect(views[2].webContents.loadURL).toHaveBeenCalledWith(`${viewer}&tab=R2`);
 			expect(views).toHaveLength(3);
 		});
@@ -3715,13 +3718,19 @@ describe("agent browser runtime", () => {
 			return event;
 		};
 		const three = [...both, { id: "R3", title: "Docs", url: "https://docs.example/" }];
-		// t1, a1 (R1), a2 (R2) and, given three pages, a3 (R3): each viewer has reported.
+		// t1, a1 (R1), a2 (R2) and, given three pages, a3 (R3): each viewer has
+		// reported. A tab's viewer loads when the tab is first shown; t1 is in
+		// front again after.
 		const openAgentPages = async (pages = both) => {
 			const host = await openAgent();
 			host.agent.emitConsoleMessage(0, report({ tabs: pages }));
 			await settle();
-			pages.slice(1).forEach((page, index) =>
-				host.views[index + 2].webContents.emitConsoleMessage(0, report({ tabId: page.id, tabs: pages })));
+			for (const [index, page] of pages.slice(1).entries()) {
+				await host.invoke("browser:selectTab", { viewId: host.viewId, tabId: `a${index + 2}` });
+				await settle();
+				host.views[index + 2].webContents.emitConsoleMessage(0, report({ tabId: page.id, tabs: pages }));
+			}
+			await host.invoke("browser:selectTab", { viewId: host.viewId, tabId: "t1" });
 			await settle();
 			return host;
 		};
@@ -4020,6 +4029,112 @@ describe("agent browser runtime", () => {
 			await invoke("browser:selectTab", { viewId, tabId: "t1" });
 			await invoke("browser:annotation:setMode", { viewId, enabled: true });
 			expect(views[0].webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", expect.objectContaining({ enabled: true }));
+		});
+
+		// How many viewers each view has loaded (a tab starts on about:blank).
+		const viewerLoads = (views: Array<{ webContents: { loadURL: ReturnType<typeof vi.fn> } }>) =>
+			views.map((view) => view.webContents.loadURL.mock.calls.filter(([url]) => url !== "about:blank").length);
+
+		it("loads a viewer only for the tab shown, and shows the other agent pages as the viewer lists them", async () => {
+			const { invoke, agent, views, viewId, tabs } = await openAgent();
+			const news = { id: "R4", title: "News", url: "https://news.example/" };
+			agent.emitConsoleMessage(0, report({ tabs: [...three, news] }));
+			await settle();
+			// Only a1, the first agent tab, through which the agent's pages arrive.
+			expect(viewerLoads(views)).toEqual([0, 1, 0, 0, 0]);
+			expect(await tabs()).toMatchObject([
+				{ id: "t1", active: true },
+				{ id: "a1", remote: { tabId: "R1" } },
+				{ id: "a2", url: "https://github.com/", title: "GitHub", remote: { tabId: "R2" } },
+				{ id: "a3", url: "https://docs.example/", title: "Docs", remote: { tabId: "R3" } },
+				{ id: "a4", url: "https://news.example/", title: "News", remote: { tabId: "R4" } },
+			]);
+			// A page that moves on in the background shows so in its tab.
+			agent.emitConsoleMessage(0, report({ tabs: [...three, { ...news, title: "News 2", url: "https://news.example/2" }] }));
+			expect((await tabs())[4]).toMatchObject({ url: "https://news.example/2", title: "News 2" });
+			// Shown, a tab loads its viewer, pinned to its page, once.
+			await invoke("browser:selectTab", { viewId, tabId: "a3" });
+			await settle();
+			expect(views[3].webContents.loadURL).toHaveBeenLastCalledWith(`${viewer}&tab=R3`);
+			await invoke("browser:selectTab", { viewId, tabId: "t1" });
+			await invoke("browser:selectTab", { viewId, tabId: "a3" });
+			await settle();
+			expect(viewerLoads(views)).toEqual([0, 1, 0, 1, 0]);
+		});
+
+		it("closes the page of an agent tab never shown, through a viewer that has one", async () => {
+			const { invoke, agent, views, viewId, tabs } = await openAgent();
+			agent.emitConsoleMessage(0, report({ tabs: three }));
+			await settle();
+			await invoke("browser:closeTab", { viewId, tabId: "a3" });
+			expect(agent.executeJavaScript).toHaveBeenCalledWith('window.__rbHost && window.__rbHost.close("R3")');
+			expect((await tabs()).map((tab) => tab.id)).toEqual(["t1", "a1", "a2"]);
+			expect(viewerLoads(views)).toEqual([0, 1, 0, 0]);
+		});
+
+		it("closes a tab never shown once no viewer lists its page, never on a viewer's late list", async () => {
+			const { invoke, agent, views, viewId, tabs } = await openAgent();
+			agent.emitConsoleMessage(0, report({ tabs: both }));
+			await settle();
+			await invoke("browser:selectTab", { viewId, tabId: "a2" });
+			await settle();
+			// R3 opens: a1's viewer hears first, while a2's still reports its old list.
+			agent.emitConsoleMessage(0, report({ tabs: three }));
+			await settle();
+			views[2].webContents.emitConsoleMessage(0, report({ tabId: "R2", tabs: both }));
+			await settle();
+			expect((await tabs()).map((tab) => tab.id)).toEqual(["t1", "a1", "a2", "a3"]);
+			// R3 closes: gone from every list, its tab goes too.
+			agent.emitConsoleMessage(0, report({ tabs: both, loading: true }));
+			await settle();
+			expect((await tabs()).map((tab) => tab.id)).toEqual(["t1", "a1", "a2"]);
+			expect(viewerLoads(views)).toEqual([0, 1, 1, 0]);
+		});
+
+		it("loads another viewer when the last one with a viewer closes, so the agent's pages keep arriving", async () => {
+			const { invoke, agent, views, viewId } = await openAgent();
+			agent.emitConsoleMessage(0, report({ tabs: three }));
+			await settle();
+			// Behind the person's own tab, a1 is the only one with a viewer.
+			await invoke("browser:closeTab", { viewId, tabId: "a1" });
+			await settle();
+			expect(agent.executeJavaScript).toHaveBeenCalledWith('window.__rbHost && window.__rbHost.close("R1")');
+			expect(views[2].webContents.loadURL).toHaveBeenLastCalledWith(`${viewer}&tab=R2`);
+			expect(viewerLoads(views)).toEqual([0, 1, 1, 0]);
+		});
+
+		it("brings a page the agent opened from the tab in use to the front with its viewer, listed before or not", async () => {
+			const { invoke, agent, views, viewId, tabs } = await openAgent();
+			await invoke("browser:selectTab", { viewId, tabId: "a1" });
+			// R2 is listed before the viewer hears the agent opened it from R1.
+			agent.emitConsoleMessage(0, report({ tabs: both }));
+			await settle();
+			expect(viewerLoads(views)).toEqual([0, 1, 0]);
+			agent.emitConsoleMessage(0, report({ tabs: both, follow: "R2" }));
+			await settle();
+			expect(await tabs()).toMatchObject([{ id: "t1" }, { id: "a1", active: false }, { id: "a2", active: true }]);
+			expect(views[2].webContents.loadURL).toHaveBeenLastCalledWith(`${viewer}&tab=R2`);
+			// R3, opened from R2 and followed in one report, opens in front with its viewer.
+			views[2].webContents.emitConsoleMessage(0, report({ tabId: "R2", tabs: three, follow: "R3" }));
+			await settle();
+			expect((await tabs()).find((tab) => tab.active)).toMatchObject({ id: "a3", remote: { tabId: "R3" } });
+			expect(viewerLoads(views)).toEqual([0, 1, 1, 1]);
+		});
+
+		it("keeps a tab never shown without a viewer through a profile switch and a reconnect", async () => {
+			const profile: BrowserProfile = { id: "22222222-2222-4222-8222-222222222222", name: "Work", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+			const { host, invoke, agent, views, viewId } = await openAgent(fakeBrowserProfileStore(profile, { "sess-1": profile.id }));
+			agent.emitConsoleMessage(0, report({ tabs: both }));
+			await settle();
+			await host.switchProfile(viewId, null);
+			const moved = "https://ao-preview-agent.localhost:51000/v/cdp?embed=1&sq=70&ss=1";
+			await invoke("browser:openTab", { viewId, url: moved });
+			await settle();
+			// t1, a1 and a2 again, as views 3 to 5: a2 still has no viewer.
+			expect(viewerLoads(views).slice(3)).toEqual([0, 2, 0]);
+			await invoke("browser:selectTab", { viewId, tabId: "a2" });
+			await settle();
+			expect(views[5].webContents.loadURL).toHaveBeenLastCalledWith(`${moved}&tab=R2`);
 		});
 	});
 

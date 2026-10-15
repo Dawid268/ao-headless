@@ -503,10 +503,31 @@ export type BrowserViewHost = {
   refreshLastFocusedPanelSurface: () => void;
 };
 
+type TabNavCommand = "back" | "forward" | "reload" | "stop";
+
+// The page a tab shows, as its address bar, its tab strip entry and
+// Back/Forward show it.
+type TabPage = Pick<BrowserNavState, "url" | "title" | "canGoBack" | "canGoForward" | "isLoading">;
+
+// How the panel reads and drives one tab (tabDriver).
+type TabDriver = {
+  page: () => TabPage;
+  // Back/Forward/Reload/Stop, from the toolbar, a shortcut or the app menu.
+  nav: (command: TabNavCommand) => void;
+  // An address for the tab, already checked (navigateEntry).
+  navigate: (href: string) => Promise<BrowserNavState>;
+  // Whether the tab is the one the panel shows.
+  show: (shown: boolean) => void;
+  close: (signal?: AbortSignal) => Promise<BrowserTabsState>;
+};
+
 type BrowserEntry = {
   sessionId: string;
   tabId: string;
   view: BrowserViewLike;
+  // This tab's driver (tabDriver), picked on each call: a tab is bound to an
+  // agent page after it is made.
+  driver: () => TabDriver;
   ready: Promise<void>;
   state: BrowserNavState;
   // Set on a tab that shows the agent's own browser: the agent browser tab it
@@ -514,6 +535,13 @@ type BrowserEntry = {
   agentTab?: string;
   // The agent browser page this tab shows, as its viewer last reported it.
   remote?: RemoteTabReport;
+  // An agent tab not shown yet: the viewer it loads when first shown
+  // (openAgentTab). Until then it has no viewer, so no socket or CDP session
+  // on the agent's host.
+  viewer?: string;
+  // Its page as the viewers' tab lists show it: what the tab shows until its
+  // own viewer reports.
+  listed?: { title: string; url: string };
   // A person is closing this agent tab (closeAgentTab): their close finishes
   // it, not its page's own report of closing meanwhile.
   closing?: boolean;
@@ -1040,6 +1068,7 @@ export function createBrowserViewHost(
       sessionId: session.sessionId,
       tabId,
       view,
+      driver: () => tabDriver(session, entry),
       ready: Promise.resolve(),
       state,
       findState: {
@@ -1171,12 +1200,18 @@ export function createBrowserViewHost(
       const followed = report.follow && report.follow !== entry.remote?.follow ? report.follow : "";
       entry.remote = report;
       entry.agentTab ||= report.tabId;
-      showRemoteViewer(entry, session.activeTabId === entry.tabId);
+      entry.driver().show(session.activeTabId === entry.tabId);
       // The page's icon comes inline, as an image data URL (remote-tab.ts),
       // and is shown as is: never fetched from here, where an address the
       // remote page names would be fetched from the person's network. ""
       // is a page without one.
       entry.favicon = report.favicon || undefined;
+      // A report lists every agent page: a tab shows its page from the list
+      // until its own viewer reports.
+      for (const tab of session.tabs.values()) {
+        const page = tab.agentTab && report.tabs.find(({ id }) => id === tab.agentTab);
+        if (page) tab.listed = page;
+      }
       pushTabsState(options, session);
       if (session.activeTabId === entry.tabId) pushNavState(options, entry);
       // Off this tab's own event: the sync may close it.
@@ -1594,21 +1629,46 @@ export function createBrowserViewHost(
 
   // Opens a tab bound to one agent browser tab. The binding is set before
   // anything awaits, so the next report already finds the page shown.
+  // listed: the page as the reporting viewer lists it.
   const openAgentTab = (
     session: BrowserSessionEntry,
     url: string,
     agentTab: string,
     activate: boolean,
+    listed?: { title: string; url: string },
   ): Promise<void> =>
     withBrowserOperation(session, async () => {
       const id = `a${(session.agentTabNumber = (session.agentTabNumber ?? 0) + 1)}`;
       const entry = createTab(session, activate, false, id);
       entry.agentTab = agentTab;
+      entry.listed = listed;
+      // A viewer holds a socket and a CDP session on the agent's host, and
+      // every session showing the agent's browser has its own: a page not
+      // brought to the front gets its viewer when first shown (loadViewer).
+      // The first agent tab, bound to no page yet, loads its viewer at once:
+      // the agent's pages reach the panel through it.
+      if (agentTab && !activate) {
+        entry.viewer = url;
+        pushTabsState(options, session, { kind: "opened", tabId: entry.tabId });
+        return;
+      }
       await entry.ready;
       const navigation = navigateEntry(entry, url);
       pushTabsState(options, session, { kind: "opened", tabId: entry.tabId });
       await navigation;
     });
+
+  // Loads an agent tab's viewer, pinned to its page, the first time the tab
+  // is shown, or once no other viewer is left to report the agent's pages.
+  // ponytail: a viewer stays loaded once shown, so a session holds one per
+  // agent tab it has shown; unload those left behind (back to `viewer`) if
+  // hosts still run short of sockets.
+  const loadViewer = (session: BrowserSessionEntry, entry: BrowserEntry): void => {
+    const viewer = entry.viewer;
+    if (!viewer) return;
+    entry.viewer = undefined;
+    void withBrowserOperation(session, () => navigateEntry(entry, viewer)).catch(() => undefined);
+  };
 
   // The panel keeps one tab for each of the agent browser's tabs, as with a
   // person's own tabs: a page the agent opens appears as a tab (in front when
@@ -1632,7 +1692,7 @@ export function createBrowserViewHost(
       if (Date.now() - at <= 5_000) continue;
       // A page a person closed that is still listed never got the close (no
       // viewer was connected then): it goes again, through this viewer.
-      if (closePage && report.tabs.includes(id)) void runInRemoteViewer(from, `close(${JSON.stringify(id)})`);
+      if (closePage && report.tabs.some((tab) => tab.id === id)) void runInRemoteViewer(from, `close(${JSON.stringify(id)})`);
       else closedHere!.delete(id);
     }
     const inUse = session.activeTabId === from.tabId;
@@ -1640,12 +1700,21 @@ export function createBrowserViewHost(
     // link opening a new tab does (one opened below opens in front).
     const follow = followed ? shown.get(followed) : undefined;
     if (inUse && follow) activateTab(session, follow.tabId);
-    for (const id of report.tabs) {
+    for (const page of report.tabs) {
+      const { id } = page;
       if (shown.has(id) || closedHere?.has(id)) continue;
       shown.set(id, from);
       const url = new URL(from.view.webContents.getURL());
       url.searchParams.set("tab", id);
-      void openAgentTab(session, url.href, id, inUse && id === followed).catch(() => undefined);
+      void openAgentTab(session, url.href, id, inUse && id === followed, page).catch(() => undefined);
+    }
+    // A tab without a viewer hears nothing from its page: it goes once no
+    // viewer lists the page. Each list is as of its viewer's last report, so
+    // a viewer that has not yet heard of a new page takes no tab away.
+    const listedPages = new Set([...session.tabs.values()].flatMap((tab) => tab.remote?.tabs.map(({ id }) => id) ?? []));
+    for (const tab of [...session.tabs.values()]) {
+      if (tab.viewer && tab.agentTab && !listedPages.has(tab.agentTab))
+        void closeAgentTab(session, tab.tabId, false).catch((error) => console.warn("Unable to close the agent browser's tab", error));
     }
     // The last agent tab stays (empty) while the agent has no page: its viewer
     // is how the agent's next page reaches the panel.
@@ -1692,7 +1761,96 @@ export function createBrowserViewHost(
     if (session.nativeActiveTabId === tabId) session.nativeActiveTabId = undefined;
     // The keyboard moves with a close the person made, or off a tab that had
     // it; a page closing on its own leaves it where the person is typing.
-    return closeTab(session, tabId, show, closePage || entry.view.webContents.isFocused?.() === true);
+    const tabs = closeTab(session, tabId, show, closePage || entry.view.webContents.isFocused?.() === true);
+    // The agent's pages reach the panel only through a viewer's reports: one
+    // stays loaded while agent tabs are left.
+    const left = [...session.tabs.values()].filter((tab) => tab.agentTab !== undefined);
+    if (left.length && left.every((tab) => tab.viewer)) loadViewer(session, left[0]!);
+    return tabs;
+  };
+
+  // How the panel reads and drives a tab: a person's tab is its own page, an
+  // agent tab the agent's page, which its viewer reports and drives. Picked
+  // here, once: an operation on a tab goes through its driver (entry.driver)
+  // rather than checking agentTab. Checks that keep agent tabs out of what is
+  // the person's (history, Recently Closed, agent-browser) stay where they are.
+  const tabDriver = (session: BrowserSessionEntry, entry: BrowserEntry): TabDriver => {
+    const { webContents } = entry.view;
+    if (entry.agentTab === undefined)
+      return {
+        page: () => ({
+          url: webContents.getURL(),
+          title: webContents.getTitle(),
+          canGoBack: webContents.canGoBack(),
+          canGoForward: webContents.canGoForward(),
+          isLoading: webContents.isLoading(),
+        }),
+        nav: (command) => {
+          if (command === "back") {
+            if (webContents.canGoBack()) webContents.goBack();
+          } else if (command === "forward") {
+            if (webContents.canGoForward()) webContents.goForward();
+          } else if (command === "reload") webContents.reload();
+          else webContents.stop();
+        },
+        navigate: (href) => loadEntry(entry, href),
+        show: () => undefined,
+        // Through agent-browser, when it runs: its tab numbers must keep
+        // matching AO's.
+        close: async (signal) =>
+          options.agentBrowserRuntime ? closeNativeTab(session, entry.tabId, signal) : closeTab(session, entry.tabId),
+      };
+    return {
+      page: () => {
+        const remote = entry.remote;
+        if (remote)
+          return { url: remote.url, title: remote.title, canGoBack: remote.back, canGoForward: remote.fwd, isLoading: remote.loading };
+        // Before its viewer reports, its page is as another viewer lists it,
+        // and there is no page history yet: the viewer's own is not the
+        // person's to walk (nav).
+        const listed = entry.listed;
+        return {
+          url: listed ? listed.url : webContents.getURL(),
+          title: listed ? listed.title : webContents.getTitle(),
+          canGoBack: false,
+          canGoForward: false,
+          isLoading: webContents.isLoading(),
+        };
+      },
+      // Back/Forward/Reload/Stop drive the agent's page through its viewer
+      // and never the viewer's own history (Back there left the viewer for
+      // about:blank). Before the viewer first reports there is no page to
+      // drive: Reload reloads the viewer, and the rest do nothing (Stop would
+      // abort the viewer's load). So does Reload in a viewer that has stopped
+      // running.
+      nav: (command) => {
+        if (entry.remote && command === "reload") {
+          void viewerRuns(entry)
+            .then((runs) => (runs ? runInRemoteViewer(entry, "reload()") : webContents.reload()))
+            .catch(() => undefined);
+        } else if (entry.remote) void runInRemoteViewer(entry, `${command}()`);
+        else if (command === "reload") webContents.reload();
+      },
+      // An address typed into it loads in the agent's page (nothing happens
+      // before its viewer runs); the viewer's own address is main's load of
+      // the viewer, into the tab itself.
+      navigate: async (href) => {
+        if (options.isAgentBrowserUrl?.(href)) return loadEntry(entry, href);
+        if (entry.remote) void runInRemoteViewer(entry, `navigate(${JSON.stringify(href)})`);
+        return pushNavState(options, entry);
+      },
+      // Offscreen tabs stay "visible" to their pages, and the agent's Chrome
+      // paints only its front page: the viewer streams, and brings its page to
+      // the front, only while its tab is the one shown. Shown for the first
+      // time, the tab loads its viewer (openAgentTab).
+      show: (shown) => {
+        if (shown) loadViewer(session, entry);
+        if (entry.remote && entry.remote.shown !== shown) void runInRemoteViewer(entry, `show(${shown})`);
+      },
+      // Never through agent-browser, which never sees agent tabs: the page
+      // closes in the agent browser too.
+      close: () => closeAgentTab(session, entry.tabId, true),
+    };
   };
 
   function activateTab(
@@ -1711,8 +1869,8 @@ export function createBrowserViewHost(
       applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
     }
     session.activeTabId = tabId;
-    if (previous && previous !== next) showRemoteViewer(previous, false);
-    showRemoteViewer(next, true);
+    if (previous && previous !== next) previous.driver().show(false);
+    next.driver().show(true);
     if (session.devtools && isBlankBrowserEntry(next)) destroyDevTools(session);
     applySessionBounds(session, next);
     pushNavState(options, next);
@@ -1821,9 +1979,6 @@ export function createBrowserViewHost(
     tabId: string,
     signal?: AbortSignal,
   ): Promise<BrowserTabsState> => {
-    // agent-browser never sees agent tabs: they close without it.
-    if (session.tabs.get(tabId)?.agentTab !== undefined)
-      return closeAgentTab(session, tabId, true);
     return queueNativeOperation(
       session,
       async () => {
@@ -1884,9 +2039,7 @@ export function createBrowserViewHost(
     // opening the browser for the first time. Create it before disposing the
     // focused view so the shell retains focus and the native target stays valid.
     if (session.tabs.size === 1) await openUserTab(session);
-    if (session.tabs.get(tabId)?.agentTab !== undefined) return closeAgentTab(session, tabId, true);
-    if (!options.agentBrowserRuntime) return closeTab(session, tabId);
-    return closeNativeTab(session, tabId);
+    return session.tabs.get(tabId)?.driver().close() ?? listTabs(session);
   };
 
   const focusLocation = (session: BrowserSessionEntry): void => {
@@ -1955,23 +2108,12 @@ export function createBrowserViewHost(
         return;
       }
       if (action === "reload") {
-        const entry = activeEntry(session);
         // An agent tab reloads the agent's page, as its toolbar Reload does.
-        if (entry.agentTab !== undefined) agentNav(entry, "reload");
-        else entry.view.webContents.reload();
+        activeEntry(session).driver().nav("reload");
         return;
       }
       if (action === "back" || action === "forward") {
-        invokeNav(
-          session.viewId,
-          (contents) => {
-            if (action === "back" && contents.canGoBack()) contents.goBack();
-            if (action === "forward" && contents.canGoForward()) contents.goForward();
-          },
-          true,
-          false,
-          action,
-        );
+        invokeNav(session.viewId, action, true);
         return;
       }
       if (action === "new-tab") {
@@ -2366,21 +2508,21 @@ export function createBrowserViewHost(
     if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
       throw new Error("Unsupported browser URL");
     }
-    // An agent tab shows only the agent's browser: an address typed into it
-    // loads in the agent's page (nothing happens before its viewer runs).
-    if (entry.agentTab !== undefined && !options.isAgentBrowserUrl?.(normalized.href)) {
-      if (entry.remote) void runInRemoteViewer(entry, `navigate(${JSON.stringify(normalized.href)})`);
-      return pushNavState(options, entry);
-    }
-    if (
-      !isSameAnnotationPage(entry.view.webContents.getURL(), normalized.href)
-    ) {
+    return entry.driver().navigate(normalized.href);
+  };
+
+  // Loads a checked address into the tab's own view (navigateEntry).
+  const loadEntry = async (
+    entry: BrowserEntry,
+    href: string,
+  ): Promise<BrowserNavState> => {
+    if (!isSameAnnotationPage(entry.view.webContents.getURL(), href)) {
       cancelAnnotation(options, entry, "navigation");
     }
-    const pendingNavigation = { url: normalized.href };
+    const pendingNavigation = { url: href };
     entry.pendingNavigation = pendingNavigation;
     try {
-      await entry.view.webContents.loadURL(normalized.href);
+      await entry.view.webContents.loadURL(href);
     } catch (err) {
       if ((err as { errorCode?: number })?.errorCode === -3)
         return pushNavState(options, entry);
@@ -2576,9 +2718,10 @@ export function createBrowserViewHost(
     entry.view.webContents.close?.();
   };
 
-  // agentTab: an agent tab's binding (BrowserEntry.agentTab). It is kept as
-  // is: its address says nothing while its host is away.
-  type SavedBrowserTab = { tabId: string; url?: string; agentTab?: string };
+  // agentTab and viewer: an agent tab's binding and, until it is first shown,
+  // its viewer (BrowserEntry). They are kept as is: its address says nothing
+  // while its host is away.
+  type SavedBrowserTab = { tabId: string; url?: string; agentTab?: string; viewer?: string };
 
   const disposeSessionTabs = (session: BrowserSessionEntry): void => {
     for (const entry of session.tabs.values()) {
@@ -2597,16 +2740,17 @@ export function createBrowserViewHost(
     session: BrowserSessionEntry,
   ): SavedBrowserTab[] =>
     [...session.tabs.values()].map((entry) => {
-      const { tabId, agentTab } = entry;
+      const { tabId, agentTab, viewer } = entry;
       try {
         const url = entry.view.webContents.getURL();
         return {
           tabId,
           agentTab,
+          viewer,
           ...(isAllowedBrowserURL(url, options.rendererOrigin) ? { url } : {}),
         };
       } catch {
-        return { tabId, agentTab };
+        return { tabId, agentTab, viewer };
       }
     });
 
@@ -2630,6 +2774,7 @@ export function createBrowserViewHost(
       const entry = createTab(session, false, false, saved.tabId);
       // An agent tab stays one, bound to the same page.
       entry.agentTab = saved.agentTab;
+      entry.viewer = saved.viewer;
     }
     session.nextTabNumber = Math.max(nextTabNumber, highestTabNumber + 1);
     // Activate before reloading: pages can take seconds to load in the new
@@ -2909,26 +3054,21 @@ export function createBrowserViewHost(
 
   const invokeNav = (
     viewId: string,
-    action: (contents: BrowserWebContents) => void,
+    command: TabNavCommand,
     cancelForNavigation = false,
     reapplyBounds = false,
-    remoteCommand?: "back" | "forward" | "reload" | "stop",
   ): BrowserNavState => {
     const session = entries.get(viewId);
     if (!session) return emptyNavState(viewId);
     assertProfileStable(session);
     const entry = activeEntry(session);
-    if (entry.agentTab !== undefined && remoteCommand) {
-      agentNav(entry, remoteCommand);
-      return pushNavState(options, entry);
-    }
     if (cancelForNavigation) {
       cancelAnnotation(options, entry, "navigation");
     }
     if (cancelForNavigation || reapplyBounds) {
       applySessionBounds(session, entry);
     }
-    action(entry.view.webContents);
+    entry.driver().nav(command);
     return pushNavState(options, entry);
   };
 
@@ -3208,22 +3348,22 @@ export function createBrowserViewHost(
   );
   handle("browser:goBack", (event, viewId: string) =>
     isRendererOwned(event, viewId)
-      ? invokeNav(viewId, (contents) => contents.goBack(), true, false, "back")
+      ? invokeNav(viewId, "back", true)
       : emptyNavState(viewId),
   );
   handle("browser:goForward", (event, viewId: string) =>
     isRendererOwned(event, viewId)
-      ? invokeNav(viewId, (contents) => contents.goForward(), true, false, "forward")
+      ? invokeNav(viewId, "forward", true)
       : emptyNavState(viewId),
   );
   handle("browser:reload", (event, viewId: string) =>
     isRendererOwned(event, viewId)
-      ? invokeNav(viewId, (contents) => contents.reload(), false, true, "reload")
+      ? invokeNav(viewId, "reload", false, true)
       : emptyNavState(viewId),
   );
   handle("browser:stop", (event, viewId: string) =>
     isRendererOwned(event, viewId)
-      ? invokeNav(viewId, (contents) => contents.stop(), true, false, "stop")
+      ? invokeNav(viewId, "stop", true)
       : emptyNavState(viewId),
   );
   handle("browser:find", (event, input: BrowserFindInput) => {
@@ -3453,6 +3593,11 @@ export function createBrowserViewHost(
       for (const tab of agentTabs) {
         const moved = new URL(url);
         if (tab.agentTab) moved.searchParams.set("tab", tab.agentTab);
+        // One not shown yet loads its viewer there when first shown.
+        if (tab.viewer) {
+          tab.viewer = moved.href;
+          continue;
+        }
         const sameOrigin = new URL(tab.view.webContents.getURL() || url).origin === moved.origin;
         void (async () => {
           if (sameOrigin && (await viewerRuns(tab))) return;
@@ -3978,16 +4123,13 @@ export function createBrowserViewHost(
                 "The only browser tab cannot be closed",
               );
             }
-            if (!session.tabs.has(tabId))
+            const closing = session.tabs.get(tabId);
+            if (!closing)
               throw browserError(
                 "TAB_NOT_FOUND",
                 `Browser tab ${tabId} does not exist`,
               );
-            if (!options.agentBrowserRuntime) {
-              closeTab(session, tabId);
-            } else {
-              await closeNativeTab(session, tabId, signal);
-            }
+            await closing.driver().close(signal);
             return { closedTabId: tabId, ...agentTabsResult(session) };
           }
           case "scroll":
@@ -4171,7 +4313,7 @@ export function createBrowserViewHost(
     reloadAgentTab: (contents) => {
       const entry = tabsByWebContentsId.get(contents.id);
       if (entry?.agentTab === undefined) return false;
-      agentNav(entry, "reload");
+      entry.driver().nav("reload");
       return true;
     },
     toggleDevToolsForLastFocused: async () => {
@@ -4719,11 +4861,11 @@ function tabResult(
   entry: BrowserEntry,
   active: boolean,
 ): BrowserTabState & { untrustedExternalContent: true } {
-  const remote = entry.remote;
+  const { url, title } = entry.driver().page();
   return {
     id: entry.tabId,
-    url: remote ? remote.url : entry.view.webContents.getURL(),
-    title: remote ? remote.title : entry.view.webContents.getTitle(),
+    url,
+    title,
     active,
     ...(entry.favicon ? { favicon: entry.favicon } : {}),
     ...(entry.agentTab !== undefined ? { remote: { tabId: entry.agentTab } } : {}),
@@ -5257,63 +5399,20 @@ function viewerRuns(entry: BrowserEntry): Promise<boolean> {
     .then((runs) => runs === true, () => false);
 }
 
-// Back/Forward/Reload/Stop in an agent tab, from its toolbar, a shortcut or
-// the app menu alike, drive the agent's page through its viewer and never the
-// viewer's own history (Back there left the viewer for about:blank). Before
-// the viewer first reports there is no page to drive: Reload reloads the
-// viewer, and the rest do nothing (Stop would abort the viewer's load). So
-// does Reload in a viewer that has stopped running.
-function agentNav(
-  entry: BrowserEntry,
-  command: "back" | "forward" | "reload" | "stop",
-): void {
-  if (entry.remote && command === "reload") {
-    void viewerRuns(entry)
-      .then((runs) => (runs ? runInRemoteViewer(entry, "reload()") : entry.view.webContents.reload()))
-      .catch(() => undefined);
-  } else if (entry.remote) void runInRemoteViewer(entry, `${command}()`);
-  else if (command === "reload") entry.view.webContents.reload();
-}
-
 function isHardReloadShortcut(input: BrowserShortcutInput, isMac: boolean): boolean {
   const primary = isMac ? input.meta && !input.control : input.control && !input.meta;
   return primary && input.shift && !input.alt && input.key.toLowerCase() === "r";
 }
 
-// Offscreen tabs stay "visible" to their pages, and the agent's Chrome paints
-// only its front page: an agent tab's viewer streams, and brings its page to
-// the front, only while its tab is the one shown.
-function showRemoteViewer(entry: BrowserEntry, shown: boolean): void {
-  if (entry.remote && entry.remote.shown !== shown) void runInRemoteViewer(entry, `show(${shown})`);
-}
-
 function readNavState(entry: BrowserEntry): BrowserNavState {
-  const remote = entry.remote;
-  if (remote) {
-    return {
-      viewId: entry.state.viewId,
-      url: remote.url,
-      title: remote.title,
-      canGoBack: remote.back,
-      canGoForward: remote.fwd,
-      isLoading: remote.loading,
-    };
-  }
-  const { webContents } = entry.view;
-  const currentURL = webContents.getURL();
-  // An agent tab whose viewer has not reported has no page history yet: its
-  // viewer's own history is not the person's to walk (agentNav).
-  const agentTab = entry.agentTab !== undefined;
+  const page = entry.driver().page();
   return {
     viewId: entry.state.viewId,
+    ...page,
     // about:blank is the cleared/blank state — surface it as an empty url so
     // the panel renders its "enter a URL" empty state and the address bar is
     // blank rather than showing "about:blank".
-    url: currentURL === "about:blank" ? "" : currentURL,
-    title: webContents.getTitle(),
-    canGoBack: !agentTab && webContents.canGoBack(),
-    canGoForward: !agentTab && webContents.canGoForward(),
-    isLoading: webContents.isLoading(),
+    url: page.url === "about:blank" ? "" : page.url,
   };
 }
 

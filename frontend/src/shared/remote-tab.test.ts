@@ -11,8 +11,24 @@ describe("parseRemoteTabReport", () => {
 		}));
 		expect(report).toEqual({
 			tabId: "R1", url: "https://a.example/x", title: "A", favicon: PNG_ICON, loading: true, back: true, fwd: false,
-			follow: "R2", closed: { next: "R0" }, shown: false, tabs: ["R1"],
+			follow: "R2", closed: { next: "R0" }, shown: false, tabs: [{ id: "R1", title: "A", url: "https://a.example/x" }],
 		});
+	});
+
+	it("keeps each listed tab's title and address, capped and filtered as the tab's own", () => {
+		const tabs = (listed: unknown[]) => parseRemoteTabReport(REMOTE_TAB_REPORT + JSON.stringify({ tabId: "R1", tabs: listed }))?.tabs;
+		expect(tabs([
+			{ id: "R1".padEnd(80, "x"), title: "T".repeat(2000), url: `https://a.example/${"p".repeat(9000)}` },
+			{ id: "R2", title: 7, url: "javascript:alert(1)" },
+			{ id: "R3", url: "file:///etc/passwd" },
+			null,
+			"R4",
+		])).toEqual([
+			{ id: "R1".padEnd(64, "x"), title: "T".repeat(1024), url: `https://a.example/${"p".repeat(9000)}`.slice(0, 8192) },
+			{ id: "R2", title: "", url: "" },
+			{ id: "R3", title: "", url: "" },
+		]);
+		expect(tabs(Array.from({ length: 150 }, (_, index) => ({ id: `R${index}` })))).toHaveLength(100);
 	});
 
 	it("takes the tab icon only as an inline image, never as an address to fetch", () => {

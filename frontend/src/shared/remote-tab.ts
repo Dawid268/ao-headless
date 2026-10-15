@@ -9,7 +9,7 @@ export type RemoteTabReport = {
 	/** The agent browser tab this viewer shows. */
 	tabId: string;
 	/** All of the agent browser's tabs: the panel keeps one tab for each. */
-	tabs: string[];
+	tabs: { id: string; title: string; url: string }[];
 	/** A tab the agent just opened from this one, which the panel switches to. */
 	follow?: string;
 	/** This tab's page closed in the agent browser; next is its opener, if open. */
@@ -55,9 +55,10 @@ export function parseRemoteTabReport(message: string): RemoteTabReport | null {
 	const r = raw as Record<string, unknown>;
 	const tabId = text(r.tabId, 64);
 	if (!tabId) return null;
-	const tabs = (Array.isArray(r.tabs) ? r.tabs : []).slice(0, 100).flatMap((tab: unknown) => {
-		const id = text((tab as Record<string, unknown> | null)?.id, 64);
-		return id ? [id] : [];
+	const tabs = (Array.isArray(r.tabs) ? r.tabs : []).slice(0, 100).flatMap((value: unknown) => {
+		const tab = value as Record<string, unknown> | null;
+		const id = text(tab?.id, 64);
+		return id ? [{ id, title: text(tab?.title, 1024), url: webURL(tab?.url) }] : [];
 	});
 	const follow = text(r.follow, 64);
 	const closed = r.closed && typeof r.closed === "object" ? { next: text((r.closed as Record<string, unknown>).next, 64) } : undefined;
