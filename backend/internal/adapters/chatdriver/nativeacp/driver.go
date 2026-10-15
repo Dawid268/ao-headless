@@ -48,6 +48,9 @@ type Config struct {
 	Configure      Configure
 	SessionMode    func(ports.PermissionMode) string
 	SessionOptions func(ports.ChatTurnSettings) []acpdriver.SessionOption
+	// SessionMeta carries provider-defined _meta on session/new, session/load,
+	// and session/resume. See acpdriver.Config.SessionMeta.
+	SessionMeta func(acpdriver.LaunchConfig) map[string]any
 	// SessionPreamble delivers standing context on the first prompt. See
 	// acpdriver.Config.SessionPreamble for when a binding needs it.
 	SessionPreamble              func(acpdriver.LaunchConfig) []acpsdk.ContentBlock
@@ -143,6 +146,7 @@ func buildConfig(plugin Plugin, cfg Config, log *slog.Logger) acpdriver.Config {
 		},
 		SessionMode:                  cfg.SessionMode,
 		SessionOptions:               cfg.SessionOptions,
+		SessionMeta:                  cfg.SessionMeta,
 		SessionPreamble:              cfg.SessionPreamble,
 		PermissionPolicy:             cfg.PermissionPolicy,
 		ClientExtension:              cfg.ClientExtension,
