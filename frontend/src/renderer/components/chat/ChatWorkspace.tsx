@@ -1361,6 +1361,7 @@ function ChatWorkspaceContent({
 								snapshot.controller.state === "connecting" ||
 								snapshot.controller.state === "stopped"
 							)) ||
+							snapshot.controller.state === "hibernated" ||
 							session?.provisionState === "provisioning" ||
 							controllerTransitioning || configOptionPending || newWorkDisabled
 						}
